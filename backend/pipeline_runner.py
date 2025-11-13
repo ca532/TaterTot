@@ -1,6 +1,6 @@
 """
 Main Pipeline Runner
-Integrates AgentCollector, AgentSumm, and Google Sheets storage
+Integrates AgentCollector, AgentSumm, Google Sheets storage, and PDF generation
 """
 
 import os
@@ -13,10 +13,20 @@ from google_storage import GoogleSheetsDB
 try:
     from AgentCollector import CustomArticleCollector
     from AgentSumm import ArticleSummarizer
-except ImportError:
-    print("⚠️  Could not import AgentCollector or AgentSumm")
-    print("Make sure these files are in the same directory")
+    print("✅ Collector and Summarizer loaded")
+except ImportError as e:
+    print(f"❌ Could not import agents: {e}")
     sys.exit(1)
+
+# Import PDF generator
+PDF_AVAILABLE = False
+try:
+    from PDFGenerator import BiweeklyRoundupPDF
+    PDF_AVAILABLE = True
+    print("✅ PDF Generator loaded")
+except ImportError as e:
+    print(f"⚠️  PDF Generator not available: {e}")
+    print("Will save JSON and TXT only")
 
 
 class PipelineRunner:
@@ -43,10 +53,10 @@ class PipelineRunner:
     
     def run_collection(self):
         """
-        Step 1: Collect articles from publications
+        Step 1: Collect top 3 articles from each publication
         """
         print("\n" + "="*60)
-        print("STEP 1: COLLECTING ARTICLES")
+        print("STEP 1: COLLECTING ARTICLES (Top 3 per Publication)")
         print("="*60 + "\n")
         
         try:
@@ -59,62 +69,110 @@ class PipelineRunner:
             
             print(f"\n✅ Collected {len(articles)} total articles")
             
-            # Convert to format for Google Sheets
+            # Convert ArticleCandidate objects to dictionaries for Google Sheets
             articles_data = []
-            for article in articles:
-                articles_data.append({
-                    'id': f"article-{datetime.now().strftime('%Y%m%d')}-{article.id if hasattr(article, 'id') else len(articles_data)}",
+            for idx, article in enumerate(articles):
+                article_dict = {
+                    'id': f"article-{datetime.now().strftime('%Y%m%d')}-{idx+1}",
                     'title': article.title,
                     'url': article.url,
                     'publication': article.publication,
                     'journalist': article.author,
-                    'summary': article.summary,
-                })
+                    'summary': article.summary if hasattr(article, 'summary') else '',
+                }
+                articles_data.append(article_dict)
             
             # Save to Google Sheets
+            print("\n💾 Saving to Google Sheets...")
             self.db.save_articles(articles_data)
             
-            return articles_data
+            return articles, articles_data  # Return both formats
             
         except Exception as e:
             print(f"❌ Error during collection: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise
     
-    def run_summarization(self):
+    def generate_outputs(self, articles_data):
         """
-        Step 2: Summarize articles (if needed - your collector already does this)
+        Generate TXT, JSON, and PDF outputs
         """
         print("\n" + "="*60)
-        print("STEP 2: SUMMARIZATION")
+        print("STEP 2: GENERATING OUTPUT FILES")
         print("="*60 + "\n")
         
-        # Your collector already creates summaries
-        # This step is optional - only needed if you want to re-summarize
-        print("✅ Summaries already created during collection")
+        if not articles_data:
+            print("⚠️  No data to generate outputs")
+            return None, None, None
         
-        # Get recent articles from Sheets
-        recent_articles = self.db.get_recent_articles(limit=10)
-        print(f"📊 {len(recent_articles)} articles in database")
+        # Create output directory if it doesn't exist
+        os.makedirs('output', exist_ok=True)
         
-        return recent_articles
+        # Generate filenames
+        date_str = datetime.now().strftime('%Y%m%d')
+        txt_file = f"output/biweekly_roundup_{date_str}.txt"
+        json_file = f"output/biweekly_roundup_{date_str}.json"
+        pdf_file = f"output/biweekly_roundup_{date_str}.pdf"
+        
+        # Generate formatted text output
+        print("📝 Generating TXT file...")
+        formatted_text = self._generate_formatted_text(articles_data)
+        with open(txt_file, 'w', encoding='utf-8') as f:
+            f.write(formatted_text)
+        print(f"✅ Saved: {txt_file}")
+        
+        # Save JSON
+        print("📝 Generating JSON file...")
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(articles_data, f, indent=2, ensure_ascii=False)
+        print(f"✅ Saved: {json_file}")
+        
+        # Generate PDF if available
+        pdf_path = None
+        if PDF_AVAILABLE:
+            try:
+                print("📝 Generating PDF file...")
+                pdf_gen = BiweeklyRoundupPDF()
+                pdf_path = pdf_gen.generate_pdf(json_file, pdf_file)
+                if pdf_path:
+                    print(f"✅ Saved: {pdf_file}")
+            except Exception as e:
+                print(f"⚠️  PDF generation failed: {e}")
+        else:
+            print("⚠️  PDF generation skipped (reportlab not installed)")
+        
+        return txt_file, json_file, pdf_path
     
-    def generate_drafts(self):
-        """
-        Step 3: Generate outreach drafts (Phase 3 of your plan)
-        For now, this is a placeholder
-        """
-        print("\n" + "="*60)
-        print("STEP 3: GENERATING OUTREACH DRAFTS")
-        print("="*60 + "\n")
+    def _generate_formatted_text(self, articles_data):
+        """Generate formatted text output"""
+        output = []
+        output.append("\nBI-WEEKLY READING ROUNDUP")
+        output.append("=" * 60)
+        output.append(f"Date: {datetime.now().strftime('%Y-%m-%d')}")
+        output.append(f"Coverage Period: Last 14 days")
+        output.append(f"Total Articles: {len(articles_data)}\n")
         
-        print("⚠️  Draft generation not yet implemented")
-        print("This will be added in Phase 3 of your project")
+        # Group by publication
+        by_publication = {}
+        for article in articles_data:
+            pub = article.get('publication', 'Unknown')
+            if pub not in by_publication:
+                by_publication[pub] = []
+            by_publication[pub].append(article)
         
-        # Get pitching menu
-        menu = self.db.get_pitching_menu()
-        print(f"📋 {len(menu)} topics in pitching menu")
+        output.append("By Publication:")
+        for pub, items in sorted(by_publication.items(), key=lambda x: len(x[1]), reverse=True):
+            output.append(f"  {pub}: {len(items)}")
         
-        return []
+        output.append("\n\nARTICLE SUMMARIES:")
+        output.append("-" * 60)
+        
+        for article in articles_data:
+            formatted = f"\n* [{article['title']}]({article['url']}) by {article['journalist']} - {article['summary']}"
+            output.append(formatted)
+        
+        return "\n".join(output)
     
     def run_full_pipeline(self):
         """
@@ -128,14 +186,11 @@ class PipelineRunner:
         start_time = datetime.now()
         
         try:
-            # Step 1: Collect articles
-            articles = self.run_collection()
+            # Step 1: Collect articles (top 3 per publication)
+            articles, articles_data = self.run_collection()
             
-            # Step 2: Summarization (already done in collection)
-            self.run_summarization()
-            
-            # Step 3: Generate drafts (Phase 3 - future)
-            # self.generate_drafts()
+            # Step 2: Generate output files (TXT, JSON, PDF)
+            txt_file, json_file, pdf_file = self.generate_outputs(articles_data)
             
             # Summary
             end_time = datetime.now()
@@ -144,15 +199,24 @@ class PipelineRunner:
             print("\n" + "="*60)
             print("✅ PIPELINE COMPLETED SUCCESSFULLY")
             print("="*60)
-            print(f"⏱️  Duration: {duration:.1f} seconds")
+            print(f"⏱️  Duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
             print(f"📊 Articles collected: {len(articles)}")
+            print(f"📄 TXT file: {txt_file}")
+            print(f"📄 JSON file: {json_file}")
+            if pdf_file:
+                print(f"📄 PDF file: {pdf_file}")
             print(f"⏰ End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
             print("="*60 + "\n")
             
             return {
                 'success': True,
                 'articles_collected': len(articles),
-                'duration_seconds': duration
+                'duration_seconds': duration,
+                'files': {
+                    'txt': txt_file,
+                    'json': json_file,
+                    'pdf': pdf_file
+                }
             }
             
         except Exception as e:
@@ -160,6 +224,8 @@ class PipelineRunner:
             print("❌ PIPELINE FAILED")
             print("="*60)
             print(f"Error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             print("="*60 + "\n")
             raise
 
@@ -171,6 +237,9 @@ def main():
     try:
         runner = PipelineRunner()
         result = runner.run_full_pipeline()
+        
+        print("\n🎉 Pipeline completed successfully!")
+        print(f"Check the 'output/' folder for generated files")
         
         # Exit with success
         sys.exit(0)
