@@ -195,6 +195,50 @@ class GoogleSheetsService {
       return null;
     }
   }
+
+    /**
+   * Get the latest GitHub Actions run info from Metadata sheet
+   */
+  async getLatestRunInfo() {
+    if (!SHEET_ID || !API_KEY) {
+      return null;
+    }
+
+    const range = 'Metadata!A:C';
+    const url = `${this.baseURL}/values/${range}?key=${API_KEY}`;
+    
+    try {
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        return null;
+      }
+      
+      const data = await response.json();
+      
+      if (!data.values || data.values.length === 0) {
+        return null;
+      }
+      
+      // Find the run number and URL
+      const runNumberRow = data.values.find(row => row[0] === 'latest_run_number');
+      const runUrlRow = data.values.find(row => row[0] === 'latest_run_url');
+      
+      if (runNumberRow && runNumberRow[1]) {
+        return {
+          runNumber: runNumberRow[1],
+          runUrl: runUrlRow ? runUrlRow[1] : null,
+          updatedAt: runNumberRow[2] || null
+        };
+      }
+      
+      return null;
+      
+    } catch (error) {
+      console.error('Error fetching run info:', error);
+      return null;
+    }
+  }
 }
 
 export default new GoogleSheetsService();

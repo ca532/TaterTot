@@ -17,15 +17,20 @@ function SummariesView() {
   }, []);
 
   const checkForPDF = async () => {
-    try {
-      const pdfInfo = await googleSheetsAPI.getLatestPDFLink();
-      if (pdfInfo) {
-        setPdfLink(pdfInfo);
-      }
-    } catch (error) {
-      console.error('Error checking for PDF:', error);
+  try {
+    // Get latest run info from Sheets
+    const runInfo = await googleSheetsAPI.getLatestRunInfo();
+    if (runInfo) {
+      setPdfLink({
+        runNumber: runInfo.runNumber,
+        runUrl: runInfo.runUrl,
+        artifactName: `roundup-files-${runInfo.runNumber}`
+      });
     }
-  };
+  } catch (error) {
+    console.error('Error checking for PDF:', error);
+  }
+};
 
   const handleRunPipeline = async () => {
     // Confirmation popup
@@ -120,12 +125,20 @@ function SummariesView() {
   };
 
   const handleDownloadPDF = () => {
-    if (pdfLink && pdfLink.downloadLink) {
-      window.open(pdfLink.downloadLink, '_blank');
-    } else {
-      alert('No PDF available yet. Run the pipeline first to generate a PDF.');
-    }
-  };
+  if (pdfLink && pdfLink.runUrl) {
+    // Open the GitHub Actions run page where user can download artifacts
+    alert(
+      '📄 PDF Download Instructions:\n\n' +
+      '1. A new tab will open with the workflow run\n' +
+      '2. Scroll down to "Artifacts" section\n' +
+      '3. Click on "roundup-files-' + pdfLink.runNumber + '" to download\n' +
+      '4. Unzip the file to access the PDF'
+    );
+    window.open(pdfLink.runUrl, '_blank');
+  } else {
+    alert('No PDF available yet. Run the pipeline first to generate a PDF.');
+  }
+};
 
   // LANDING PAGE
   if (pipelineStatus === 'idle') {

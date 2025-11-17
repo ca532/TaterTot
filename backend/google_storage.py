@@ -279,13 +279,13 @@ class GoogleSheetsDB:
             traceback.print_exc()
             return None, None
 
-def _get_or_create_drive_folder(self, drive_service, folder_name):
-    """
-    This method is no longer needed - we use a pre-created shared folder
-    Keeping for backwards compatibility
-    """
-    print(f"⚠️  Using pre-shared folder instead of creating new one")
-    return None
+    def _get_or_create_drive_folder(self, drive_service, folder_name):
+        """
+        This method is no longer needed - we use a pre-created shared folder
+        Keeping for backwards compatibility
+        """
+        print(f"⚠️  Using pre-shared folder instead of creating new one")
+        return None
         
     def _get_or_create_drive_folder(self, drive_service, folder_name):
         """
@@ -318,9 +318,13 @@ def _get_or_create_drive_folder(self, drive_service, folder_name):
         print(f"✅ Created Google Drive folder: {folder_name}")
         return folder['id']
     
-    def save_pdf_link(self, pdf_download_link, pdf_view_link):
+    def save_artifact_info(self, run_number, run_url):
         """
-        Save PDF link to a special 'Metadata' sheet for frontend to access
+        Save GitHub Actions artifact info to Metadata sheet
+        
+        Args:
+            run_number: GitHub Actions run number
+            run_url: URL to the workflow run
         """
         try:
             # Get or create Metadata sheet
@@ -335,30 +339,29 @@ def _get_or_create_drive_folder(self, drive_service, folder_name):
                 # Add headers
                 metadata_sheet.update('A1:C1', [['Key', 'Value', 'Updated']])
             
-            # Update or add PDF link
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # Try to find existing "latest_pdf" row
+            # Save run number
             try:
-                cell = metadata_sheet.find('latest_pdf')
+                cell = metadata_sheet.find('latest_run_number')
                 row_num = cell.row
-                metadata_sheet.update(f'B{row_num}:C{row_num}', [[pdf_download_link, timestamp]])
+                metadata_sheet.update(f'B{row_num}:C{row_num}', [[str(run_number), timestamp]])
             except:
-                # Add new row
-                metadata_sheet.append_row(['latest_pdf', pdf_download_link, timestamp])
+                metadata_sheet.append_row(['latest_run_number', str(run_number), timestamp])
             
-            # Also add view link
+            # Save run URL
             try:
-                cell = metadata_sheet.find('latest_pdf_view')
+                cell = metadata_sheet.find('latest_run_url')
                 row_num = cell.row
-                metadata_sheet.update(f'B{row_num}:C{row_num}', [[pdf_view_link, timestamp]])
+                metadata_sheet.update(f'B{row_num}:C{row_num}', [[run_url, timestamp]])
             except:
-                metadata_sheet.append_row(['latest_pdf_view', pdf_view_link, timestamp])
+                metadata_sheet.append_row(['latest_run_url', run_url, timestamp])
             
-            print(f"✅ PDF link saved to Metadata sheet")
+            print(f"✅ Artifact info saved to Metadata sheet")
+            print(f"   Run #{run_number}")
             
         except Exception as e:
-            print(f"⚠️ Error saving PDF link to metadata: {str(e)}")
+            print(f"⚠️  Error saving artifact info: {str(e)}")
     
     def update_draft_status(self, draft_id, approved=True):
         """

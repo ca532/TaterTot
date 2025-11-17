@@ -232,8 +232,16 @@ class PipelineRunner:
             # Step 1: Collect articles
             articles, articles_data = self.run_collection()
             
-            # Step 2: Generate outputs (TXT, JSON, PDF) and upload to Drive
+            # Step 2: Generate outputs
             txt_file, json_file, pdf_file = self.generate_outputs(articles_data)
+            
+            # Step 3: Save GitHub Actions info (if running on GitHub)
+            github_run_number = os.getenv('GITHUB_RUN_NUMBER')
+            github_run_url = os.getenv('GITHUB_SERVER_URL') + '/' + os.getenv('GITHUB_REPOSITORY', '') + '/actions/runs/' + os.getenv('GITHUB_RUN_ID', '')
+            
+            if github_run_number:
+                print(f"\n💾 Saving GitHub Actions artifact info...")
+                self.db.save_artifact_info(github_run_number, github_run_url)
             
             # Summary
             end_time = datetime.now()
@@ -248,6 +256,8 @@ class PipelineRunner:
             print(f"📄 JSON file: {json_file}")
             if pdf_file:
                 print(f"📄 PDF file: {pdf_file}")
+            if github_run_number:
+                print(f"🔗 Artifact run: #{github_run_number}")
             print(f"⏰ End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
             print("="*60 + "\n")
             
