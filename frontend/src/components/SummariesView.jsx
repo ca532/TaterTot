@@ -4,6 +4,7 @@ import LoadingScreen from './LoadingScreen';
 import ArticlesList from './ArticlesList';
 import googleSheetsAPI from '../services/googleSheetsAPI';
 import githubAPI from '../services/githubAPI';
+import logo from '../assets/ca-circle.png';  // Import the logo
 
 function SummariesView() {
   const [pipelineStatus, setPipelineStatus] = useState('idle');
@@ -218,7 +219,7 @@ function SummariesView() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-20 h-20 mb-4">
             <img 
-              src="/ca-circle.png" 
+              src={logo} 
               alt="CA Logo" 
               className="w-20 h-20"
             />

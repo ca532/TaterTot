@@ -1,4 +1,5 @@
 import { Circle } from 'lucide-react';
+import logo from '../assets/logo-white-bg.png';  // Import the logo
 
 function Header({ pipelineStatus }) {
   const statusConfig = {
@@ -13,16 +14,16 @@ function Header({ pipelineStatus }) {
     <header className="bg-white shadow-sm border-b-2 border-[#b8860b]">
       <div className="w-full px-8 lg:px-16 py-4">
         <div className="text-center">
-          {/* Logo Image - Made bigger */}
+          {/* Logo Image */}
           <div className="mb-2">
             <img 
-              src="/logo-white-bg.png" 
+              src={logo}
               alt="Claire Adler Luxury PR" 
               className="h-24 mx-auto"
             />
           </div>
           
-          {/* TaterTot - Made smaller */}
+          {/* TaterTot */}
           <h1 className="text-xl font-bold text-[#b8860b] mb-1">
             TaterTot
           </h1>
@@ -30,6 +31,7 @@ function Header({ pipelineStatus }) {
             A Reading Roundup Dashboard
           </p>
           
+          {/* Status */}
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-full border border-gray-200">
             <Circle 
               className={`w-2 h-2 ${status.color} ${status.pulse ? 'animate-pulse' : ''} fill-current`} 
