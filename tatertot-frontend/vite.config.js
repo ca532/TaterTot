@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [
     react(),
-    tailwindcss(),  // Add Tailwind plugin
+    tailwindcss(),
   ],
+  base: '/TaterTot/',  // Replace with your actual repo name
 })
