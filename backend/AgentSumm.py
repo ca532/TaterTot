@@ -73,15 +73,15 @@ class ArticleSummarizer:
                 "Include all important facts, figures, numbers, dates, and numeric comparisons relevant to these mentions. "
                 "Avoid unnecessary explanations or background - only include details that a luxury PR expert would need to know to quickly understand the article. "
                 "Keep sentences short, clear, and easy to read, so that the summary can save time and fully convey the essential points of the article. "
-                + article_content
+            + article_content
             )
             
             summary_text = self.summarizer(
-                input_text[:3000],
-                max_length=120,
-                min_length=40,
-                do_sample=False
-            )[0]["summary_text"]
+            input_text[:4000],  # Increased from 3000 to allow more context
+            max_length=250,      # Increased from 120 to allow longer summaries
+            min_length=80,       # Increased from 40 to ensure detail
+            do_sample=False
+        )[0]["summary_text"]
 
             return ArticleSummary(
                 title=title,
