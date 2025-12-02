@@ -12,6 +12,11 @@ on:
           - 'false'
           - 'true'
 
+# Prevent concurrent runs - only one at a time
+concurrency:
+  group: article-pipeline
+  cancel-in-progress: false  # Don't cancel running jobs, just queue them
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -44,6 +49,7 @@ jobs:
           python pipeline_runner.py
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           TEST_MODE: ${{ github.event.inputs.test_mode }}
       
       - name: Find PDF and Get Date
