@@ -150,7 +150,7 @@ class IntegratedPipeline:
         output.append("\nWEEKLY READING ROUNDUP")
         output.append("=" * 60)
         output.append(f"Date: {datetime.now().strftime('%Y-%m-%d')}")
-        output.append(f"Coverage Period: Last 14 days")
+        output.append(f"Coverage Period: Last 7 days")
         output.append(f"Total Articles: {len(summaries)}\n")
         
         # Group by publication
