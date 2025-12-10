@@ -13,6 +13,7 @@ function SummariesView() {
   const [lastRunTime, setLastRunTime] = useState(null);
   const [pdfLink, setPdfLink] = useState(null);
   const [rateLimitInfo, setRateLimitInfo] = useState(null);
+  const [pollingInterval, setPollingInterval] = useState(null);
 
   // Check for existing PDF on mount
   useEffect(() => {
@@ -28,6 +29,15 @@ function SummariesView() {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    };
+  }, [pollingInterval]);
 
   const updateRateLimitInfo = () => {
     const info = rateLimitService.canRunPipeline();
@@ -49,6 +59,72 @@ function SummariesView() {
     }
   };
 
+  const pollForResults = () => {
+    console.log('Pipeline triggered. Waiting 13 minutes before starting to check for results...');
+    
+    // Wait 13 minutes (780 seconds) before starting to poll
+    const initialDelay = setTimeout(() => {
+      console.log('13 minutes elapsed. Starting to check for results...');
+      
+      let attempts = 0;
+      const maxAttempts = 20; // 20 attempts * 30 seconds = 10 minutes additional time (total: 23 minutes max)
+      
+      const interval = setInterval(async () => {
+        attempts++;
+        console.log(`Polling attempt ${attempts}/${maxAttempts}...`);
+        
+        try {
+          // Check if workflow is still running
+          const isRunning = await githubAPI.isWorkflowRunning();
+          
+          if (!isRunning) {
+            // Workflow completed, try to load results
+            console.log('Workflow completed, loading results...');
+            clearInterval(interval);
+            setPollingInterval(null);
+            
+            // Wait a bit for data to be fully written to sheets
+            await new Promise(resolve => setTimeout(resolve, 10000)); // 10 second buffer
+            
+            await loadResultsAfterPipeline();
+            rateLimitService.recordPipelineComplete();
+            updateRateLimitInfo();
+          } else {
+            console.log('Workflow still running...');
+          }
+          
+          // Safety timeout
+          if (attempts >= maxAttempts) {
+            console.log('Max polling attempts reached');
+            clearInterval(interval);
+            setPollingInterval(null);
+            
+            alert(
+              '⏱️ Pipeline is taking longer than expected.\n\n' +
+              'This might be due to:\n' +
+              '• High server load\n' +
+              '• Network issues\n' +
+              '• Publication site blocking\n\n' +
+              'Click "View Results" in a few minutes to check manually.'
+            );
+            
+            setPipelineStatus('idle');
+            rateLimitService.manualClearRunning();
+            updateRateLimitInfo();
+          }
+        } catch (error) {
+          console.error('Error during polling:', error);
+          // Continue polling even if there's an error
+        }
+      }, 30000); // Poll every 30 seconds
+      
+      setPollingInterval(interval);
+    }, 780000); // 13 minutes = 780,000 milliseconds
+    
+    // Store the timeout ID so we can clear it if needed
+    setPollingInterval(initialDelay);
+  };
+
   const handleRunPipeline = async () => {
     // Check rate limit first
     const rateLimitCheck = rateLimitService.canRunPipeline();
@@ -66,7 +142,7 @@ function SummariesView() {
       '• Generate AI summaries\n' +
       '• Save to Google Sheets\n' +
       '• Create a PDF report\n\n' +
-      'Process takes 3-7 minutes.\n' +
+      'Process takes 10-15 minutes.\n' +
       `After this run, there will be a ${rateLimitService.COOLDOWN_MINUTES}-minute cooldown period.`
     );
 
@@ -88,12 +164,8 @@ function SummariesView() {
       if (result.success) {
         console.log('✅ Pipeline triggered successfully on GitHub Actions');
         
-        // After 6 minutes, auto-load results and mark as complete
-        setTimeout(async () => {
-          await loadResultsAfterPipeline();
-          rateLimitService.recordPipelineComplete();
-          updateRateLimitInfo();
-        }, 360000); // 6 minutes
+        // Start polling (with 13-minute initial delay)
+        pollForResults();
         
       } else {
         // Failed to trigger - manually clear rate limit
@@ -334,7 +406,7 @@ function SummariesView() {
               <Clock className="w-4 h-4 text-[#b8860b]" />
               <span className="text-xs font-semibold text-gray-600">Avg. Runtime</span>
             </div>
-            <p className="text-xl font-bold text-gray-900">~15 min</p>
+            <p className="text-xl font-bold text-gray-900">~13 min</p>
           </div>
 
           <div className="bg-white p-4 rounded-lg shadow-lg border-2 border-gray-200 hover:border-[#b8860b] transition-colors">

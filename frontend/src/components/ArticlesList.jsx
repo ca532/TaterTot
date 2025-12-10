@@ -2,34 +2,27 @@ import { RefreshCw, ExternalLink, User, Calendar, Download } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns';
 
 function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF }) {
-  // Filter articles from the last week
+  // Filter articles from the last run only
+  const recentArticles = articles.filter(article => {
+    if (!lastRunTime) return true; // If no lastRunTime, show all articles
+    
+    const articleDate = new Date(article.collectedDate);
+    const runDate = new Date(lastRunTime);
+    
+    // Show articles that were collected during or after the last run
+    // Allow a small buffer (5 minutes) to account for pipeline duration
+    const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+    return articleDate >= new Date(runDate.getTime() - bufferTime);
+  });
+
+  // Also calculate one week ago for additional context
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
   
-  // Filter by last week
-  const lastWeekArticles = articles.filter(article => {
+  const articlesFromLastWeek = articles.filter(article => {
     const articleDate = new Date(article.collectedDate);
     return articleDate >= oneWeekAgo;
   });
-
-  // If we have lastRunTime, also filter by that to get only articles from the most recent run
-  let recentArticles = lastWeekArticles;
-  
-  if (lastRunTime) {
-    // Get articles from the last run (within 1 hour of lastRunTime to account for pipeline duration)
-    const runTimeThreshold = new Date(lastRunTime);
-    runTimeThreshold.setHours(runTimeThreshold.getHours() - 1);
-    
-    const lastRunArticles = lastWeekArticles.filter(article => {
-      const articleDate = new Date(article.collectedDate);
-      return articleDate >= runTimeThreshold;
-    });
-    
-    // Use last run articles if we have any, otherwise fall back to last week
-    if (lastRunArticles.length > 0) {
-      recentArticles = lastRunArticles;
-    }
-  }
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -40,8 +33,13 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
             Article Summaries
           </h2>
           <p className="text-base text-gray-600 mt-2">
-            {recentArticles.length} articles {lastRunTime ? 'from latest run' : 'from the last week'} {lastRunTime && `• ${formatDistanceToNow(lastRunTime, { addSuffix: true })}`}
+            {recentArticles.length} articles from latest run {lastRunTime && `• ${formatDistanceToNow(lastRunTime, { addSuffix: true })}`}
           </p>
+          {articlesFromLastWeek.length !== recentArticles.length && (
+            <p className="text-sm text-gray-500 mt-1">
+              ({articlesFromLastWeek.length} total from the last week)
+            </p>
+          )}
         </div>
 
         <div className="flex gap-3">
@@ -75,9 +73,7 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
         <div>
           <p className="font-bold text-lg text-gray-900">Pipeline completed successfully!</p>
           <p className="text-base text-gray-700">
-            {lastRunTime 
-              ? 'Showing articles from the most recent run.' 
-              : 'Showing articles from the last week.'}
+            Showing articles from the latest run{lastRunTime && ` (${lastRunTime.toLocaleString()})`}.
           </p>
         </div>
       </div>
@@ -85,12 +81,12 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
       {/* No articles message */}
       {recentArticles.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-600 text-lg">No articles found from the last week.</p>
+          <p className="text-gray-600 text-lg">No articles found from the latest run.</p>
           <p className="text-gray-500 mt-2">Try running the pipeline to collect new articles.</p>
         </div>
       )}
 
-      {/* Articles Grid - 3 columns on large screens, EDGE TO EDGE */}
+      {/* Articles Grid */}
       {recentArticles.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
           {recentArticles.map(article => (
