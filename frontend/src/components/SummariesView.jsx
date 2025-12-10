@@ -406,7 +406,7 @@ function SummariesView() {
               <Clock className="w-4 h-4 text-[#b8860b]" />
               <span className="text-xs font-semibold text-gray-600">Avg. Runtime</span>
             </div>
-            <p className="text-xl font-bold text-gray-900">~13 min</p>
+            <p className="text-xl font-bold text-gray-900">~15-20 mins</p>
           </div>
 
           <div className="bg-white p-4 rounded-lg shadow-lg border-2 border-gray-200 hover:border-[#b8860b] transition-colors">
