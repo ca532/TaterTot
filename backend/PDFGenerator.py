@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 from typing import List, Dict
 
-class BiweeklyRoundupPDF:
+class weeklyRoundupPDF:
     def __init__(self):
         """Initialize PDF generator with styling"""
         self.styles = getSampleStyleSheet()
@@ -81,7 +81,7 @@ class BiweeklyRoundupPDF:
         # Generate output filename if not provided
         if not output_file:
             date_str = datetime.now().strftime('%Y%m%d')
-            output_file = f"biweekly_roundup_{date_str}.pdf"
+            output_file = f"weekly_roundup_{date_str}.pdf"
         
         # Create PDF
         doc = SimpleDocTemplate(
@@ -97,7 +97,7 @@ class BiweeklyRoundupPDF:
         story = []
         
         # Title
-        title = Paragraph("Bi-Weekly Luxury Jewellery Reading Roundup", self.title_style)
+        title = Paragraph("Weekly Luxury Jewellery Reading Roundup", self.title_style)
         story.append(title)
         story.append(Spacer(1, 0.2 * inch))
         
@@ -184,7 +184,7 @@ def main():
         print("JSON file required!")
         return
     
-    generator = BiweeklyRoundupPDF()
+    generator = weeklyRoundupPDF()
     pdf_file = generator.generate_pdf(json_file)
     
     if pdf_file:

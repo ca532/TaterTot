@@ -92,7 +92,7 @@ class CustomArticleCollector:
             'Financial Times': {
                 'base_url': 'https://www.ft.com/fashion',
                 'rss_feeds': [],
-                'sitemap_url': 'https://www.forbes.com/news_sitemap.xml'
+                'sitemap_url': 'https://www.ft.com/sitemaps/news.xml'
             },
             'Forbes': {
                 'base_url': 'https://www.forbes.com/business/',
@@ -459,8 +459,8 @@ class CustomArticleCollector:
                     else:
                         pub_date = datetime.now()
                     
-                    # Skip articles older than 14 days (bi-weekly collection)
-                    if (datetime.now() - pub_date).days > 14:
+                    # Skip articles older than 7 days (weekly collection)
+                    if (datetime.now() - pub_date).days > 7:
                         continue
                     
                     title = entry.get('title', '').strip()
@@ -674,7 +674,7 @@ class CustomArticleCollector:
                                     lastmod_date = datetime.strptime(lastmod_str[:10], '%Y-%m-%d')
                                 lastmod_date = lastmod_date.replace(tzinfo=None)
                                 
-                                if (datetime.now() - lastmod_date).days > 14:
+                                if (datetime.now() - lastmod_date).days > 7:
                                     continue
                             except:
                                 lastmod_date = datetime.now()
@@ -799,7 +799,7 @@ class CustomArticleCollector:
             if article.meta_description and len(article.meta_description) > len(candidate.summary):
                 candidate.summary = article.meta_description
             
-            # Threshold 1.0 for bi-weekly collection
+            # Threshold 1.0 for weekly collection
             if full_score >= 1.0:
                 return candidate
             else:
@@ -823,7 +823,7 @@ class CustomArticleCollector:
     
     def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
         """Collect exactly top 3 articles from each publication"""
-        print("Bi-Weekly Article Collection (Top 3 per Publication)")
+        print("Weekly Article Collection (Top 3 per Publication)")
         print("=" * 60)
         
         sources_to_use = sources_subset if sources_subset else list(self.target_sources.keys())
@@ -980,7 +980,7 @@ def main():
         print(f"{i:2d}. {pub}")
     
     print("\nCollection Mode:")
-    print("1. Bi-Weekly Roundup (Top 3 per publication)")
+    print("1. Weekly Roundup (Top 3 per publication)")
     
     try:
         use_subset = input("\nUse specific sources only? (y/N): ").lower().startswith('y')

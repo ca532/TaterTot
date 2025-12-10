@@ -15,17 +15,27 @@ function SummariesView() {
   const [rateLimitInfo, setRateLimitInfo] = useState(null);
   const [pollingInterval, setPollingInterval] = useState(null);
 
-  // Check for existing PDF on mount
+  // Check for existing PDF and last run date on mount
   useEffect(() => {
     checkForPDF();
+    loadLastRunDate();
     updateRateLimitInfo();
   }, []);
 
-  // Update rate limit info every minute
+  // Update rate limit info - more frequently when in cooldown
   useEffect(() => {
+    const updateInfo = () => {
+      const info = rateLimitService.canRunPipeline();
+      setRateLimitInfo(info);
+    };
+
+    // Initial update
+    updateInfo();
+
+    // Set interval - check every 5 seconds to keep timer accurate
     const interval = setInterval(() => {
-      updateRateLimitInfo();
-    }, 60000); // Every 60 seconds
+      updateInfo();
+    }, 5000); // Check every 5 seconds
 
     return () => clearInterval(interval);
   }, []);
@@ -44,6 +54,30 @@ function SummariesView() {
     setRateLimitInfo(info);
   };
 
+  const loadLastRunDate = async () => {
+    try {
+      console.log('Loading last run date from Google Sheets...');
+      
+      // Get all articles to find the most recent one
+      const articlesData = await googleSheetsAPI.getArticles();
+      
+      if (articlesData && articlesData.length > 0) {
+        // Find the most recent article date
+        const dates = articlesData.map(a => new Date(a.collectedDate));
+        const mostRecent = new Date(Math.max(...dates));
+        
+        setLastRunTime(mostRecent);
+        console.log('Last run date loaded:', mostRecent);
+      } else {
+        console.log('No articles found in sheets');
+        setLastRunTime(null);
+      }
+    } catch (error) {
+      console.error('Error loading last run date:', error);
+      setLastRunTime(null);
+    }
+  };
+
   const checkForPDF = async () => {
     try {
       const runInfo = await googleSheetsAPI.getLatestRunInfo();
@@ -60,14 +94,14 @@ function SummariesView() {
   };
 
   const pollForResults = () => {
-    console.log('Pipeline triggered. Waiting 13 minutes before starting to check for results...');
+    console.log('Starting polling after 15 minute wait...');
     
-    // Wait 13 minutes (780 seconds) before starting to poll
+    // Wait 15 minutes before starting to poll
     const initialDelay = setTimeout(() => {
-      console.log('13 minutes elapsed. Starting to check for results...');
+      console.log('15 minutes elapsed, now polling for completion...');
       
       let attempts = 0;
-      const maxAttempts = 20; // 20 attempts * 30 seconds = 10 minutes additional time (total: 23 minutes max)
+      const maxAttempts = 20; // 20 attempts * 30 seconds = 10 minutes of polling after initial 15 min wait
       
       const interval = setInterval(async () => {
         attempts++;
@@ -93,14 +127,14 @@ function SummariesView() {
             console.log('Workflow still running...');
           }
           
-          // Safety timeout
+          // Safety timeout - total max time: 15 min initial + 10 min polling = 25 minutes
           if (attempts >= maxAttempts) {
             console.log('Max polling attempts reached');
             clearInterval(interval);
             setPollingInterval(null);
             
             alert(
-              '⏱️ Pipeline is taking longer than expected.\n\n' +
+              '⏱️ Pipeline is taking longer than expected (25+ minutes).\n\n' +
               'This might be due to:\n' +
               '• High server load\n' +
               '• Network issues\n' +
@@ -119,10 +153,11 @@ function SummariesView() {
       }, 30000); // Poll every 30 seconds
       
       setPollingInterval(interval);
-    }, 780000); // 13 minutes = 780,000 milliseconds
+      
+    }, 900000); // 900000ms = 15 minutes
     
-    // Store the timeout ID so we can clear it if needed
-    setPollingInterval(initialDelay);
+    // Store the initial timeout so we can clear it if needed
+    return initialDelay;
   };
 
   const handleRunPipeline = async () => {
@@ -142,7 +177,7 @@ function SummariesView() {
       '• Generate AI summaries\n' +
       '• Save to Google Sheets\n' +
       '• Create a PDF report\n\n' +
-      'Process takes 10-15 minutes.\n' +
+      'Process takes 15-20 minutes.\n' +
       `After this run, there will be a ${rateLimitService.COOLDOWN_MINUTES}-minute cooldown period.`
     );
 
@@ -164,7 +199,7 @@ function SummariesView() {
       if (result.success) {
         console.log('✅ Pipeline triggered successfully on GitHub Actions');
         
-        // Start polling (with 13-minute initial delay)
+        // Start polling for completion (after 15 minute delay)
         pollForResults();
         
       } else {
@@ -406,7 +441,7 @@ function SummariesView() {
               <Clock className="w-4 h-4 text-[#b8860b]" />
               <span className="text-xs font-semibold text-gray-600">Avg. Runtime</span>
             </div>
-            <p className="text-xl font-bold text-gray-900">~15-20 mins</p>
+            <p className="text-xl font-bold text-gray-900">15-20 min</p>
           </div>
 
           <div className="bg-white p-4 rounded-lg shadow-lg border-2 border-gray-200 hover:border-[#b8860b] transition-colors">
@@ -415,7 +450,7 @@ function SummariesView() {
               <span className="text-xs font-semibold text-gray-600">Last Run</span>
             </div>
             <p className="text-xl font-bold text-gray-900">
-              {lastRunTime ? lastRunTime.toLocaleDateString() : 'Never'}
+              {lastRunTime ? lastRunTime.toLocaleDateString() : 'Loading...'}
             </p>
           </div>
         </div>

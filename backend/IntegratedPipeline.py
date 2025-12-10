@@ -16,7 +16,7 @@ except ImportError as e:
 # Import PDF generator
 PDF_AVAILABLE = False
 try:
-    from PDFGenerator import BiweeklyRoundupPDF
+    from PDFGenerator import weeklyRoundupPDF
     PDF_AVAILABLE = True
     print("PDF Generator loaded successfully")
 except ImportError as e:
@@ -28,7 +28,7 @@ except ImportError as e:
 class IntegratedPipeline:
     def __init__(self):
         """Initialize both collector and summarizer"""
-        print("Initializing Bi-Weekly Luxury Article Processing Pipeline")
+        print("Initializing Weekly Luxury Article Processing Pipeline")
         print("=" * 60)
         
         # Initialize collector
@@ -42,9 +42,9 @@ class IntegratedPipeline:
         print("\nPipeline ready!\n")
     
     def collect_top_articles_per_source(self, articles_per_source: int = 3, sources_subset: list = None):
-        """Collect top 2-3 articles from EACH publication for bi-weekly roundup"""
+        """Collect top 2-3 articles from EACH publication for weekly roundup"""
         
-        print("PHASE 1: BI-WEEKLY ARTICLE COLLECTION")
+        print("PHASE 1: WEEKLY ARTICLE COLLECTION")
         print("=" * 60)
         print(f"Collecting top {articles_per_source} articles from each publication\n")
         
@@ -142,12 +142,12 @@ class IntegratedPipeline:
         return summarized_articles
     
     def generate_formatted_output(self, summaries: list) -> str:
-        """Generate the final formatted output for client bi-weekly review"""
+        """Generate the final formatted output for client weekly review"""
         if not summaries:
             return "No summaries generated"
         
         output = []
-        output.append("\nBI-WEEKLY READING ROUNDUP")
+        output.append("\nWEEKLY READING ROUNDUP")
         output.append("=" * 60)
         output.append(f"Date: {datetime.now().strftime('%Y-%m-%d')}")
         output.append(f"Coverage Period: Last 14 days")
@@ -205,7 +205,7 @@ class IntegratedPipeline:
         pdf_filename = None
         if PDF_AVAILABLE:
             try:
-                pdf_gen = BiweeklyRoundupPDF()
+                pdf_gen = weeklyRoundupPDF()
                 pdf_filename = pdf_gen.generate_pdf(json_filename, filename.replace('.txt', '.pdf'))
             except Exception as e:
                 print(f"PDF generation failed: {e}")
@@ -217,8 +217,8 @@ class IntegratedPipeline:
 
 
 def main():
-    """Run the integrated bi-weekly pipeline"""
-    print("Bi-Weekly Luxury Article Roundup Generator")
+    """Run the integrated Weekly pipeline"""
+    print("Weekly Luxury Article Roundup Generator")
     print("=" * 60)
     
     # Initialize pipeline
@@ -267,7 +267,7 @@ def main():
         # Save to files (automatically generates PDF too)
         txt_file, json_file, pdf_file = pipeline.save_summaries(
             summaries, 
-            f"biweekly_roundup_{datetime.now().strftime('%Y%m%d')}.txt"
+            f"weekly_roundup_{datetime.now().strftime('%Y%m%d')}.txt"
         )
         
         print(f"\n\nREADY FOR CLIENT REVIEW")
@@ -280,7 +280,7 @@ def main():
             print(f"Backup File: {json_file}")
         print(f"Total Articles: {len(summaries)}")
         print(f"Publications Covered: {len(set(s.publication for s in summaries))}")
-        print("\nThe bi-weekly reading roundup is ready for your client!")
+        print("\nThe weekly reading roundup is ready for your client!")
         
     else:
         print("\nNo summaries generated.")
