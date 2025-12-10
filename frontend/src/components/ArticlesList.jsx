@@ -2,25 +2,45 @@ import { RefreshCw, ExternalLink, User, Calendar, Download } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns';
 
 function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF }) {
-  // Filter articles from the last 2 weeks
-  const twoWeeksAgo = new Date();
-  twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+  // Filter articles from the last week
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
   
-  const recentArticles = articles.filter(article => {
+  // Filter by last week
+  const lastWeekArticles = articles.filter(article => {
     const articleDate = new Date(article.collectedDate);
-    return articleDate >= twoWeeksAgo;
+    return articleDate >= oneWeekAgo;
   });
+
+  // If we have lastRunTime, also filter by that to get only articles from the most recent run
+  let recentArticles = lastWeekArticles;
+  
+  if (lastRunTime) {
+    // Get articles from the last run (within 1 hour of lastRunTime to account for pipeline duration)
+    const runTimeThreshold = new Date(lastRunTime);
+    runTimeThreshold.setHours(runTimeThreshold.getHours() - 1);
+    
+    const lastRunArticles = lastWeekArticles.filter(article => {
+      const articleDate = new Date(article.collectedDate);
+      return articleDate >= runTimeThreshold;
+    });
+    
+    // Use last run articles if we have any, otherwise fall back to last week
+    if (lastRunArticles.length > 0) {
+      recentArticles = lastRunArticles;
+    }
+  }
 
   return (
     <div className="w-full h-full flex flex-col">
-      {/* Header with Run Again button */}
+      {/* Header with Home button */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">
             Article Summaries
           </h2>
           <p className="text-base text-gray-600 mt-2">
-            {recentArticles.length} articles from the last 2 weeks {lastRunTime && `• ${formatDistanceToNow(lastRunTime, { addSuffix: true })}`}
+            {recentArticles.length} articles {lastRunTime ? 'from latest run' : 'from the last week'} {lastRunTime && `• ${formatDistanceToNow(lastRunTime, { addSuffix: true })}`}
           </p>
         </div>
 
@@ -54,14 +74,18 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
         </div>
         <div>
           <p className="font-bold text-lg text-gray-900">Pipeline completed successfully!</p>
-          <p className="text-base text-gray-700">Showing articles from the last 2 weeks.</p>
+          <p className="text-base text-gray-700">
+            {lastRunTime 
+              ? 'Showing articles from the most recent run.' 
+              : 'Showing articles from the last week.'}
+          </p>
         </div>
       </div>
 
       {/* No articles message */}
       {recentArticles.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-600 text-lg">No articles found from the last 2 weeks.</p>
+          <p className="text-gray-600 text-lg">No articles found from the last week.</p>
           <p className="text-gray-500 mt-2">Try running the pipeline to collect new articles.</p>
         </div>
       )}
