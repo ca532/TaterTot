@@ -25,3 +25,4 @@ python-dateutil==2.8.2
 
 # Anti-blocking (optional but recommended)
 cloudscraper==1.2.71
+curl-cffi>=0.5.0
