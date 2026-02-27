@@ -8,5 +8,5 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
-  base: '/Repo/',  // Replace with your actual repo name
+  base: '/TaterTot/',  // Replace with your actual repo name
 })
