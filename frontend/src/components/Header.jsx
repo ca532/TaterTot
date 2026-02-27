@@ -15,12 +15,12 @@ function Header({ pipelineStatus }) {
 
   return (
     <header className="bg-white shadow-sm border-b-2 border-[#b8860b]">
-      <div className="w-full px-8 lg:px-16 py-4">
+      <div className="w-full px-4 sm:px-6 lg:px-12 py-3 sm:py-4">
         <div className="relative">
           {/* Logout Button - Positioned top right */}
           <button
             onClick={logout}
-            className="absolute right-0 top-0 flex items-center gap-2 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            className="absolute right-0 top-0 flex items-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             title="Logout"
           >
             <LogOut className="w-4 h-4" />
@@ -34,12 +34,12 @@ function Header({ pipelineStatus }) {
               <img 
                 src={logo}
                 alt="Claire Adler Luxury PR" 
-                className="h-24 mx-auto"
+                className="h-16 sm:h-20 lg:h-24 mx-auto"
               />
             </div>
             
             {/* Reading Roundup Dashboard */}
-            <p className="text-sm text-black font-medium mb-2">
+            <p className="text-xs sm:text-sm text-black font-medium mb-2">
               Reading Roundup Dashboard
             </p>
             

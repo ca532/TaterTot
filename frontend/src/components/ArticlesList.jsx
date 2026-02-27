@@ -25,7 +25,7 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
   });
 
   return (
-    <div className="w-full h-full flex flex-col">
+    <div className="w-full h-full flex flex-col px-4 sm:px-6">
       {/* Header with Home button */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
         <div>
@@ -42,11 +42,11 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
           )}
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           {hasPDF && (
             <button
               onClick={onDownloadPDF}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-white text-[#b8860b] font-semibold rounded-lg border-2 border-[#b8860b] hover:bg-[#faf8f3] transition-all shadow-md hover:shadow-lg"
+              className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 bg-white text-[#b8860b] font-semibold rounded-lg border-2 border-[#b8860b] hover:bg-[#faf8f3] transition-all shadow-md hover:shadow-lg"
             >
               <Download className="w-5 h-5" />
               Download PDF
@@ -55,7 +55,7 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
           
           <button
             onClick={onRunAgain}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-[#b8860b] text-black font-semibold rounded-lg hover:bg-[#8b6914] transition-colors shadow-md hover:shadow-lg"
+            className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 bg-[#b8860b] text-black font-semibold rounded-lg hover:bg-[#8b6914] transition-colors shadow-md hover:shadow-lg"
           >
             <RefreshCw className="w-5 h-5" />
             Home
@@ -64,7 +64,7 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
       </div>
 
       {/* Success Banner */}
-      <div className="mb-8 p-5 bg-[#faf8f3] border-2 border-[#b8860b] rounded-lg flex items-center gap-4">
+      <div className="mb-8 p-4 sm:p-5 bg-[#faf8f3] border-2 border-[#b8860b] rounded-lg flex items-start sm:items-center gap-3 sm:gap-4">
         <div className="flex-shrink-0">
           <div className="w-10 h-10 rounded-full bg-[#b8860b] flex items-center justify-center">
             <span className="text-white text-xl font-bold">✓</span>
@@ -88,11 +88,11 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
 
       {/* Articles Grid */}
       {recentArticles.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
           {recentArticles.map(article => (
             <div 
               key={article.id}
-              className="bg-white rounded-lg shadow-lg border border-gray-200 p-6 hover:shadow-xl hover:border-[#b8860b] transition-all flex flex-col h-full"
+              className="bg-white rounded-lg shadow-lg border border-gray-200 p-4 sm:p-6 hover:shadow-xl hover:border-[#b8860b] transition-all flex flex-col h-full"
             >
               {/* Article Header */}
               <div className="mb-4">

@@ -4,70 +4,87 @@ on:
   workflow_dispatch:
     inputs:
       test_mode:
-        description: 'Run in test mode'
+        description: "Run in test mode"
         required: false
-        default: 'false'
+        default: "false"
         type: choice
-        options:
-          - 'false'
-          - 'true'
+        options: ["false", "true"]
+      keywords:
+        description: "Comma-separated keyword override"
+        required: false
+        default: ""
+        type: string
 
-# Prevent concurrent runs - only one at a time
+
 concurrency:
-  group: article-pipeline
-  cancel-in-progress: false  # Don't cancel running jobs, just queue them
+  group: article-pipeline-global
+  cancel-in-progress: false
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      
+
       - name: Setup Python 3.10
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-      
-      - name: Install Python dependencies
+          python-version: "3.10"
+
+      - name: Install Python dependencies (retry)
+        shell: bash
         run: |
+          set -euo pipefail
           cd backend
-          pip install -r requirements.txt
-      
+          for i in 1 2 3; do
+            pip install -r requirements.txt && break
+            echo "pip install failed (attempt $i). Retrying..."
+            sleep 10
+          done
+
       - name: Setup Google Service Account
+        shell: bash
         run: |
+          set -euo pipefail
           cd backend
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > credentials.json
-      
-      - name: Run Article Collection Pipeline
+
+      - name: Run Article Collection Pipeline (retry + timeout)
+        shell: bash
         run: |
+          set -euo pipefail
           cd backend
-          python pipeline_runner.py
+          for i in 1 2; do
+            timeout 45m python pipeline_runner.py && break
+            echo "pipeline failed (attempt $i). Retrying..."
+            sleep 15
+          done
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           TEST_MODE: ${{ github.event.inputs.test_mode }}
-      
+          KEYWORDS_OVERRIDE: ${{ github.event.inputs.keywords }}
+
+
       - name: Find PDF and Get Date
         id: find-pdf
+        shell: bash
         run: |
+          set -euo pipefail
           PDF_FILE=$(find backend/output -name "*.pdf" -type f | head -n 1)
           if [ -z "$PDF_FILE" ]; then
-            echo "❌ No PDF found"
+            echo "No PDF found"
             exit 1
           fi
-          echo "pdf_path=$PDF_FILE" >> $GITHUB_OUTPUT
-          echo "✅ Found PDF: $PDF_FILE"
-          
-          # Get current date for artifact naming
+          echo "pdf_path=$PDF_FILE" >> "$GITHUB_OUTPUT"
           CURRENT_DATE=$(date +%Y-%m-%d)
-          echo "current_date=$CURRENT_DATE" >> $GITHUB_OUTPUT
-          echo "📅 Using date: $CURRENT_DATE"
-      
+          echo "current_date=$CURRENT_DATE" >> "$GITHUB_OUTPUT"
+
       - name: Upload PDF as Direct Download
         if: success()
         uses: actions/upload-artifact@v4
@@ -75,9 +92,10 @@ jobs:
           name: Reading-Roundup-${{ steps.find-pdf.outputs.current_date }}.pdf
           path: ${{ steps.find-pdf.outputs.pdf_path }}
           retention-days: 90
-      
+
       - name: Cleanup credentials
         if: always()
+        shell: bash
         run: |
           cd backend
           rm -f credentials.json

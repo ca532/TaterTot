@@ -74,6 +74,8 @@ class CustomArticleCollector:
             'sovereign', 'regalia', 'royal collection', 'palace'
         ]
         
+        self.active_keywords = list(self.luxury_keywords)
+
         # Your specific publication sources - MULTIPLE RSS FEEDS SUPPORTED
         self.target_sources = {
             'The Guardian': {
@@ -296,6 +298,9 @@ class CustomArticleCollector:
         self.requests_per_source = 0
         self.max_requests_per_minute = 20
     
+    def set_keywords_override(self, keywords: List[str]) -> None:
+        self.active_keywords = keywords if keywords else list(self.luxury_keywords)
+
     def get_random_user_agent(self):
         return random.choice(self.user_agents)
     
@@ -402,7 +407,7 @@ class CustomArticleCollector:
         found_keywords = []
         score = 0.0
         
-        for keyword in self.luxury_keywords:
+        for keyword in self.active_keywords:
             if keyword.lower() in combined_text:
                 found_keywords.append(keyword)
                 
@@ -581,7 +586,7 @@ class CustomArticleCollector:
             return False
         
         # Check for at least 1 luxury keyword in URL
-        has_keyword = any(keyword.lower() in url_lower for keyword in self.luxury_keywords)
+        has_keyword = any(keyword.lower() in url_lower for keyword in self.active_keywords)
         
         # Exclude obviously irrelevant content
         exclude_terms = [

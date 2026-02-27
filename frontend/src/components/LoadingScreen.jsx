@@ -40,19 +40,19 @@ function LoadingScreen() {
   }, [currentStep]);
 
   return (
-    <div className="w-full h-full flex items-center justify-center">
+    <div className="w-full h-full flex items-center justify-center px-4 sm:px-6 py-4">
       {/* Main Loading Card - Compact */}
-      <div className="w-full max-w-2xl bg-white rounded-lg shadow-2xl border-2 border-[#b8860b] p-8 text-center">
+      <div className="w-full max-w-2xl bg-white rounded-lg shadow-2xl border-2 border-[#b8860b] p-4 sm:p-8 text-center">
         {/* Animated Icon */}
-        <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-[#faf8f3] border-2 border-[#b8860b] mb-4">
-          <Loader2 className="w-10 h-10 text-[#b8860b] animate-spin" />
+        <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#faf8f3] border-2 border-[#b8860b] mb-4">
+          <Loader2 className="w-8 h-8 sm:w-10 sm:h-10 text-[#b8860b] animate-spin" />
         </div>
 
         {/* Status Text */}
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2">
           Pipeline Running
         </h2>
-        <p className="text-base text-gray-600 mb-6">
+        <p className="text-sm sm:text-base text-gray-600 mb-6">
           This usually takes 15-20 minutes...
         </p>
 
@@ -64,7 +64,7 @@ function LoadingScreen() {
               style={{ width: `${progress}%` }}
             />
           </div>
-          <p className="text-sm text-gray-500 font-semibold">{progress}% complete</p>
+          <p className="text-xs sm:text-sm text-gray-500 font-semibold">{progress}% complete</p>
         </div>
 
         {/* Step Progress - Compact */}
@@ -87,7 +87,7 @@ function LoadingScreen() {
               ) : (
                 <Clock className="w-5 h-5 text-gray-400 flex-shrink-0" />
               )}
-              <span className={`text-sm font-semibold ${
+              <span className={`text-xs sm:text-sm font-semibold ${
                 index === currentStep 
                   ? 'text-gray-900' 
                   : index < currentStep

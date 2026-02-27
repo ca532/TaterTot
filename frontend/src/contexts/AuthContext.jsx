@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
+import githubAPI from '../services/githubAPI';
 
 const AuthContext = createContext(null);
 
@@ -10,45 +11,32 @@ export const useAuth = () => {
   return context;
 };
 
-// Simple hash function
-const simpleHash = (str) => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return hash.toString();
-};
-
 export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const authStatus = sessionStorage.getItem('ca_auth');
-    if (authStatus === 'true') {
-      setIsAuthenticated(true);
-    }
+    const token = sessionStorage.getItem('access_token');
+    setIsAuthenticated(!!token);
     setIsLoading(false);
+
+    const onExpired = () => setIsAuthenticated(false);
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
   }, []);
 
-  const login = (password) => {
-    // Get password hash from environment variable
-    const correctPasswordHash = import.meta.env.VITE_PASSWORD_HASH || '-1799927751';
-    const inputHash = simpleHash(password);
-
-    if (inputHash === correctPasswordHash) {
+  const login = async (password) => {
+    const result = await githubAPI.login(password);
+    if (result.success) {
       setIsAuthenticated(true);
-      sessionStorage.setItem('ca_auth', 'true');
-      return true;
+      return { success: true };
     }
-    return false;
+    return { success: false, error: result.error || 'Login failed' };
   };
 
   const logout = () => {
+    githubAPI.clearToken();
     setIsAuthenticated(false);
-    sessionStorage.removeItem('ca_auth');
   };
 
   if (isLoading) {

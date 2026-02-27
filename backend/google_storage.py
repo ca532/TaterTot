@@ -362,6 +362,46 @@ class GoogleSheetsDB:
             
         except Exception as e:
             print(f"⚠️  Error saving artifact info: {str(e)}")
+
+    def save_pdf_links(self, download_link, view_link):
+        """
+        Save latest PDF links to Metadata sheet:
+        - latest_pdf
+        - latest_pdf_view
+        """
+        if not download_link and not view_link:
+            print("⚠️  No PDF links to save")
+            return
+
+        try:
+            try:
+                metadata_sheet = self.spreadsheet.worksheet('Metadata')
+            except Exception:
+                metadata_sheet = self.spreadsheet.add_worksheet(
+                    title='Metadata',
+                    rows=20,
+                    cols=3
+                )
+                metadata_sheet.update('A1:C1', [['Key', 'Value', 'Updated']])
+
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            def upsert_key(key, value):
+                if not value:
+                    return
+                try:
+                    cell = metadata_sheet.find(key)
+                    row_num = cell.row
+                    metadata_sheet.update(f'B{row_num}:C{row_num}', [[value, timestamp]])
+                except Exception:
+                    metadata_sheet.append_row([key, value, timestamp])
+
+            upsert_key('latest_pdf', download_link)
+            upsert_key('latest_pdf_view', view_link)
+
+            print("✅ Saved latest_pdf/latest_pdf_view to Metadata sheet")
+        except Exception as e:
+            print(f"⚠️  Error saving PDF links metadata: {str(e)}")
     
     def update_draft_status(self, draft_id, approved=True):
         """

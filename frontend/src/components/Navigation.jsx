@@ -7,8 +7,8 @@ function Navigation({ activeTab, setActiveTab }) {
 
   return (
     <nav className="bg-white border-b-2 border-gray-200">
-      <div className="w-full px-8 lg:px-16">
-        <div className="flex space-x-8">
+      <div className="w-full px-4 sm:px-6 lg:px-12">
+        <div className="flex gap-4 sm:gap-8 overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -18,7 +18,7 @@ function Navigation({ activeTab, setActiveTab }) {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  flex items-center space-x-2 py-3 px-1 border-b-2 font-semibold text-sm
+                  flex items-center space-x-2 py-3 px-1 border-b-2 font-semibold text-xs sm:text-sm whitespace-nowrap
                   transition-colors duration-200
                   ${isActive 
                     ? 'border-[#b8860b] text-[#b8860b]' 

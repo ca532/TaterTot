@@ -1,193 +1,172 @@
 /**
- * GitHub API Service
- * Triggers workflows and fetches artifacts
+ * Pipeline API Service (backend-only, no direct GitHub calls from frontend)
  */
 
-const GITHUB_OWNER = import.meta.env.VITE_GITHUB_OWNER;
-const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO;
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
+const PIPELINE_API_BASE = import.meta.env.VITE_PIPELINE_API_BASE || "http://localhost:8000";
+const TOKEN_KEY = "access_token";
 
-class GitHubService {
-  constructor() {
-    this.baseURL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
-    
-    if (!GITHUB_OWNER || !GITHUB_REPO) {
-      console.warn('⚠️ GitHub credentials not configured');
-    }
+class PipelineService {
+  getToken() {
+    return sessionStorage.getItem(TOKEN_KEY);
   }
 
-  /**
- * Trigger the article collection workflow
- */
-async triggerPipeline() {
-  if (!GITHUB_TOKEN) {
-    console.error('GitHub token not configured');
-    return { success: false, error: 'No GitHub token configured' };
+  setToken(token) {
+    sessionStorage.setItem(TOKEN_KEY, token);
   }
 
-  if (!GITHUB_OWNER || !GITHUB_REPO) {
-    console.error('GitHub owner/repo not configured');
-    return { success: false, error: 'GitHub owner/repo not configured' };
+  clearToken() {
+    sessionStorage.removeItem(TOKEN_KEY);
   }
 
-  // Use workflow ID instead of filename (more reliable)
-  const url = `${this.baseURL}/actions/workflows/collect-articles.yml/dispatches`;
-  
-  console.log('Triggering workflow:', url);
-  
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${GITHUB_TOKEN}`,
-        'Content-Type': 'application/json',
-        'X-GitHub-Api-Version': '2022-11-28'
-      },
-      body: JSON.stringify({
-        ref: 'master',  // Your default branch
-        inputs: {
-          test_mode: 'false'
-        }
-      })
-    });
-    
-    console.log('Response status:', response.status);
-    
-    if (response.status === 204) {
-      console.log('✅ Workflow triggered successfully');
-      return { success: true };
-    } else {
-      const errorText = await response.text();
-      console.error('GitHub API Error:', response.status, errorText);
-      
-      let errorMessage = `HTTP ${response.status}`;
-      
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.message || errorMessage;
-      } catch (e) {
-        // Not JSON
-      }
-      
-      return { success: false, error: errorMessage };
-    }
-    
-  } catch (error) {
-    console.error('Error triggering workflow:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-  /**
-   * Get latest workflow runs
-   */
-  async getWorkflowRuns(limit = 5) {
-    const url = `${this.baseURL}/actions/runs?per_page=${limit}`;
-    
+  getHeaders() {
     const headers = {
-      'Accept': 'application/vnd.github+json',
+      "Accept": "application/json"
     };
-    
-    if (GITHUB_TOKEN) {
-      headers['Authorization'] = `Bearer ${GITHUB_TOKEN}`;
+
+    const token = this.getToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
     }
-    
+
+    return headers;
+  }
+
+  async login(password) {
     try {
-      const response = await fetch(url, { headers });
-      const data = await response.json();
-      
-      return data.workflow_runs || [];
-    } catch (error) {
-      console.error('Error fetching workflow runs:', error);
-      return [];
+      const res = await fetch(`${PIPELINE_API_BASE}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({ password })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.detail || `HTTP ${res.status}` };
+      }
+
+      this.setToken(data.access_token);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
     }
   }
 
-  /**
-   * Check if a workflow is currently running
-   */
-  async isWorkflowRunning() {
-    const runs = await this.getWorkflowRuns(1);
-    
-    if (runs.length > 0) {
-      const latestRun = runs[0];
-      return latestRun.status === 'in_progress' || latestRun.status === 'queued';
-    }
-    
-    return false;
+  handleUnauthorized() {
+    this.clearToken();
+    window.dispatchEvent(new Event("auth:expired"));
   }
 
-  /**
-   * Get the status of the latest workflow run
-   */
+  async triggerPipeline(payload = {}) {
+    try {
+      const res = await fetch(`${PIPELINE_API_BASE}/pipeline/trigger`, {
+        method: "POST",
+        headers: {
+          ...this.getHeaders(),
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        this.handleUnauthorized();
+      }
+
+      if (!res.ok) {
+        return { success: false, error: data.detail || data.error || `HTTP ${res.status}` };
+      }
+
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   async getLatestRunStatus() {
-    const runs = await this.getWorkflowRuns(1);
-    
-    if (runs.length > 0) {
-      const latestRun = runs[0];
-      return {
-        status: latestRun.status,        // queued, in_progress, completed
-        conclusion: latestRun.conclusion, // success, failure, cancelled
-        createdAt: latestRun.created_at,
-        updatedAt: latestRun.updated_at
-      };
+    try {
+      const res = await fetch(`${PIPELINE_API_BASE}/pipeline/status`, {
+        method: "GET",
+        headers: this.getHeaders()
+      });
+
+      if (res.status === 401) {
+        this.handleUnauthorized();
+      }
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (error) {
+      console.error("Error fetching latest run status:", error);
+      return null;
     }
-    
-    return null;
   }
-    /**
-   * Get direct download link for latest artifact
-   */
+
+  async isWorkflowRunning() {
+    const status = await this.getLatestRunStatus();
+    if (!status) return false;
+    return status.status === "queued" || status.status === "in_progress" || status.status === "running";
+  }
+
   async getLatestArtifactDownloadURL() {
     try {
-      const runs = await this.getWorkflowRuns(5);
-      
-      // Find latest successful run
-      const successfulRun = runs.find(run => 
-        run.conclusion === 'success' &&
-        run.name === 'Collect & Summarize Articles'
-      );
-      
-      if (!successfulRun) {
-        console.log('No successful runs found');
-        return null;
+      const res = await fetch(`${PIPELINE_API_BASE}/pipeline/latest-artifact`, {
+        method: "GET",
+        headers: this.getHeaders()
+      });
+
+      if (res.status === 401) {
+        this.handleUnauthorized();
       }
-      
-      // Get artifacts for this run
-      const artifactsURL = `${this.baseURL}/actions/runs/${successfulRun.id}/artifacts`;
-      
-      const headers = {
-        'Accept': 'application/vnd.github+json',
-      };
-      
-      if (GITHUB_TOKEN) {
-        headers['Authorization'] = `Bearer ${GITHUB_TOKEN}`;
-      }
-      
-      const response = await fetch(artifactsURL, { headers });
-      const data = await response.json();
-      
-      // Find the Reading Roundup artifact
-      const artifact = data.artifacts?.find(a => a.name.startsWith('Reading-Roundup-'));
-      
-      if (artifact) {
-        return {
-          downloadURL: artifact.archive_download_url,
-          name: artifact.name,
-          runNumber: successfulRun.run_number,
-          createdAt: artifact.created_at
-        };
-      }
-      
-      return null;
-      
+      if (!res.ok) return null;
+      const data = await res.json();
+
+      if (!data || !data.downloadURL) return null;
+      return data;
     } catch (error) {
-      console.error('Error getting artifact:', error);
+      console.error("Error fetching latest artifact URL:", error);
       return null;
     }
   }
 
+  async downloadLatestArtifactZip() {
+    const res = await fetch(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
+      method: "GET",
+      headers: this.getHeaders()
+    });
+
+    if (res.status === 401) {
+      this.handleUnauthorized();
+      return { success: false, error: "Unauthorized" };
+    }
+
+    if (res.status === 404) {
+      return { success: false, error: "No PDF available yet. Run the pipeline first to generate a PDF." };
+    }
+
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try {
+        const data = await res.json();
+        message = data.detail || message;
+      } catch (_e) {
+        // no-op
+      }
+      return { success: false, error: message };
+    }
+
+    const blob = await res.blob();
+    const contentDisposition = res.headers.get("content-disposition") || "";
+    const match = contentDisposition.match(/filename="([^"]+)"/i);
+    const filename = match?.[1] || "latest-artifact.zip";
+    return { success: true, blob, filename };
+  }
+
+  // Backward compatibility if anything else still calls this
+  async getWorkflowRuns() {
+    return [];
+  }
 }
 
-export default new GitHubService();
+export default new PipelineService();

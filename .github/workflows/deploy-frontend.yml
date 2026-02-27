@@ -3,7 +3,7 @@ name: Deploy Frontend to GitHub Pages
 on:
   push:
     branches:
-      - main
+      - App-revamp
     paths:
       - 'frontend/**'
   workflow_dispatch:
@@ -39,12 +39,9 @@ jobs:
         run: npm run build
         env:
           VITE_GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          VITE_GITHUB_OWNER: ${{ github.repository_owner }}
-          VITE_GITHUB_REPO: ${{ github.event.repository.name }}
-          VITE_GITHUB_TOKEN: ${{ secrets.GH_WORKFLOW_TOKEN }}
-          VITE_PASSWORD_HASH: ${{ secrets.VITE_PASSWORD_HASH }}
-      
+          VITE_GOOGLE_API_KEY: ${{ secrets.VITE_GOOGLE_API_KEY }}
+          VITE_PIPELINE_API_BASE: ${{ secrets.PIPELINE_API_BASE }}
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
       

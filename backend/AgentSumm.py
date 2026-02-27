@@ -3,6 +3,7 @@ from transformers import pipeline
 from dataclasses import dataclass
 from typing import List, Optional
 from urllib.parse import urlparse
+import os
 import re
 import json
 from bs4 import BeautifulSoup
@@ -26,10 +27,11 @@ class ArticleSummary:
     topics: List[str] = None
 
 class ArticleSummarizer:
-    def __init__(self, model: str = "facebook/bart-large-cnn"):
-        """Initialize the summarizer with BART CNN model"""
-        print(f"Loading model: {model} ... this may take a moment.")
-        self.summarizer = pipeline("summarization", model=model)
+    def __init__(self, model: str = None):
+        """Initialize summarizer model from env, defaulting to BART."""
+        resolved_model = model or os.getenv("SUMMARIZER_MODEL", "facebook/bart-large-cnn")
+        print(f"Loading model: {resolved_model} ... this may take a moment.")
+        self.summarizer = pipeline("summarization", model=resolved_model)
         
         # Setup CloudScraper if available
         if CLOUDSCRAPER_AVAILABLE:
@@ -162,7 +164,7 @@ def main():
     print("=" * 50)
 
     # Initialize summarizer
-    summarizer = ArticleSummarizer("facebook/bart-large-cnn")
+    summarizer = ArticleSummarizer()
     
     url = input("\nEnter article URL: ").strip()
     if not url:

@@ -29,6 +29,13 @@ except ImportError as e:
     sys.exit(1)
 
 
+def _parse_keywords_override() -> list[str]:
+    raw = os.getenv("KEYWORDS_OVERRIDE", "").strip()
+    if not raw:
+        return []
+    return [k.strip().lower() for k in raw.split(",") if k.strip()]
+
+
 class PipelineRunner:
     """
     Main pipeline orchestrator
@@ -45,6 +52,12 @@ class PipelineRunner:
         # Initialize your agents
         print("🤖 Initializing Article Collector...")
         self.collector = CustomArticleCollector()
+
+        
+        override_keywords = _parse_keywords_override()
+        if override_keywords:
+            self.collector.set_keywords_override(override_keywords)
+            print(f"Using keyword override ({len(override_keywords)} keywords)")
         
         print("🤖 Initializing Article Summarizer...")
         self.summarizer = ArticleSummarizer()
@@ -242,6 +255,17 @@ class PipelineRunner:
             
             # Step 4: Generate PDF (renumber this)
             pdf_file = self.generate_pdf(summarized_articles)
+
+            # Step 4.5: Upload PDF to Drive and save links to Metadata
+            if pdf_file and os.path.exists(pdf_file):
+                print("\n📤 Uploading PDF to Google Drive...")
+                download_link, view_link = self.db.upload_pdf_to_drive(pdf_file)
+                if download_link or view_link:
+                    self.db.save_pdf_links(download_link, view_link)
+                else:
+                    print("⚠️  PDF upload returned no links; skipping Metadata PDF keys")
+            else:
+                print("⚠️  No PDF file available for Drive upload")
             
             # Step 5: Save metadata
             self.save_run_metadata()

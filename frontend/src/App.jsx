@@ -9,9 +9,11 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState('summaries');
 
   return (
-    <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
-      {activeTab === 'summaries' && <SummariesView />}
-    </Layout>
+    <div className="min-h-screen w-full">
+      <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
+        {activeTab === 'summaries' && <SummariesView />}
+      </Layout>
+    </div>
   );
 }
 

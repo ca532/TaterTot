@@ -142,7 +142,6 @@ class GoogleSheetsService {
    * Get the latest workflow run info from GitHub API
    */
   async getLatestWorkflowRun() {
-    // You'll need to add VITE_GITHUB_TOKEN to access this
     // For now, return mock data
     return {
       status: 'completed',

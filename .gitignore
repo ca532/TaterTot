@@ -30,6 +30,7 @@ service-account.json
 # Backend outputs
 backend/output/
 backend/*.txt
+!backend/requirements.txt
 backend/*.pdf
 backend/*.json
 !backend/config/*.json
