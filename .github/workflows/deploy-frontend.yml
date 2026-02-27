@@ -39,7 +39,7 @@ jobs:
         run: npm run build
         env:
           VITE_GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          VITE_GOOGLE_API_KEY: ${{ secrets.VITE_GOOGLE_API_KEY }}
+          VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           VITE_PIPELINE_API_BASE: ${{ secrets.PIPELINE_API_BASE }}
 
       - name: Setup Pages
