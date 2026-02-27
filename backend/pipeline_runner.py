@@ -256,16 +256,11 @@ class PipelineRunner:
             # Step 4: Generate PDF (renumber this)
             pdf_file = self.generate_pdf(summarized_articles)
 
-            # Step 4.5: Upload PDF to Drive and save links to Metadata
+            # Step 4.5: Drive upload disabled (artifact ZIP is the active download path)
             if pdf_file and os.path.exists(pdf_file):
-                print("\n📤 Uploading PDF to Google Drive...")
-                download_link, view_link = self.db.upload_pdf_to_drive(pdf_file)
-                if download_link or view_link:
-                    self.db.save_pdf_links(download_link, view_link)
-                else:
-                    print("⚠️  PDF upload returned no links; skipping Metadata PDF keys")
+                print("\nℹ️  Skipping Google Drive upload (using GitHub artifact ZIP download path)")
             else:
-                print("⚠️  No PDF file available for Drive upload")
+                print("⚠️  No PDF file available")
             
             # Step 5: Save metadata
             self.save_run_metadata()

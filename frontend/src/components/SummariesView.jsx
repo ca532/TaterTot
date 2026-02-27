@@ -268,7 +268,7 @@ const handleRunPipeline = async () => {
         <ol className="space-y-2">
           <li className="text-sm text-gray-700">1. Collect articles from 40+ publications</li>
           <li className="text-sm text-gray-700">2. AI summarizes each article</li>
-          <li className="text-sm text-gray-700">3. Results saved to Google Sheets and PDF uploaded</li>
+          <li className="text-sm text-gray-700">3. Results saved to Google Sheets and PDF available as GitHub artifact ZIP</li>
         </ol>
         <div className="mt-4 pt-4 border-t-2 border-[#b8860b]">
           <p className="text-xs text-gray-600 flex items-center gap-2">
