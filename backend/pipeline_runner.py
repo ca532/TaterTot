@@ -264,6 +264,9 @@ class PipelineRunner:
             
             # Step 5: Save metadata
             self.save_run_metadata()
+
+            # Save pipeline stats for UI diagnostics (including zero-article runs)
+            self.db.save_pipeline_stats(len(summarized_articles))
             
             # Summary
             end_time = datetime.now()

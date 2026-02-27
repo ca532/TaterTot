@@ -87,7 +87,12 @@ function SummariesView() {
         }
         setViewStatus("complete");
       } else {
-        alert("No new articles yet. Pipeline may still be running.");
+        const usedKeywordOverride = (keywordsInput || "").trim().length > 0;
+        alert(
+          usedKeywordOverride
+            ? "Pipeline completed, but 0 articles matched your keyword override. Try broader keywords or leave keywords blank to use defaults."
+            : "Pipeline completed, but 0 articles were collected this run. Sources may have had no matching recent content."
+        );
         setViewStatus("idle");
       }
     } catch (error) {

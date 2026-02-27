@@ -402,6 +402,36 @@ class GoogleSheetsDB:
             print("✅ Saved latest_pdf/latest_pdf_view to Metadata sheet")
         except Exception as e:
             print(f"⚠️  Error saving PDF links metadata: {str(e)}")
+
+    def save_pipeline_stats(self, articles_collected: int):
+        """
+        Save pipeline stats to Metadata sheet.
+        """
+        try:
+            try:
+                metadata_sheet = self.spreadsheet.worksheet('Metadata')
+            except Exception:
+                metadata_sheet = self.spreadsheet.add_worksheet(
+                    title='Metadata',
+                    rows=20,
+                    cols=3
+                )
+                metadata_sheet.update('A1:C1', [['Key', 'Value', 'Updated']])
+
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            key = 'latest_articles_collected'
+            value = str(int(articles_collected))
+
+            try:
+                cell = metadata_sheet.find(key)
+                row_num = cell.row
+                metadata_sheet.update(f'B{row_num}:C{row_num}', [[value, timestamp]])
+            except Exception:
+                metadata_sheet.append_row([key, value, timestamp])
+
+            print(f"✅ Saved {key}={value} to Metadata sheet")
+        except Exception as e:
+            print(f"⚠️  Error saving pipeline stats: {str(e)}")
     
     def update_draft_status(self, draft_id, approved=True):
         """

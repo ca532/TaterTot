@@ -75,17 +75,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PDF_FILE=$(find backend/output -name "*.pdf" -type f | head -n 1)
-          if [ -z "$PDF_FILE" ]; then
-            echo "No PDF found"
-            exit 1
+          if [ ! -d "backend/output" ]; then
+            echo "has_pdf=false" >> "$GITHUB_OUTPUT"
+            echo "No backend/output directory; no PDF generated this run."
+            exit 0
           fi
+
+          PDF_FILE=$(find backend/output -name "*.pdf" -type f | head -n 1)
+          if [ -z "${PDF_FILE:-}" ]; then
+            echo "has_pdf=false" >> "$GITHUB_OUTPUT"
+            echo "No PDF found this run."
+            exit 0
+          fi
+
+          echo "has_pdf=true" >> "$GITHUB_OUTPUT"
           echo "pdf_path=$PDF_FILE" >> "$GITHUB_OUTPUT"
           CURRENT_DATE=$(date +%Y-%m-%d)
           echo "current_date=$CURRENT_DATE" >> "$GITHUB_OUTPUT"
 
       - name: Upload PDF as Direct Download
-        if: success()
+        if: success() && steps.find-pdf.outputs.has_pdf == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Reading-Roundup-${{ steps.find-pdf.outputs.current_date }}.pdf
