@@ -78,184 +78,147 @@ class CustomArticleCollector:
 
         # Your specific publication sources - MULTIPLE RSS FEEDS SUPPORTED
         self.target_sources = {
-            'The Guardian': {
-                'base_url': 'https://www.theguardian.com/fashion/womens-jewellery',
-                'rss_feeds': [
-                    'https://www.theguardian.com/fashion/womens-jewellery/rss',
-                    'https://www.theguardian.com/uk/rss'
-                ],
-                'sitemap_url': 'https://www.theguardian.com/sitemaps/news.xml'
-            },
-            'The Telegraph': {
-                'base_url': 'https://www.telegraph.co.uk/luxury/',
-                'rss_feeds': [
-                    'https://www.telegraph.co.uk/luxury/rss'
-                ],
-                'sitemap_url': 'https://www.telegraph.co.uk/luxury/sitemap.xml'
-            },
-            'Evening Standard': {
-                'base_url': 'https://www.standard.co.uk/topic/jewellery',
-                'rss_feeds': [
-                    'https://www.standard.co.uk/rss'
-                ],
-                'sitemap_url': 'https://www.standard.co.uk/sitemaps/googlenews'
-            },
-            'The Times': {
-                'base_url': 'https://www.thetimes.com/life-style/luxury',
-                'rss_feeds': [],
-                'sitemap_url': 'https://www.thetimes.com/sitemaps/news'
-            },
-            'Financial Times': {
-                'base_url': 'https://www.ft.com/fashion',
-                'rss_feeds': [],
-                'sitemap_url': 'https://www.ft.com/sitemaps/news.xml'
-            },
-            'Forbes': {
-                'base_url': 'https://www.forbes.com/business/',
-                'rss_feeds': [
-                    'https://www.forbes.com/business/feed/'
-                ],
-                'sitemap_url': 'https://www.forbes.com/news_sitemap.xml'
-            },
-            'Business of Fashion': {
-                'base_url': 'https://www.businessoffashion.com/',
-                'rss_feeds': [
-                    'https://www.businessoffashion.com/feed/'
-                ],
-                'sitemap_url': 'https://www.businessoffashion.com/arc/outboundfeeds/sitemap/google-news/'
-            },
-            'Vogue Business': {
-                'base_url': 'https://www.voguebusiness.com/',
-                'rss_feeds': [
-                    'https://www.voguebusiness.com/feed'
-                ],
-                'sitemap_url': 'https://www.vogue.com/feed/google-latest-news/sitemap-google-news'
-            },
-            'Harper\'s Bazaar': {
-                'base_url': 'https://www.harpersbazaar.com/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://www.harpersbazaar.com/sitemap_google_news.xml'
-            },
-            'Elle': {
-                'base_url': 'https://www.elle.com/jewelry/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://www.elle.com/sitemap_google_news.xml'
-            },
-            'Vogue UK': {
-                'base_url': 'https://www.vogue.co.uk/',
-                'rss_feeds': [
-                    'https://www.vogue.co.uk/feed/rss'
-                ],
-                'sitemap_url': 'https://www.vogue.co.uk/feed/sitemap/sitemap-google-news'
-            },
-            'Vanity Fair': {
-                'base_url': 'https://www.vanityfair.com/',
-                'rss_feeds': [
-                    'https://www.vanityfair.com/feed/rss'
-                ],
-                'sitemap_url': 'https://www.vanityfair.com/feed/google-latest-news/sitemap-google-news'
-            },
-            'Tatler': {
-                'base_url': 'https://www.tatler.com/',
-                'rss_feeds': ['https://www.tatler.com/feed/rss'],
-                'sitemap_url': 'https://www.tatler.com/feed/google-latest-news/sitemap-google-news'
-            },
-            'Red Online': {
-                'base_url': 'https://www.redonline.co.uk/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://www.redonline.co.uk/sitemap_google_news.xml'
-            },
-            'Town & Country': {
-                'base_url': 'https://www.townandcountrymag.com/style/',
-                'rss_feeds': [
-                    'https://www.townandcountrymag.com/rss/all.xml/'
-                ],
-                'sitemap_url': 'https://www.townandcountrymag.com/sitemap_google_news.xml'
-            },
-            'StyleCaster': {
-                'base_url': 'https://stylecaster.com/c/fashion/',
-                'rss_feeds': [
-                    'https://stylecaster.com/feed/'
-                ],
-                'sitemap_url': 'https://stylecaster.com/news-sitemap.xml'
-            },
-            'The Handbook': {
-                'base_url': 'https://www.thehandbook.com/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://www.thehandbook.com/sitemap.xml?postType=editorial&offset=0'
-            },
-            'Something About Rocks': {
-                'base_url': 'https://somethingaboutrocks.com/',
-                'rss_feeds': [
-                    'https://somethingaboutrocks.com/feed/'
-                ],
-                'sitemap_url': None
-            },
-            'The Cut': {
-                'base_url': 'https://www.thecut.com/',
-                'rss_feeds': [
-                    'https://www.thecut.com/rss/index.xml'
-                ],
-                'sitemap_url': 'https://www.thecut.com/sitemaps/sitemap-2025.xml'
-            },
-            'The Monocle': {
-                'base_url': 'https://monocle.com/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://monocle.com/the-monocle-minute/'
-            },
-            'The Jewels Club': {
-                'base_url': 'https://thejewels.club/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://thejewels.club/sitemap.xml'
-            },
-            'Retail Jeweller': {
-                'base_url': 'https://www.retail-jeweller.com/',
-                'rss_feeds': [
-                    'https://www.retail-jeweller.com/feed/'
-                ],
-                'sitemap_url': None
-            },
-            'Professional Jeweller': {
-                'base_url': 'https://www.professionaljeweller.com/',
-                'rss_feeds': ['https://www.professionaljeweller.com/feed/'],
-                'sitemap_url': None
-            },
-            'Rapaport': {
-                'base_url': 'https://rapaport.com/',
-                'rss_feeds': [
-                    'https://rapaport.com/rss/'
-                ],
-                'sitemap_url': None
-            },
-            'National Jeweler': {
-                'base_url': 'https://nationaljeweler.com/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://nationaljeweler.com/sitemap.xml'
-            },
-            'Wall Street Journal': {
-                'base_url': 'https://www.wsj.com/news/life-arts/fashion',
-                'rss_feeds': [
-                    'https://feeds.content.downjones.io/public/rss/RSSWorldNews',
-                    'https://feeds.content.downjones.io/public/rss/RSSLifestyle',
-                    'https://feeds.content.downjones.io/public/rss/RSSArtsCulture',
-                    'https://feeds.content.downjones.io/public/rss/RSSStyle'
-                ],
-                'sitemap_url': 'https://www.wsj.com/wsjsitemaps/wsj_google_news.xml'
-            },
-            'New York Times': {
-                'base_url': 'https://www.nytimes.com/',
-                'rss_feeds': [
-                    'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-                    'https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml',
-                    'https://rss.nytimes.com/services/xml/rss/nyt/FashionandStyle.xml'
-                ],
-                'sitemap_url': 'https://www.nytimes.com/sitemaps/new/news.xml.gz'
-            },
-            'Business Insider': {
-                'base_url': 'https://www.businessinsider.com/',
-                'rss_feeds': [],
-                'sitemap_url': 'https://www.businessinsider.com/sitemap/google-news.xml'
-            }
+        'FNLondon': {
+
+                        'base_url': 'https://www.fnlondon.com/',
+
+                        'rss_feeds': [],
+
+                        'sitemap_url': 'https://www.fnlondon.com/fn_google_news.xml'
+
+                    },
+
+
+
+        'Institutional Investor': {
+
+                        'base_url': 'https://www.institutionalinvestor.com/',
+
+                        'rss_feeds': ['https://www.institutionalinvestor.com/rss.xml'],
+
+                        'sitemap_url': 'https://www.institutionalinvestor.com/sitemap.xml'
+
+                    },
+
+
+
+        'Euromoney': {
+
+                        'base_url': 'https://www.euromoney.com/',
+
+                        'rss_feeds': ['https://www.euromoney.com/feed'],
+
+                        'sitemap_url': 'https://www.euromoney.com/sitemap_index.xml'
+
+                    },
+
+
+
+        'FX Markets': {
+
+                        'base_url': 'https://www.fx-markets.com/',
+
+                        'rss_feeds': ['https://www.fx-markets.com/feeds/rss'],
+
+                        'sitemap_url': 'https://www.fx-markets.com/sitemap.xml'
+
+                    },
+
+
+
+        'CNBC': {
+
+                        'base_url': 'https://www.cnbc.com/',
+
+                        'rss_feeds': ['https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147', 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069',  'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=21324812'],
+
+                        'sitemap_url': 'https://www.cnbc.com/sitemap_news.xml'
+
+                    },
+
+
+
+        'Monocle': {
+
+                        'base_url': 'https://monocle.com/',
+
+                        'rss_feeds': ['https://monocle.com/feed'],
+
+                        'sitemap_url': 'https://monocle.com/sitemap_index.xml'
+
+                    },
+
+
+
+        'BBC': {
+
+                        'base_url': 'https://www.bbc.com/',
+
+                        'rss_feeds': ['https://feeds.bbci.co.uk/news/rss.xml', 'https://feeds.bbci.co.uk/news/business/rss.xml', 'https://feeds.bbci.co.uk/news/world/rss.xml'],
+
+                        'sitemap_url': 'https://www.bbc.com/sitemaps/https-index-com-news.xml'
+
+                    },
+
+
+
+        'Yahoo Finance': {
+
+                        'base_url': 'https://finance.yahoo.com/',
+
+                        'rss_feeds': [],
+
+                        'sitemap_url': 'https://finance.yahoo.com/sitemap_en-us_quotes_index.xml'
+
+                    },
+
+
+
+        'This is Money': {
+
+                        'base_url': 'https://www.thisismoney.co.uk/',
+
+                        'rss_feeds': ['https://www.dailymail.co.uk/money/articles.rss'],
+
+                        'sitemap_url': 'https://www.thisismoney.co.uk/newssitemap.xml'
+
+                    },
+
+
+
+        'Money Week': {
+
+                        'base_url': 'https://moneyweek.com/',
+
+                        'rss_feeds': ['https://moneyweek.com/feeds.xml'],
+
+                        'sitemap_url': 'https://moneyweek.com/sitemap-news.xml'
+
+                    },
+
+
+
+        'Banking Technology Magazine': {
+
+                        'base_url': 'https://www.fintechfutures.com/',
+
+                        'rss_feeds': ['https://www.fintechfutures.com/rss.xml'],
+
+                        'sitemap_url': 'https://www.fintechfutures.com/googlenews.xml'
+
+                    },
+
+
+
+        'City AM': {
+
+                        'base_url': 'https://www.cityam.com/',
+
+                        'rss_feeds': ['https://www.cityam.com/feed'],
+
+                        'sitemap_url': 'https://www.cityam.com/sitemap.xml'
+
+                    }
         }
         
         # Initialize scraper with priority order
