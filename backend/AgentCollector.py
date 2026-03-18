@@ -374,37 +374,46 @@ class CustomArticleCollector:
             if keyword.lower() in combined_text:
                 found_keywords.append(keyword)
                 
-                # Core priority keywords
-                if keyword.lower() in ['luxury', 'jewellery', 'fine jewellery', 'craftsmanship', 'jewels']:
+                # Core market infrastructure / derivatives terms
+                if keyword.lower() in [
+                    'eurozone derivatives clearing',
+                    'euro interest rate swaps clearing',
+                    'euro ccp infrastructure',
+                    'emir clearing rules',
+                    'clearing house',
+                    'interest-rate derivatives',
+                    'otc derivatives',
+                    'interest rate swaps',
+                    'fx swaps',
+                    'credit derivatives',
+                    'central counterparty clearing',
+                    'eurozone interest rate derivatives clearing infrastructure',
+                ]:
                     score += 4.0
-                # Primary jewelry terms + royalty keywords
-                elif keyword.lower() in ['jewelry', 'diamond', 'engagement ring', 'wedding ring', 'Lab grown diamonds',
-                                         'Diamond price', 'Gold price', 'crown', 'tiara', 'coronation', 'queen', 
-                                         'king', 'prince', 'princess', 'duchess', 'duke', 'royal family', 
-                                         'buckingham palace', 'windsor', 'crown jewels', 'state visit', 
-                                         'royal wedding', 'monarchy', 'sovereign', 'regalia', 'royal collection', 'palace']:
+                # Investment vehicles
+                elif keyword.lower() in [
+                    'mutual funds',
+                    'hedge funds',
+                    'private equity',
+                ]:
                     score += 3.0
-                # Jewelry pieces and materials
-                elif keyword.lower() in ['necklace', 'bracelet', 'earrings', 'pendant', 'brooch',
-                                         'gold', 'platinum', 'silver', 'emerald', 'sapphire', 'ruby']:
+                # Emerging assets / market tech
+                elif keyword.lower() in [
+                    'blockchain',
+                    'cryptocurrency',
+                    'fintech',
+                    'gold market price',
+                ]:
                     score += 2.5
-                # Premium luxury brands
-                elif keyword.lower() in ['cartier', 'tiffany', 'bulgari', 'chanel', 'dior', 'van cleef',
-                                         'graff', 'harry winston', 'chopard', 'piaget', 'boucheron']:
-                    score += 3.5
-                # Fashion and luxury terms
-                elif keyword.lower() in ['fashion', 'accessories', 'watches', 'timepiece', 'collection', 
-                                         'launch', 'haute couture', 'limited edition']:
-                    score += 2.5
-                # Events and celebrity
-                elif keyword.lower() in ['red carpet', 'celebrity', 'fashion week', 'auction', 'royal', 'royals']:
+                # Risk / regulatory governance
+                elif keyword.lower() in [
+                    'risk management',
+                    'compliance',
+                ]:
                     score += 2.0
-                # Industry terms
-                elif keyword.lower() in ['collaboration', 'investment', 'trends', 'style', 'Luxury sector', 
-                                         'Luxury marketing trends']:
-                    score += 1.5
                 else:
                     score += 1.0
+
         
         # Bonus for multiple keyword matches
         if len(found_keywords) > 2:
@@ -807,10 +816,11 @@ class CustomArticleCollector:
                 print(f"  Error: {error_msg[:60]} - {candidate.publication}")
             return None
     
-    def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
-        """Collect exactly top 3 articles from each publication"""
-        print("Weekly Article Collection (Top 3 per Publication)")
+    def collect_top_10_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
+        """Collect exactly top 10 articles from each publication"""
+        print("Weekly Article Collection (Top 10 per Publication)")
         print("=" * 60)
+        max_articles_per_publication = 10
         
         sources_to_use = sources_subset if sources_subset else list(self.target_sources.keys())
         print(f"Targeting {len(sources_to_use)} publications\n")
@@ -840,7 +850,7 @@ class CustomArticleCollector:
             max_tries = min(len(candidates), 20)
             
             for candidate in candidates[:max_tries]:
-                if len(publication_articles) >= 3:
+                if len(publication_articles) >= max_articles_per_publication:
                     break
                 
                 enhanced = self.extract_full_content(candidate)
@@ -878,15 +888,15 @@ class CustomArticleCollector:
                     print(f"  RSS fallback error: {str(e)[:60]}")
             
             publication_articles.sort(key=lambda x: x.relevance_score, reverse=True)
-            final_3 = publication_articles[:3]
+            final_10 = publication_articles[:max_articles_per_publication]
             
-            if final_3:
-                scores = [f"{a.relevance_score:.1f}" for a in final_3]
-                print(f"  Collected: {len(final_3)} article(s) [scores: {', '.join(scores)}]\n")
+            if final_10:
+                scores = [f"{a.relevance_score:.1f}" for a in final_10]
+                print(f"  Collected: {len(final_10)} article(s) [scores: {', '.join(scores)}]\n")
             else:
                 print(f"  Collected: 0 articles\n")
             
-            all_articles.extend(final_3)
+            all_articles.extend(final_10)
             
             time.sleep(random.uniform(3, 6))
         
