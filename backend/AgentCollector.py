@@ -55,23 +55,30 @@ class CustomArticleCollector:
         
         # Your custom keywords for relevance filtering (British English)
         self.luxury_keywords = [
-            'luxury', 'jewellery', 'fine jewellery', 'craftsmanship',
-            'jewelry', 'diamond', 'engagement ring', 'wedding ring',
-            'fashion', 'accessories', 'watches', 'timepiece',
-            'necklace', 'bracelet', 'earrings', 'pendant', 'brooch',
-            'gold', 'platinum', 'silver', 'emerald', 'sapphire', 'ruby',
-            'cartier', 'tiffany', 'bulgari', 'chanel', 'dior', 'van cleef',
-            'graff', 'harry winston', 'chopard', 'piaget', 'boucheron',
-            'red carpet', 'celebrity', 'haute couture', 'collection',
-            'launch', 'collaboration', 'limited edition', 'auction',
-            'investment', 'trends', 'style', 'fashion week', 'royal', 'royals',
-            'Luxury sector', 'Luxury marketing trends', 'Lab grown diamonds',
-            'Diamond price', 'Gold price', 'jewels',
-            # English royalty keywords
-            'crown', 'tiara', 'coronation', 'queen', 'king', 'prince', 'princess',
-            'duchess', 'duke', 'royal family', 'buckingham palace', 'windsor',
-            'crown jewels', 'state visit', 'royal wedding', 'monarchy',
-            'sovereign', 'regalia', 'royal collection', 'palace'
+            # 'luxury', 'jewellery', 'fine jewellery', 'craftsmanship',
+            # 'jewelry', 'diamond', 'engagement ring', 'wedding ring',
+            # 'fashion', 'accessories', 'watches', 'timepiece',
+            # 'necklace', 'bracelet', 'earrings', 'pendant', 'brooch',
+            # 'gold', 'platinum', 'silver', 'emerald', 'sapphire', 'ruby',
+            # 'cartier', 'tiffany', 'bulgari', 'chanel', 'dior', 'van cleef',
+            # 'graff', 'harry winston', 'chopard', 'piaget', 'boucheron',
+            # 'red carpet', 'celebrity', 'haute couture', 'collection',
+            # 'launch', 'collaboration', 'limited edition', 'auction',
+            # 'investment', 'trends', 'style', 'fashion week', 'royal', 'royals',
+            # 'Luxury sector', 'Luxury marketing trends', 'Lab grown diamonds',
+            # 'Diamond price', 'Gold price', 'jewels',
+            # # English royalty keywords
+            # 'crown', 'tiara', 'coronation', 'queen', 'king', 'prince', 'princess',
+            # 'duchess', 'duke', 'royal family', 'buckingham palace', 'windsor',
+            # 'crown jewels', 'state visit', 'royal wedding', 'monarchy',
+            # 'sovereign', 'regalia', 'royal collection', 'palace'
+            'eurozone derivatives clearing','euro interest rate swaps clearing',
+            'euro ccp infrastructure','emir clearing rules','clearing house',
+            'interest-rate derivatives','otc derivatives','interest rate swaps',
+            'fx swaps','credit derivatives','central counterparty clearing',
+            'eurozone interest rate derivatives clearing infrastructure', 'mutual funds',
+            'hedge funds', 'private equity', 'blockchain', 'cryptocurrency', 'fintech',
+            'gold market price', 'risk management', 'compliance',
         ]
         
         self.active_keywords = list(self.luxury_keywords)
