@@ -218,7 +218,220 @@ class CustomArticleCollector:
 
                         'sitemap_url': 'https://www.cityam.com/sitemap.xml'
 
-                    }
+                    },
+        'Financial Times (FT)': {
+            'base_url': 'https://www.ft.com/',
+            'rss_feeds': [],  # section-only / paid; no simple global feed
+            'sitemap_url': 'https://www.ft.com/sitemaps/news.xml'
+        },
+
+        'Bloomberg': {
+            'base_url': 'https://www.bloomberg.com/',
+            'rss_feeds': [
+                'https://feeds.bloomberg.com/markets/news.rss',
+                'https://feeds.bloomberg.com/politics/news.rss'
+            ],
+            'sitemap_url': 'https://www.bloomberg.com/feeds/bbiz/sitemap_news.xml'
+        },
+
+        'The Fintech Times': {
+            'base_url': 'https://thefintechtimes.com/',
+            'rss_feeds': [
+                'https://thefintechtimes.com/feed',
+                'https://thefintechtimes.com/category/news/feed'
+            ],
+            'sitemap_url': 'https://thefintechtimes.com/sitemap.xml'
+        },
+
+        'PYMNTS': {
+            'base_url': 'https://www.pymnts.com/',
+            'rss_feeds': [
+                'https://www.pymnts.com/feed/',
+                'https://www.pymnts.com/category/banking/feed/'
+            ],
+            'sitemap_url': 'https://www.pymnts.com/sitemap.xml'
+        },
+
+        'Futures & Options World (FOW)': {
+            'base_url': 'https://www.fow.com/',
+            'rss_feeds': [
+                'https://www.fow.com/rss'
+            ],
+            'sitemap_url': 'https://www.fow.com/sitemap.xml'
+        },
+
+        'Forbes': {
+            'base_url': 'https://www.forbes.com/',
+            'rss_feeds': [
+                'https://www.forbes.com/innovation/feed',
+                'https://www.forbes.com/innovation/feed2'
+            ],
+            'sitemap_url': 'https://www.forbes.com/news_sitemap.xml'
+        },
+
+        'Fintech Futures': {
+            'base_url': 'https://www.fintechfutures.com/',
+            'rss_feeds': [
+                'https://www.fintechfutures.com/feed/',
+                'https://www.fintechfutures.com/category/news/feed/'
+            ],
+            'sitemap_url': 'https://www.fintechfutures.com/googlenews.xml'
+        },
+
+        'Reuters': {
+            'base_url': 'https://www.reuters.com/',
+            'rss_feeds': [],  # many legacy feeds deprecated; prefer sitemaps/APIs
+            'sitemap_url': 'https://www.reuters.com/sitemap_news_index1.xml'
+        },
+
+        'World Finance': {
+            'base_url': 'https://www.worldfinance.com/',
+            'rss_feeds': ['https://www.worldfinance.com/news/rss-feed'],
+            'sitemap_url': 'https://www.worldfinance.com/sitemap.xml'
+        },
+
+        'The Times (UK)': {
+            'base_url': 'https://www.thetimes.co.uk/',
+            'rss_feeds': [],  # paywalled; no broad free RSS
+            'sitemap_url': 'https://times.newsprints.co.uk/sitemap/brands/'
+        },
+
+        'The Telegraph': {
+            'base_url': 'https://www.telegraph.co.uk/',
+            'rss_feeds': [],  # many section RSS feeds are limited/deprecated
+            'sitemap_url': 'https://www.telegraph.co.uk/sitemap.xml'
+        },
+
+        'Evening Standard': {
+            'base_url': 'https://www.standard.co.uk/',
+            'rss_feeds': [
+                'https://www.standard.co.uk/news/rss'
+            ],
+            'sitemap_url': 'https://www.standard.co.uk/sitemap.xml'
+        },
+
+        'Bank Policy Institute': {
+            'base_url': 'https://bpi.com/',
+            'rss_feeds': [
+                'https://bpi.com/feed/',
+                'https://bpi.com/category/news/feed/'
+            ],
+            'sitemap_url': 'https://bpi.com/sitemap.xml'
+        },
+
+        'Risk.net': {
+            'base_url': 'https://www.risk.net/',
+            'rss_feeds': [],  # channel feeds exist but often gated/specialised
+            'sitemap_url': 'https://www.risk.net/sitemap.xml'
+        },
+
+        'FStech': {
+            'base_url': 'https://www.fstech.co.uk/',
+            'rss_feeds': [
+                'https://www.fstech.co.uk/rss'
+            ],
+            'sitemap_url': 'https://www.fstech.co.uk/sitemap.xml'
+        },
+
+        'Investment Week': {
+            'base_url': 'https://www.investmentweek.co.uk/',
+            'rss_feeds': [
+                'https://www.investmentweek.co.uk/feeds/rss'
+            ],
+            'sitemap_url': 'https://www.investmentweek.co.uk/sitemap.xml'
+        },
+
+        'Wealth & Finance': {
+            'base_url': 'https://wealthandfinance.digital/',
+            'rss_feeds': [
+                'https://wealthandfinance.digital/feed/',
+                'https://wealthandfinance.digital/category/personal-finance/feed/'
+            ],
+            'sitemap_url': 'https://wealthandfinance.digital/sitemap.xml'
+        },
+
+        'Portfolio Adviser': {
+            'base_url': 'https://portfolio-adviser.com/',
+            'rss_feeds': [
+                'https://portfolio-adviser.com/feed/',
+                'https://portfolio-adviser.com/category/interviews/feed/'
+            ],
+            'sitemap_url': 'https://portfolio-adviser.com/sitemap.xml'
+        },
+
+        'The Banker': {
+            'base_url': 'https://www.thebanker.com/',
+            'rss_feeds': [],  # per-channel RSS historically; current endpoints opaque
+            'sitemap_url': 'https://www.thebanker.com/sitemap.xml'
+        },
+
+        'GlobalCapital': {
+            'base_url': 'https://www.globalcapital.com/',
+            'rss_feeds': [],  # often /rss or /rss.xml per section; not clearly exposed
+            'sitemap_url': 'https://www.globalcapital.com/sitemap.xml'
+        },
+
+        'TradingTech Insight': {
+            'base_url': 'https://a-teaminsight.com/category/tradingtech-insight/',
+            'rss_feeds': [
+                'https://a-teaminsight.com/category/tradingtech-insight/feed/'
+            ],
+            'sitemap_url': 'https://a-teaminsight.com/sitemap.xml'
+        },
+
+        'RegTech Insight': {
+            'base_url': 'https://a-teaminsight.com/regtech-insight/',
+            'rss_feeds': [
+                'https://a-teaminsight.com/category/regtech-insight/feed/'
+            ],
+            'sitemap_url': 'https://a-teaminsight.com/sitemap.xml'
+        },
+
+        'CoinDesk': {
+            'base_url': 'https://www.coindesk.com/',
+            'rss_feeds': [
+                'https://www.coindesk.com/arc/outboundfeeds/rss/'
+            ],
+            'sitemap_url': 'https://www.coindesk.com/sitemap-index.xml'
+        },
+
+        'FT Alphaville': {
+            'base_url': 'https://www.ft.com/ft-alphaville',
+            'rss_feeds': [
+                'https://www.ft.com/ft-alphaville?format=rss'
+            ],
+            'sitemap_url': 'https://www.ft.com/sitemaps/news.xml'
+        },
+
+        'fDi Intelligence': {
+            'base_url': 'https://www.fdiintelligence.com/',
+            'rss_feeds': [],
+            'sitemap_url': 'https://www.fdiintelligence.com/sitemap.xml'
+        },
+
+        'The New York Times (Business)': {
+            'base_url': 'https://www.nytimes.com/',
+            'rss_feeds': [
+                'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml'
+            ],
+            'sitemap_url': 'https://www.nytimes.com/sitemap/'
+        },
+
+        'The Independent': {
+            'base_url': 'https://www.independent.co.uk/',
+            'rss_feeds': [
+                'https://www.independent.co.uk/news/uk/rss',
+                'https://www.independent.co.uk/news/world/rss'
+            ],
+            'sitemap_url': 'https://www.independent.co.uk/sitemap.xml'
+        },
+
+        'CNN (Finance & Business)': {
+            'base_url': 'https://www.cnn.com/',
+            'rss_feeds': [],  # business/markets feeds exist but are now poorly documented; many users generate via third-party tools
+            'sitemap_url': 'https://www.cnn.com/sitemap/news.xml'
+        }
+
         }
         
         # Initialize scraper with priority order
@@ -524,7 +737,7 @@ class CustomArticleCollector:
         return all_candidates
     
     def is_relevant_url(self, url: str) -> bool:
-        """URL hygiene filter only (no keyword requirement in URL)."""
+        """Enhanced URL filtering - requires at least one active keyword in URL."""
         url_lower = url.lower().rstrip('/')
 
         # Explicitly exclude National Jeweler category/section pages
@@ -570,7 +783,9 @@ class CustomArticleCollector:
         if any(term in url_lower for term in exclude_terms):
             return False
 
-        return True
+        # Require at least one active keyword in URL
+        has_keyword = any(keyword.lower() in url_lower for keyword in self.active_keywords)
+        return has_keyword
     
     def fetch_urls_from_sitemap(self, sitemap_url: str) -> List[tuple]:
         urls = []
@@ -657,6 +872,10 @@ class CustomArticleCollector:
                     lastmod_elem = sitemap.find('.//{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod')
                     if loc_elem is None or not loc_elem.text:
                         continue
+
+                    loc = loc_elem.text.strip()
+
+                    # Priority 1: explicit lastmod
                     lastmod_dt = datetime.min
                     if lastmod_elem is not None and lastmod_elem.text:
                         try:
@@ -664,7 +883,19 @@ class CustomArticleCollector:
                             lastmod_dt = datetime.fromisoformat(lm).replace(tzinfo=None)
                         except Exception:
                             pass
-                    sitemap_entries.append((loc_elem.text.strip(), lastmod_dt))
+
+                    # Priority 2: infer recency from URL pattern like /archive/2026-3.xml
+                    if lastmod_dt == datetime.min:
+                        m = re.search(r'/(\d{4})-(\d{1,2})\.xml(?:\.gz)?$', loc)
+                        if m:
+                            try:
+                                y = int(m.group(1))
+                                mo = int(m.group(2))
+                                lastmod_dt = datetime(y, mo, 1)
+                            except Exception:
+                                pass
+
+                    sitemap_entries.append((loc, lastmod_dt))
 
                 sitemap_entries.sort(key=lambda x: x[1], reverse=True)
                 max_child_sitemaps = 10
@@ -834,10 +1065,10 @@ class CustomArticleCollector:
             return None
     
     def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
-        """Collect exactly top 10 articles from each publication"""
-        print("Weekly Article Collection (Top 10 per Publication)")
+        """Collect exactly top 3 articles from each publication"""
+        print("Weekly Article Collection (Top 3 per Publication)")
         print("=" * 60)
-        max_articles_per_publication = 10
+        max_articles_per_publication = 3
         
         sources_to_use = sources_subset if sources_subset else list(self.target_sources.keys())
         print(f"Targeting {len(sources_to_use)} publications\n")
@@ -905,15 +1136,15 @@ class CustomArticleCollector:
                     print(f"  RSS fallback error: {str(e)[:60]}")
             
             publication_articles.sort(key=lambda x: x.relevance_score, reverse=True)
-            final_10 = publication_articles[:max_articles_per_publication]
+            final_3 = publication_articles[:max_articles_per_publication]
             
-            if final_10:
-                scores = [f"{a.relevance_score:.1f}" for a in final_10]
-                print(f"  Collected: {len(final_10)} article(s) [scores: {', '.join(scores)}]\n")
+            if final_3:
+                scores = [f"{a.relevance_score:.1f}" for a in final_3]
+                print(f"  Collected: {len(final_3)} article(s) [scores: {', '.join(scores)}]\n")
             else:
                 print(f"  Collected: 0 articles\n")
             
-            all_articles.extend(final_10)
+            all_articles.extend(final_3)
             
             time.sleep(random.uniform(3, 6))
         
