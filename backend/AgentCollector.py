@@ -816,7 +816,7 @@ class CustomArticleCollector:
                 print(f"  Error: {error_msg[:60]} - {candidate.publication}")
             return None
     
-    def collect_top_10_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
+    def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
         """Collect exactly top 10 articles from each publication"""
         print("Weekly Article Collection (Top 10 per Publication)")
         print("=" * 60)
