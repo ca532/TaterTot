@@ -1073,9 +1073,9 @@ class CustomArticleCollector:
     
     def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
         """Collect exactly top 3 articles from each publication"""
-        print("Weekly Article Collection (Top 3 per Publication)")
+        print("Weekly Article Collection (Top 5 per Publication)")
         print("=" * 60)
-        max_articles_per_publication = 3
+        max_articles_per_publication = 5
         
         sources_to_use = sources_subset if sources_subset else list(self.target_sources.keys())
         print(f"Targeting {len(sources_to_use)} publications\n")
