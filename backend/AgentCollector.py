@@ -1,4 +1,4 @@
-import feedparser
+﻿import feedparser
 import requests
 from newspaper import Article
 from datetime import datetime, timedelta
@@ -18,7 +18,7 @@ try:
     AGENTSUMM_AVAILABLE = True
 except ImportError:
     AGENTSUMM_AVAILABLE = False
-    print("⚠️  Warning: Could not import extract_author from AgentSumm")
+    print("âš ï¸  Warning: Could not import extract_author from AgentSumm")
     print("   Author extraction will use fallback method")
 
 # Try to import curl-cffi (most powerful anti-blocking)
@@ -168,7 +168,7 @@ class CustomArticleCollector:
 
                         'rss_feeds': [],
 
-                        'sitemap_url': 'https://finance.yahoo.com/sitemap_en-us_quotes_index.xml'
+                        'sitemap_url': 'https://www.yahoo.com/news-sitemap.xml'
 
                     },
 
@@ -225,7 +225,7 @@ class CustomArticleCollector:
         if CURL_CFFI_AVAILABLE:
             self.scraper = curl_requests.Session()
             self.scraper_type = 'curl-cffi'
-            print("✅ curl-cffi enabled (most powerful anti-blocking)")
+            print("âœ… curl-cffi enabled (most powerful anti-blocking)")
             print("   Can bypass CloudFlare, SSL checks, and bot detection\n")
         elif CLOUDSCRAPER_AVAILABLE:
             self.scraper = cloudscraper.create_scraper(
@@ -236,11 +236,11 @@ class CustomArticleCollector:
                 }
             )
             self.scraper_type = 'cloudscraper'
-            print("✅ CloudScraper enabled for anti-blocking\n")
+            print("âœ… CloudScraper enabled for anti-blocking\n")
         else:
             self.scraper = requests.Session()
             self.scraper_type = 'requests'
-            print("⚠️  Using basic requests (limited anti-blocking)\n")
+            print("âš ï¸  Using basic requests (limited anti-blocking)\n")
         
         # User-Agent rotation
         self.user_agents = [
@@ -263,6 +263,38 @@ class CustomArticleCollector:
     
     def set_keywords_override(self, keywords: List[str]) -> None:
         self.active_keywords = keywords if keywords else list(self.luxury_keywords)
+
+    def _normalize_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+    def _keyword_tokens(self, keyword: str) -> List[str]:
+        stop = {"the", "and", "for", "with", "from", "into", "of", "to", "in", "on", "a", "an"}
+        parts = re.split(r"[^a-z0-9]+", keyword.lower())
+        return [p for p in parts if p and p not in stop and len(p) > 2]
+
+    def _weighted_score_for_keyword(self, kw_lower: str) -> float:
+        if kw_lower in [
+            'eurozone derivatives clearing',
+            'euro interest rate swaps clearing',
+            'euro ccp infrastructure',
+            'emir clearing rules',
+            'clearing house',
+            'interest-rate derivatives',
+            'otc derivatives',
+            'interest rate swaps',
+            'fx swaps',
+            'credit derivatives',
+            'central counterparty clearing',
+            'eurozone interest rate derivatives clearing infrastructure',
+        ]:
+            return 4.0
+        if kw_lower in ['mutual funds', 'hedge funds', 'private equity']:
+            return 3.0
+        if kw_lower in ['blockchain', 'cryptocurrency', 'fintech', 'gold market price']:
+            return 2.5
+        if kw_lower in ['risk management', 'compliance']:
+            return 2.0
+        return 1.0
 
     def get_random_user_agent(self):
         return random.choice(self.user_agents)
@@ -365,62 +397,34 @@ class CustomArticleCollector:
         return "Unknown"
 
     def calculate_relevance_score(self, title: str, content: str) -> tuple:
-        """Calculate relevance score based on your custom keywords"""
-        combined_text = f"{title} {content}".lower()
+        """Calculate relevance score based on active keywords."""
+        combined_text = self._normalize_text(f"{title} {content}")
         found_keywords = []
         score = 0.0
-        
-        for keyword in self.active_keywords:
-            if keyword.lower() in combined_text:
-                found_keywords.append(keyword)
-                
-                # Core market infrastructure / derivatives terms
-                if keyword.lower() in [
-                    'eurozone derivatives clearing',
-                    'euro interest rate swaps clearing',
-                    'euro ccp infrastructure',
-                    'emir clearing rules',
-                    'clearing house',
-                    'interest-rate derivatives',
-                    'otc derivatives',
-                    'interest rate swaps',
-                    'fx swaps',
-                    'credit derivatives',
-                    'central counterparty clearing',
-                    'eurozone interest rate derivatives clearing infrastructure',
-                ]:
-                    score += 4.0
-                # Investment vehicles
-                elif keyword.lower() in [
-                    'mutual funds',
-                    'hedge funds',
-                    'private equity',
-                ]:
-                    score += 3.0
-                # Emerging assets / market tech
-                elif keyword.lower() in [
-                    'blockchain',
-                    'cryptocurrency',
-                    'fintech',
-                    'gold market price',
-                ]:
-                    score += 2.5
-                # Risk / regulatory governance
-                elif keyword.lower() in [
-                    'risk management',
-                    'compliance',
-                ]:
-                    score += 2.0
-                else:
-                    score += 1.0
 
-        
+        for keyword in self.active_keywords:
+            kw_lower = self._normalize_text(keyword)
+            base_w = self._weighted_score_for_keyword(kw_lower)
+
+            if kw_lower and kw_lower in combined_text:
+                found_keywords.append(keyword)
+                score += base_w
+                continue
+
+            # Partial token fallback for longer phrases
+            tokens = self._keyword_tokens(kw_lower)
+            if len(tokens) >= 3:
+                hits = sum(1 for t in tokens if t in combined_text)
+                if hits >= 2:
+                    found_keywords.append(keyword)
+                    score += base_w * 0.5
+
         # Bonus for multiple keyword matches
         if len(found_keywords) > 2:
             score *= 1.2
         if len(found_keywords) > 4:
             score *= 1.4
-            
+
         return score, found_keywords
     
     def try_rss_feed(self, publication: str, feed_url: str) -> List[ArticleCandidate]:
@@ -475,7 +479,7 @@ class CustomArticleCollector:
                     
                     score, keywords = self.calculate_relevance_score(title, summary)
                     
-                    if score >= 1.0:
+                    if score >= 0.5:
                         candidate = ArticleCandidate(
                             title=title,
                             url=url,
@@ -520,12 +524,12 @@ class CustomArticleCollector:
         return all_candidates
     
     def is_relevant_url(self, url: str) -> bool:
-        """Enhanced URL filtering - must contain at least 1 luxury keyword"""
-        url_lower = url.lower()
-        
+        """URL hygiene filter only (no keyword requirement in URL)."""
+        url_lower = url.lower().rstrip('/')
+
         # Explicitly exclude National Jeweler category/section pages
         national_jeweler_excluded = [
-            'https://nationaljeweler.com/',
+            'https://nationaljeweler.com',
             'https://nationaljeweler.com/industry',
             'https://nationaljeweler.com/industry/industry-other',
             'https://nationaljeweler.com/industry/independents',
@@ -550,24 +554,23 @@ class CustomArticleCollector:
             'https://nationaljeweler.com/style/collections',
             'https://nationaljeweler.com/opinions',
             'https://nationaljeweler.com/opinions/editors',
-            'https://nationaljeweler.com/opinions/columnists'
+            'https://nationaljeweler.com/opinions/columnists',
         ]
-        
-        url_clean = url.rstrip('/')
-        if url_clean in national_jeweler_excluded or url in national_jeweler_excluded:
+
+        if url_lower in national_jeweler_excluded:
             return False
-        
-        # Check for at least 1 luxury keyword in URL
-        has_keyword = any(keyword.lower() in url_lower for keyword in self.active_keywords)
-        
-        # Exclude obviously irrelevant content
+
+        # Exclude obviously non-article pages
         exclude_terms = [
-            'recipe', 'food', 'travel', 'politics', 'sports', 'health', 'weather',
-            'football', 'soccer', 'cricket', 'tennis'
+            '/tag/', '/tags/', '/category/', '/categories/', '/author/', '/authors/',
+            '/search', '/topic/', '/topics/', '/video/', '/videos/', '/podcast/',
+            '/podcasts/', '/gallery/', '/galleries/', '/live/', '/events/',
+            '/newsletter', '/subscribe', '/privacy', '/terms'
         ]
-        has_excluded = any(term in url_lower for term in exclude_terms)
-        
-        return has_keyword and not has_excluded
+        if any(term in url_lower for term in exclude_terms):
+            return False
+
+        return True
     
     def fetch_urls_from_sitemap(self, sitemap_url: str) -> List[tuple]:
         urls = []
@@ -648,11 +651,25 @@ class CustomArticleCollector:
             urls = []
             
             if 'sitemapindex' in root.tag:
-                for sitemap in root[:3]:
+                sitemap_entries = []
+                for sitemap in root:
                     loc_elem = sitemap.find('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc')
-                    if loc_elem is not None:
-                        sub_sitemap_url = loc_elem.text
-                        urls.extend(self.fetch_urls_from_sitemap(sub_sitemap_url))
+                    lastmod_elem = sitemap.find('.//{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod')
+                    if loc_elem is None or not loc_elem.text:
+                        continue
+                    lastmod_dt = datetime.min
+                    if lastmod_elem is not None and lastmod_elem.text:
+                        try:
+                            lm = lastmod_elem.text.strip().replace('Z', '+00:00')
+                            lastmod_dt = datetime.fromisoformat(lm).replace(tzinfo=None)
+                        except Exception:
+                            pass
+                    sitemap_entries.append((loc_elem.text.strip(), lastmod_dt))
+
+                sitemap_entries.sort(key=lambda x: x[1], reverse=True)
+                max_child_sitemaps = 10
+                for sub_sitemap_url, _ in sitemap_entries[:max_child_sitemaps]:
+                    urls.extend(self.fetch_urls_from_sitemap(sub_sitemap_url))
             
             elif 'urlset' in root.tag:
                 for url_elem in root:
@@ -680,7 +697,7 @@ class CustomArticleCollector:
                         
                         urls.append((url, lastmod_date))
             
-            for url, pub_date in urls[:50]:
+            for url, pub_date in urls[:150]:
                 try:
                     if self.is_relevant_url(url):
                         candidate = ArticleCandidate(
@@ -705,7 +722,7 @@ class CustomArticleCollector:
         return candidates
     
     def collect_from_source(self, publication: str, source_info: dict) -> List[ArticleCandidate]:
-        """Collect articles with proper fallback: sitemap → RSS"""
+        """Collect articles with proper fallback: sitemap â†’ RSS"""
         all_candidates = []
         sitemap_tried = False
         sitemap_succeeded = False
@@ -744,7 +761,7 @@ class CustomArticleCollector:
             except Exception as e:
                 error_msg = str(e)
                 if 'SSL' in error_msg or 'ssl' in error_msg.lower():
-                    print(f"  ⚠️  RSS also failed (SSL blocking)")
+                    print(f"  âš ï¸  RSS also failed (SSL blocking)")
                 else:
                     print(f"  RSS error: {error_msg[:100]}")
         
@@ -875,8 +892,8 @@ class CustomArticleCollector:
                         new_rss_candidates.sort(key=lambda x: x.relevance_score, reverse=True)
                         
                         # Try to extract from new RSS candidates
-                        for candidate in new_rss_candidates[:10]:
-                            if len(publication_articles) >= 3:
+                        for candidate in new_rss_candidates[:30]:
+                            if len(publication_articles) >= max_articles_per_publication:
                                 break
                             
                             enhanced = self.extract_full_content(candidate)
@@ -1012,3 +1029,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
