@@ -247,7 +247,7 @@ class CustomArticleCollector:
                 'https://thefintechtimes.com/feed',
                 'https://thefintechtimes.com/category/news/feed'
             ],
-            'sitemap_url': 'https://thefintechtimes.com/sitemap.xml'
+            'sitemap_url': 'https://thefintechtimes.com/sitemap_index.xml'
         },
 
         'PYMNTS': {
@@ -256,14 +256,12 @@ class CustomArticleCollector:
                 'https://www.pymnts.com/feed/',
                 'https://www.pymnts.com/category/banking/feed/'
             ],
-            'sitemap_url': 'https://www.pymnts.com/sitemap.xml'
+            'sitemap_url': 'https://www.pymnts.com/sitemap-news.xml'
         },
 
         'Futures & Options World (FOW)': {
             'base_url': 'https://www.fow.com/',
-            'rss_feeds': [
-                'https://www.fow.com/rss'
-            ],
+            'rss_feeds': [],
             'sitemap_url': 'https://www.fow.com/sitemap.xml'
         },
 
@@ -287,8 +285,11 @@ class CustomArticleCollector:
 
         'Reuters': {
             'base_url': 'https://www.reuters.com/',
-            'rss_feeds': [],  # many legacy feeds deprecated; prefer sitemaps/APIs
-            'sitemap_url': 'https://www.reuters.com/sitemap_news_index1.xml'
+            'rss_feeds': [
+                'https://feeds.reuters.com/reuters/businessNews',
+                'https://feeds.reuters.com/news/artsculture'
+            ],
+            'sitemap_url': 'https://www.reuters.com/arc/outboundfeeds/news-sitemap/?outputType=xml'
         },
 
         'World Finance': {
@@ -300,7 +301,7 @@ class CustomArticleCollector:
         'The Times (UK)': {
             'base_url': 'https://www.thetimes.co.uk/',
             'rss_feeds': [],  # paywalled; no broad free RSS
-            'sitemap_url': 'https://times.newsprints.co.uk/sitemap/brands/'
+            'sitemap_url': 'https://www.thetimes.com/sitemaps/news'
         },
 
         'The Telegraph': {
@@ -321,7 +322,6 @@ class CustomArticleCollector:
             'base_url': 'https://bpi.com/',
             'rss_feeds': [
                 'https://bpi.com/feed/',
-                'https://bpi.com/category/news/feed/'
             ],
             'sitemap_url': 'https://bpi.com/sitemap.xml'
         },
@@ -334,10 +334,8 @@ class CustomArticleCollector:
 
         'FStech': {
             'base_url': 'https://www.fstech.co.uk/',
-            'rss_feeds': [
-                'https://www.fstech.co.uk/rss'
-            ],
-            'sitemap_url': 'https://www.fstech.co.uk/sitemap.xml'
+            'rss_feeds': [],
+            'sitemap_url': 'https://www.fstech.co.uk/sitemap_index.xml'
         },
 
         'Investment Week': {
@@ -345,7 +343,7 @@ class CustomArticleCollector:
             'rss_feeds': [
                 'https://www.investmentweek.co.uk/feeds/rss'
             ],
-            'sitemap_url': 'https://www.investmentweek.co.uk/sitemap.xml'
+            'sitemap_url': None
         },
 
         'Wealth & Finance': {
@@ -358,12 +356,11 @@ class CustomArticleCollector:
         },
 
         'Portfolio Adviser': {
-            'base_url': 'https://portfolio-adviser.com/',
+            'base_url': 'https://www.portfolio-adviser.com/',
             'rss_feeds': [
-                'https://portfolio-adviser.com/feed/',
-                'https://portfolio-adviser.com/category/interviews/feed/'
+                'https://www.portfolio-adviser.com/feed/'
             ],
-            'sitemap_url': 'https://portfolio-adviser.com/sitemap.xml'
+            'sitemap_url': 'https://www.portfolio-adviser.com/sitemap.xml'
         },
 
         'The Banker': {
@@ -405,7 +402,7 @@ class CustomArticleCollector:
         'FT Alphaville': {
             'base_url': 'https://www.ft.com/ft-alphaville',
             'rss_feeds': [
-                'https://www.ft.com/ft-alphaville?format=rss'
+                'https://www.ft.com/alphaville?format=rss'
             ],
             'sitemap_url': 'https://www.ft.com/sitemaps/news.xml'
         },
@@ -416,21 +413,13 @@ class CustomArticleCollector:
             'sitemap_url': 'https://www.fdiintelligence.com/sitemap.xml'
         },
 
-        'The New York Times (Business)': {
-            'base_url': 'https://www.nytimes.com/',
-            'rss_feeds': [
-                'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml'
-            ],
-            'sitemap_url': 'https://www.nytimes.com/sitemap/'
-        },
-
         'The Independent': {
             'base_url': 'https://www.independent.co.uk/',
             'rss_feeds': [
                 'https://www.independent.co.uk/news/uk/rss',
                 'https://www.independent.co.uk/news/world/rss'
             ],
-            'sitemap_url': 'https://www.independent.co.uk/sitemap.xml'
+            'sitemap_url': 'https://www.independent.co.uk/sitemaps/googlenews'
         },
 
         'CNN (Finance & Business)': {
@@ -518,6 +507,34 @@ class CustomArticleCollector:
 
     def get_random_user_agent(self):
         return random.choice(self.user_agents)
+
+    def _dynamic_max_articles_for_publication(self, candidates: List[ArticleCandidate]) -> int:
+        """
+        Dynamic per-publication cap:
+        - baseline 5
+        - promote to 8 or 10 when top candidates are strong
+        """
+        baseline = 5
+        if not candidates:
+            return baseline
+
+        top5 = candidates[:5]
+        if not top5:
+            return baseline
+
+        avg_top5 = sum(c.relevance_score for c in top5) / len(top5)
+        strong9 = sum(1 for c in top5 if c.relevance_score >= 9.0)
+        strong12 = sum(1 for c in top5 if c.relevance_score >= 12.0)
+
+        # Very strong source in this run
+        if avg_top5 >= 11.0 and strong12 >= 2:
+            return 10
+
+        # Strong source in this run
+        if avg_top5 >= 9.0 and strong9 >= 3:
+            return 8
+
+        return baseline
     
     def apply_rate_limit(self):
         current_time = time.time()
@@ -784,7 +801,7 @@ class CustomArticleCollector:
         exclude_terms = [
             '/tag/', '/tags/', '/category/', '/categories/', '/author/', '/authors/',
             '/search', '/topic/', '/topics/', '/video/', '/videos/', '/podcast/',
-            '/podcasts/', '/gallery/', '/galleries/', '/live/', '/events/',
+            '/podcasts/', '/gallery/', '/galleries/', '/live/', '/live-blog/', '/events/',
             '/newsletter', '/subscribe', '/privacy', '/terms'
         ]
         if any(term in url_lower for term in exclude_terms):
@@ -1018,6 +1035,16 @@ class CustomArticleCollector:
             response = self.make_request(candidate.url, timeout=20)
             
             if response.status_code != 200:
+                # Fallback for blocked pages (common on premium domains):
+                # keep RSS metadata-only candidates when they are already relevant.
+                if response.status_code in {401, 403, 429} and candidate.summary:
+                    if not candidate.full_content:
+                        candidate.full_content = candidate.summary
+                    if not candidate.title:
+                        candidate.title = candidate.url
+                    # Require minimum relevance before accepting metadata-only fallback.
+                    if candidate.relevance_score >= 1.0:
+                        return candidate
                 return None
             
             article = Article(candidate.url)
@@ -1026,6 +1053,21 @@ class CustomArticleCollector:
             article.parse()
             
             if not article.text or len(article.text) < 150:
+                return None
+
+            # Reject obvious placeholder/template pages that poison summaries
+            text_lower = article.text.lower()
+            placeholder_markers = [
+                "lorem ipsum dolor sit amet",
+                "consectetur adipiscing elit",
+                "donec neque eros",
+                "in accumsan, ex a ultrices bibendum",
+            ]
+            marker_hits = sum(1 for m in placeholder_markers if m in text_lower)
+
+            # If multiple placeholder markers are present, treat as invalid extraction
+            if marker_hits >= 2:
+                print(f"  Skipping placeholder/template content: {candidate.publication}")
                 return None
             
             candidate.full_content = article.text
@@ -1072,10 +1114,10 @@ class CustomArticleCollector:
             return None
     
     def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
-        """Collect exactly top 3 articles from each publication"""
-        print("Weekly Article Collection (Top 5 per Publication)")
+        """Collect top articles per publication with dynamic caps."""
+        print("Weekly Article Collection (Dynamic cap per publication)")
         print("=" * 60)
-        max_articles_per_publication = 5
+        baseline_max_articles = 5
         
         sources_to_use = sources_subset if sources_subset else list(self.target_sources.keys())
         print(f"Targeting {len(sources_to_use)} publications\n")
@@ -1099,6 +1141,8 @@ class CustomArticleCollector:
                 continue
             
             candidates.sort(key=lambda x: x.relevance_score, reverse=True)
+            max_articles_per_publication = self._dynamic_max_articles_for_publication(candidates)
+            print(f"  Dynamic cap: {max_articles_per_publication} (baseline {baseline_max_articles})")
             
             # Extract full content and collect articles
             publication_articles = []
