@@ -34,8 +34,8 @@ export const AuthProvider = ({ children }) => {
     return { success: false, error: result.error || 'Login failed' };
   };
 
-  const logout = () => {
-    githubAPI.clearToken();
+  const logout = async () => {
+    await githubAPI.logout();
     setIsAuthenticated(false);
   };
 

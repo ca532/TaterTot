@@ -35,6 +35,7 @@ class PipelineService {
     try {
       const res = await fetch(`${PIPELINE_API_BASE}/auth/login`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
           "Accept": "application/json"
@@ -54,27 +55,90 @@ class PipelineService {
     }
   }
 
+  async refreshAccessToken() {
+    try {
+      const res = await fetch(`${PIPELINE_API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({})
+      });
+
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => ({}));
+      if (!data?.access_token) return false;
+
+      this.setToken(data.access_token);
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  async fetchWithAuthRetry(url, init = {}) {
+    const first = await fetch(url, {
+      ...init,
+      credentials: "include",
+      headers: {
+        ...(init.headers || {}),
+        ...this.getHeaders()
+      }
+    });
+
+    if (first.status !== 401) return first;
+
+    const refreshed = await this.refreshAccessToken();
+    if (!refreshed) {
+      this.handleUnauthorized();
+      return first;
+    }
+
+    const second = await fetch(url, {
+      ...init,
+      credentials: "include",
+      headers: {
+        ...(init.headers || {}),
+        ...this.getHeaders()
+      }
+    });
+
+    if (second.status === 401) {
+      this.handleUnauthorized();
+    }
+    return second;
+  }
+
   handleUnauthorized() {
     this.clearToken();
     window.dispatchEvent(new Event("auth:expired"));
   }
 
+  async logout() {
+    try {
+      await fetch(`${PIPELINE_API_BASE}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+        headers: this.getHeaders()
+      });
+    } finally {
+      this.clearToken();
+    }
+  }
+
   async triggerPipeline(payload = {}) {
     try {
-      const res = await fetch(`${PIPELINE_API_BASE}/pipeline/trigger`, {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/trigger`, {
         method: "POST",
         headers: {
-          ...this.getHeaders(),
           "Content-Type": "application/json"
         },
         body: JSON.stringify(payload)
       });
 
       const data = await res.json().catch(() => ({}));
-      if (res.status === 401) {
-        this.handleUnauthorized();
-      }
-
       if (!res.ok) {
         return { success: false, error: data.detail || data.error || `HTTP ${res.status}` };
       }
@@ -87,14 +151,10 @@ class PipelineService {
 
   async getLatestRunStatus() {
     try {
-      const res = await fetch(`${PIPELINE_API_BASE}/pipeline/status`, {
-        method: "GET",
-        headers: this.getHeaders()
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/status`, {
+        method: "GET"
       });
 
-      if (res.status === 401) {
-        this.handleUnauthorized();
-      }
       if (!res.ok) return null;
       return await res.json();
     } catch (error) {
@@ -111,14 +171,10 @@ class PipelineService {
 
   async getLatestArtifactDownloadURL() {
     try {
-      const res = await fetch(`${PIPELINE_API_BASE}/pipeline/latest-artifact`, {
-        method: "GET",
-        headers: this.getHeaders()
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/latest-artifact`, {
+        method: "GET"
       });
 
-      if (res.status === 401) {
-        this.handleUnauthorized();
-      }
       if (!res.ok) return null;
       const data = await res.json();
 
@@ -131,15 +187,9 @@ class PipelineService {
   }
 
   async downloadLatestArtifactZip() {
-    const res = await fetch(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
-      method: "GET",
-      headers: this.getHeaders()
+    const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
+      method: "GET"
     });
-
-    if (res.status === 401) {
-      this.handleUnauthorized();
-      return { success: false, error: "Unauthorized" };
-    }
 
     if (res.status === 404) {
       return { success: false, error: "No PDF available yet. Run the pipeline first to generate a PDF." };

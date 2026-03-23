@@ -7,12 +7,22 @@ from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import jwt
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,6 +46,10 @@ GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 APP_LOGIN_PASSWORD = os.environ["APP_LOGIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_EXPIRES_SECONDS = int(os.environ.get("JWT_EXPIRES_SECONDS", "1800"))
+REFRESH_EXPIRES_SECONDS = int(os.environ.get("REFRESH_EXPIRES_SECONDS", str(7 * 24 * 60 * 60)))
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_SECURE = os.environ.get("REFRESH_COOKIE_SECURE", "true").lower() == "true"
+REFRESH_COOKIE_SAMESITE = os.environ.get("REFRESH_COOKIE_SAMESITE", "none")
 JWT_ALG = "HS256"
 
 COOLDOWN_SECONDS = int(os.environ.get("PIPELINE_COOLDOWN_SECONDS", "1800"))
@@ -54,37 +68,102 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def _issue_jwt() -> str:
+class RefreshRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
+def _issue_token(token_type: str, expires_in: int) -> str:
     now = int(time.time())
     payload = {
         "sub": "dashboard-user",
+        "typ": token_type,
         "iat": now,
-        "exp": now + JWT_EXPIRES_SECONDS,
+        "exp": now + expires_in,
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+
+def _issue_access_token() -> str:
+    return _issue_token("access", JWT_EXPIRES_SECONDS)
+
+
+def _issue_refresh_token() -> str:
+    return _issue_token("refresh", REFRESH_EXPIRES_SECONDS)
+
+
+def _decode_token(token: str, expected_type: str) -> dict:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except PyJWTError:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if payload.get("typ") != expected_type:
+        raise HTTPException(status_code=401, detail="Invalid token type")
+    return payload
 
 
 def _check_auth(authorization: str) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Unauthorized")
     token = authorization.split(" ", 1)[1].strip()
-    try:
-        jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
-    except ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except PyJWTError:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    _decode_token(token, "access")
 
 
 @app.post("/auth/login")
-def auth_login(req: LoginRequest):
+def auth_login(req: LoginRequest, response: Response):
     if req.password != APP_LOGIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    access_token = _issue_access_token()
+    refresh_token = _issue_refresh_token()
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=REFRESH_COOKIE_SECURE,
+        samesite=REFRESH_COOKIE_SAMESITE,
+        max_age=REFRESH_EXPIRES_SECONDS,
+        path="/auth",
+    )
     return {
-        "access_token": _issue_jwt(),
+        "access_token": access_token,
         "token_type": "bearer",
         "expires_in": JWT_EXPIRES_SECONDS,
     }
+
+
+@app.post("/auth/refresh")
+def auth_refresh(request: Request, req: RefreshRequest, response: Response):
+    cookie_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    token = cookie_token or req.refresh_token
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+
+    _decode_token(token, "refresh")
+
+    new_refresh = _issue_refresh_token()
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=new_refresh,
+        httponly=True,
+        secure=REFRESH_COOKIE_SECURE,
+        samesite=REFRESH_COOKIE_SAMESITE,
+        max_age=REFRESH_EXPIRES_SECONDS,
+        path="/auth",
+    )
+
+    return {
+        "access_token": _issue_access_token(),
+        "token_type": "bearer",
+        "expires_in": JWT_EXPIRES_SECONDS,
+    }
+
+
+@app.post("/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/auth")
+    return {"ok": True}
 
 
 def _normalize_keywords(raw: Optional[List[str]]) -> List[str]:

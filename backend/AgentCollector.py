@@ -535,6 +535,26 @@ class CustomArticleCollector:
             return 8
 
         return baseline
+
+    def _dynamic_max_from_extracted(self, extracted_articles: List[ArticleCandidate], baseline: int = 5) -> int:
+        """
+        Recompute cap from extracted/full-content scored articles.
+        Uses up to top 5 extracted items.
+        """
+        if not extracted_articles:
+            return baseline
+
+        ranked = sorted(extracted_articles, key=lambda x: x.relevance_score, reverse=True)
+        top5 = ranked[:5]
+        avg_top5 = sum(a.relevance_score for a in top5) / len(top5)
+        strong9 = sum(1 for a in top5 if a.relevance_score >= 9.0)
+        strong12 = sum(1 for a in top5 if a.relevance_score >= 12.0)
+
+        if avg_top5 >= 11.0 and strong12 >= 2:
+            return 10
+        if avg_top5 >= 9.0 and strong9 >= 3:
+            return 8
+        return baseline
     
     def apply_rate_limit(self):
         current_time = time.time()
@@ -1141,8 +1161,8 @@ class CustomArticleCollector:
                 continue
             
             candidates.sort(key=lambda x: x.relevance_score, reverse=True)
-            max_articles_per_publication = self._dynamic_max_articles_for_publication(candidates)
-            print(f"  Dynamic cap: {max_articles_per_publication} (baseline {baseline_max_articles})")
+            max_articles_per_publication = baseline_max_articles
+            print(f"  Initial cap: {max_articles_per_publication} (baseline {baseline_max_articles})")
             
             # Extract full content and collect articles
             publication_articles = []
@@ -1157,6 +1177,12 @@ class CustomArticleCollector:
                     publication_articles.append(enhanced)
                 
                 time.sleep(random.uniform(1, 2))
+
+            # Recompute cap from extracted article quality (full-content scores)
+            dynamic_cap = self._dynamic_max_from_extracted(publication_articles, baseline_max_articles)
+            if dynamic_cap > max_articles_per_publication:
+                print(f"  Raising cap based on extracted quality: {max_articles_per_publication} -> {dynamic_cap}")
+                max_articles_per_publication = dynamic_cap
             
             # If we didn't get 3 articles, try RSS as additional fallback
             if len(publication_articles) < 3 and source_info.get('rss_feeds'):
