@@ -50,11 +50,14 @@ class ArticleCandidate:
     full_content: str = ""
 
 class CustomArticleCollector:
-    def __init__(self):
+    def __init__(self, topic: str = "finance"):
         """Initialize collector with your specific sources and keywords"""
+        self.topic = (topic or "finance").strip().lower()
+        if self.topic not in {"finance", "luxury"}:
+            self.topic = "finance"
         
         # Your custom keywords for relevance filtering (British English)
-        self.luxury_keywords = [
+        self.finance_keywords = [
             # 'luxury', 'jewellery', 'fine jewellery', 'craftsmanship',
             # 'jewelry', 'diamond', 'engagement ring', 'wedding ring',
             # 'fashion', 'accessories', 'watches', 'timepiece',
@@ -78,13 +81,71 @@ class CustomArticleCollector:
             'fx swaps','credit derivatives','central counterparty clearing',
             'eurozone interest rate derivatives clearing infrastructure', 'mutual funds',
             'hedge funds', 'private equity', 'blockchain', 'cryptocurrency', 'fintech',
-            'gold market price', 'risk management', 'compliance',
+            'gold market price', 'risk management', 'compliance', "Equivalence regime", 
+            "Brexit financial regulations", "European banking", "Capitals of finance", 
+            "Post-Brexit clearing", "Institutional confidence", "Stablecoin", "Venture Capital", 
+            "Market Infrastructure", "Market Volatility", "Capital Requirements", 
+            "Investment banks", "Tokenisation", "Systemic risk", "Davos", "Capitalisation"
         ]
         
-        self.active_keywords = list(self.luxury_keywords)
+        self.finance_keyword_weight_map = {
+            # Priority 4.0: core clearing/reg structure
+            "eurozone derivatives clearing": 4.0,
+            "euro interest rate swaps clearing": 4.0,
+            "euro ccp infrastructure": 4.0,
+            "emir clearing rules": 4.0,
+            "post-brexit clearing": 4.0,
+            "central counterparty clearing": 4.0,
+            "capital requirements": 4.0,
+            "eurozone interest rate derivatives clearing infrastructure": 4.0,
+            # Priority 3.0: institutional markets/policy risk
+            "otc derivatives": 3.0,
+            "interest-rate derivatives": 3.0,
+            "interest rate swaps": 3.0,
+            "fx swaps": 3.0,
+            "credit derivatives": 3.0,
+            "systemic risk": 3.0,
+            "market infrastructure": 3.0,
+            "market volatility": 3.0,
+            "brexit financial regulations": 3.0,
+            "equivalence regime": 3.0,
+            "european banking": 3.0,
+            "institutional confidence": 3.0,
+            "investment banks": 3.0,
+            # Priority 2.5: fintech / digital assets
+            "fintech": 2.5,
+            "blockchain": 2.5,
+            "cryptocurrency": 2.5,
+            "stablecoin": 2.5,
+            "tokenisation": 2.5,
+            "venture capital": 2.5,
+            "clearing house": 2.5,
+            # Priority 2.0: broad finance
+            "mutual funds": 2.0,
+            "hedge funds": 2.0,
+            "private equity": 2.0,
+            "risk management": 2.0,
+            "compliance": 2.0,
+            "capitalisation": 2.0,
+            "gold market price": 2.0,
+            # Lower-signal broad phrases
+            "capitals of finance": 1.5,
+            "davos": 1.5,
+        }
+        self.finance_combo_bonuses = [
+            (("brexit", "clearing"), 1.0),
+            (("stablecoin", "compliance"), 0.8),
+            (("stablecoin", "regulation"), 0.8),
+            (("derivatives", "ccp"), 1.0),
+            (("derivatives", "clearing"), 1.0),
+        ]
+        self.max_hits_per_keyword = 2
+        self.max_total_repeat_bonus = 3.0
+        self.unique_keyword_bonus = 0.35
+        self.max_unique_keyword_bonus = 2.8
 
         # Your specific publication sources - MULTIPLE RSS FEEDS SUPPORTED
-        self.target_sources = {
+        self.finance_sources = {
         'FNLondon': {
 
                         'base_url': 'https://www.fnlondon.com/',
@@ -418,6 +479,43 @@ class CustomArticleCollector:
 
         }
         
+        self.luxury_keywords = [
+            'luxury', 'jewellery', 'fine jewellery', 'craftsmanship',
+            'jewelry', 'diamond', 'engagement ring', 'wedding ring',
+            'fashion', 'accessories', 'watches', 'timepiece',
+            'necklace', 'bracelet', 'earrings', 'pendant', 'brooch',
+            'gold', 'platinum', 'silver', 'emerald', 'sapphire', 'ruby',
+            'cartier', 'tiffany', 'bulgari', 'chanel', 'dior', 'van cleef',
+            'graff', 'harry winston', 'chopard', 'piaget', 'boucheron',
+            'red carpet', 'celebrity', 'haute couture', 'collection',
+            'launch', 'collaboration', 'limited edition', 'auction',
+            'investment', 'trends', 'style', 'fashion week', 'royal', 'royals',
+            'luxury sector', 'luxury marketing trends', 'lab grown diamonds',
+            'diamond price', 'gold price', 'jewels',
+            'crown', 'tiara', 'coronation', 'queen', 'king', 'prince', 'princess',
+            'duchess', 'duke', 'royal family', 'buckingham palace', 'windsor',
+            'crown jewels', 'state visit', 'royal wedding', 'monarchy',
+            'sovereign', 'regalia', 'royal collection', 'palace'
+        ]
+        self.luxury_keyword_weight_map = self._build_luxury_keyword_weight_map()
+        self.luxury_combo_bonuses = [
+            (("royal", "jewellery"), 1.0),
+            (("red carpet", "diamond"), 0.8),
+            (("haute couture", "collection"), 0.8),
+        ]
+        self.luxury_sources = self._build_luxury_sources()
+
+        if self.topic == "luxury":
+            self.active_keywords = [k.lower() for k in self.luxury_keywords]
+            self.target_sources = self.luxury_sources
+            self.keyword_weight_map = self.luxury_keyword_weight_map
+            self.keyword_combo_bonuses = self.luxury_combo_bonuses
+        else:
+            self.active_keywords = [k.lower() for k in self.finance_keywords]
+            self.target_sources = self.finance_sources
+            self.keyword_weight_map = self.finance_keyword_weight_map
+            self.keyword_combo_bonuses = self.finance_combo_bonuses
+
         # Initialize scraper with priority order
         if CURL_CFFI_AVAILABLE:
             self.scraper = curl_requests.Session()
@@ -457,9 +555,186 @@ class CustomArticleCollector:
         self.max_delay_between_requests = 5.0
         self.requests_per_source = 0
         self.max_requests_per_minute = 20
+
+    def _build_luxury_keyword_weight_map(self) -> Dict[str, float]:
+        return {
+            "luxury": 4.0, "jewellery": 4.0, "fine jewellery": 4.0, "craftsmanship": 4.0, "jewels": 4.0,
+            "jewelry": 3.0, "diamond": 3.0, "engagement ring": 3.0, "wedding ring": 3.0, "lab grown diamonds": 3.0,
+            "diamond price": 3.0, "gold price": 3.0, "crown": 3.0, "tiara": 3.0, "coronation": 3.0, "queen": 3.0,
+            "king": 3.0, "prince": 3.0, "princess": 3.0, "duchess": 3.0, "duke": 3.0, "royal family": 3.0,
+            "buckingham palace": 3.0, "windsor": 3.0, "crown jewels": 3.0, "state visit": 3.0, "royal wedding": 3.0,
+            "monarchy": 3.0, "sovereign": 3.0, "regalia": 3.0, "royal collection": 3.0, "palace": 3.0,
+            "cartier": 3.5, "tiffany": 3.5, "bulgari": 3.5, "chanel": 3.5, "dior": 3.5, "van cleef": 3.5,
+            "graff": 3.5, "harry winston": 3.5, "chopard": 3.5, "piaget": 3.5, "boucheron": 3.5,
+            "necklace": 2.5, "bracelet": 2.5, "earrings": 2.5, "pendant": 2.5, "brooch": 2.5,
+            "gold": 2.5, "platinum": 2.5, "silver": 2.5, "emerald": 2.5, "sapphire": 2.5, "ruby": 2.5,
+            "fashion": 2.5, "accessories": 2.5, "watches": 2.5, "timepiece": 2.5, "collection": 2.5,
+            "launch": 2.5, "haute couture": 2.5, "limited edition": 2.5,
+            "red carpet": 2.0, "celebrity": 2.0, "fashion week": 2.0, "auction": 2.0, "royal": 2.0, "royals": 2.0,
+            "collaboration": 1.5, "investment": 1.5, "trends": 1.5, "style": 1.5, "luxury sector": 1.5,
+            "luxury marketing trends": 1.5
+        }
+
+    def _build_luxury_sources(self) -> Dict[str, dict]:
+        return {
+            'The Guardian': {
+                'base_url': 'https://www.theguardian.com/fashion/womens-jewellery',
+                'rss_feeds': ['https://www.theguardian.com/fashion/womens-jewellery/rss', 'https://www.theguardian.com/uk/rss'],
+                'sitemap_url': 'https://www.theguardian.com/sitemaps/news.xml'
+            },
+            'The Telegraph': {
+                'base_url': 'https://www.telegraph.co.uk/luxury/',
+                'rss_feeds': ['https://www.telegraph.co.uk/luxury/rss'],
+                'sitemap_url': 'https://www.telegraph.co.uk/luxury/sitemap.xml'
+            },
+            'Evening Standard': {
+                'base_url': 'https://www.standard.co.uk/topic/jewellery',
+                'rss_feeds': ['https://www.standard.co.uk/rss'],
+                'sitemap_url': 'https://www.standard.co.uk/sitemaps/googlenews'
+            },
+            'The Times': {
+                'base_url': 'https://www.thetimes.com/life-style/luxury',
+                'rss_feeds': [],
+                'sitemap_url': 'https://www.thetimes.com/sitemaps/news'
+            },
+            'Financial Times': {
+                'base_url': 'https://www.ft.com/fashion',
+                'rss_feeds': [],
+                'sitemap_url': 'https://www.ft.com/sitemaps/news.xml'
+            },
+            'Forbes': {
+                'base_url': 'https://www.forbes.com/business/',
+                'rss_feeds': ['https://www.forbes.com/business/feed/'],
+                'sitemap_url': 'https://www.forbes.com/news_sitemap.xml'
+            },
+            'Business of Fashion': {
+                'base_url': 'https://www.businessoffashion.com/',
+                'rss_feeds': ['https://www.businessoffashion.com/feed/'],
+                'sitemap_url': 'https://www.businessoffashion.com/arc/outboundfeeds/sitemap/google-news/'
+            },
+            'Vogue Business': {
+                'base_url': 'https://www.voguebusiness.com/',
+                'rss_feeds': ['https://www.voguebusiness.com/feed'],
+                'sitemap_url': 'https://www.vogue.com/feed/google-latest-news/sitemap-google-news'
+            },
+            "Harper's Bazaar": {
+                'base_url': 'https://www.harpersbazaar.com/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://www.harpersbazaar.com/sitemap_google_news.xml'
+            },
+            'Elle': {
+                'base_url': 'https://www.elle.com/jewelry/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://www.elle.com/sitemap_google_news.xml'
+            },
+            'Vogue UK': {
+                'base_url': 'https://www.vogue.co.uk/',
+                'rss_feeds': ['https://www.vogue.co.uk/feed/rss'],
+                'sitemap_url': 'https://www.vogue.co.uk/feed/sitemap/sitemap-google-news'
+            },
+            'Vanity Fair': {
+                'base_url': 'https://www.vanityfair.com/',
+                'rss_feeds': ['https://www.vanityfair.com/feed/rss'],
+                'sitemap_url': 'https://www.vanityfair.com/feed/google-latest-news/sitemap-google-news'
+            },
+            'Tatler': {
+                'base_url': 'https://www.tatler.com/',
+                'rss_feeds': ['https://www.tatler.com/feed/rss'],
+                'sitemap_url': 'https://www.tatler.com/feed/google-latest-news/sitemap-google-news'
+            },
+            'Red Online': {
+                'base_url': 'https://www.redonline.co.uk/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://www.redonline.co.uk/sitemap_google_news.xml'
+            },
+            'Town & Country': {
+                'base_url': 'https://www.townandcountrymag.com/style/',
+                'rss_feeds': ['https://www.townandcountrymag.com/rss/all.xml/'],
+                'sitemap_url': 'https://www.townandcountrymag.com/sitemap_google_news.xml'
+            },
+            'StyleCaster': {
+                'base_url': 'https://stylecaster.com/c/fashion/',
+                'rss_feeds': ['https://stylecaster.com/feed/'],
+                'sitemap_url': 'https://stylecaster.com/news-sitemap.xml'
+            },
+            'The Handbook': {
+                'base_url': 'https://www.thehandbook.com/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://www.thehandbook.com/sitemap.xml?postType=editorial&offset=0'
+            },
+            'Something About Rocks': {
+                'base_url': 'https://somethingaboutrocks.com/',
+                'rss_feeds': ['https://somethingaboutrocks.com/feed/'],
+                'sitemap_url': None
+            },
+            'The Cut': {
+                'base_url': 'https://www.thecut.com/',
+                'rss_feeds': ['https://www.thecut.com/rss/index.xml'],
+                'sitemap_url': 'https://www.thecut.com/sitemaps/sitemap-2025.xml'
+            },
+            'The Monocle': {
+                'base_url': 'https://monocle.com/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://monocle.com/the-monocle-minute/'
+            },
+            'The Jewels Club': {
+                'base_url': 'https://thejewels.club/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://thejewels.club/sitemap.xml'
+            },
+            'Retail Jeweller': {
+                'base_url': 'https://www.retail-jeweller.com/',
+                'rss_feeds': ['https://www.retail-jeweller.com/feed/'],
+                'sitemap_url': None
+            },
+            'Professional Jeweller': {
+                'base_url': 'https://www.professionaljeweller.com/',
+                'rss_feeds': ['https://www.professionaljeweller.com/feed/'],
+                'sitemap_url': None
+            },
+            'Rapaport': {
+                'base_url': 'https://rapaport.com/',
+                'rss_feeds': ['https://rapaport.com/rss/'],
+                'sitemap_url': None
+            },
+            'National Jeweler': {
+                'base_url': 'https://nationaljeweler.com/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://nationaljeweler.com/sitemap.xml'
+            },
+            'Wall Street Journal': {
+                'base_url': 'https://www.wsj.com/news/life-arts/fashion',
+                'rss_feeds': [
+                    'https://feeds.content.downjones.io/public/rss/RSSWorldNews',
+                    'https://feeds.content.downjones.io/public/rss/RSSLifestyle',
+                    'https://feeds.content.downjones.io/public/rss/RSSArtsCulture',
+                    'https://feeds.content.downjones.io/public/rss/RSSStyle'
+                ],
+                'sitemap_url': 'https://www.wsj.com/wsjsitemaps/wsj_google_news.xml'
+            },
+            'New York Times': {
+                'base_url': 'https://www.nytimes.com/',
+                'rss_feeds': [
+                    'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
+                    'https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml',
+                    'https://rss.nytimes.com/services/xml/rss/nyt/FashionandStyle.xml'
+                ],
+                'sitemap_url': 'https://www.nytimes.com/sitemaps/new/news.xml.gz'
+            },
+            'Business Insider': {
+                'base_url': 'https://www.businessinsider.com/',
+                'rss_feeds': [],
+                'sitemap_url': 'https://www.businessinsider.com/sitemap/google-news.xml'
+            }
+        }
     
     def set_keywords_override(self, keywords: List[str]) -> None:
-        self.active_keywords = keywords if keywords else list(self.luxury_keywords)
+        cleaned = [str(k).strip().lower() for k in (keywords or []) if str(k).strip()]
+        if cleaned:
+            self.active_keywords = cleaned
+            return
+        base_keywords = self.luxury_keywords if self.topic == "luxury" else self.finance_keywords
+        self.active_keywords = [k.lower() for k in base_keywords]
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").lower()).strip()
@@ -470,28 +745,22 @@ class CustomArticleCollector:
         return [p for p in parts if p and p not in stop and len(p) > 2]
 
     def _weighted_score_for_keyword(self, kw_lower: str) -> float:
-        if kw_lower in [
-            'eurozone derivatives clearing',
-            'euro interest rate swaps clearing',
-            'euro ccp infrastructure',
-            'emir clearing rules',
-            'clearing house',
-            'interest-rate derivatives',
-            'otc derivatives',
-            'interest rate swaps',
-            'fx swaps',
-            'credit derivatives',
-            'central counterparty clearing',
-            'eurozone interest rate derivatives clearing infrastructure',
-        ]:
-            return 4.0
-        if kw_lower in ['mutual funds', 'hedge funds', 'private equity']:
-            return 3.0
-        if kw_lower in ['blockchain', 'cryptocurrency', 'fintech', 'gold market price']:
-            return 2.5
-        if kw_lower in ['risk management', 'compliance']:
-            return 2.0
-        return 1.0
+        kw = (kw_lower or "").strip().lower()
+        return self.keyword_weight_map.get(kw, 1.0)
+
+    def _combo_bonus(self, text_lower: str) -> float:
+        bonus = 0.0
+        for terms, value in self.keyword_combo_bonuses:
+            if all(t in text_lower for t in terms):
+                bonus += value
+        return bonus
+
+    def _keyword_occurrences(self, text_lower: str, keyword: str) -> int:
+        kw = (keyword or "").strip().lower()
+        if not kw:
+            return 0
+        pattern = r'(?<!\w)' + re.escape(kw) + r'(?!\w)'
+        return len(re.findall(pattern, text_lower))
 
     def get_random_user_agent(self):
         return random.choice(self.user_agents)
@@ -645,7 +914,9 @@ class CustomArticleCollector:
         """Calculate relevance score based on active keywords."""
         combined_text = self._normalize_text(f"{title} {content}")
         found_keywords = []
+        found_keyword_set = set()
         score = 0.0
+        repeat_bonus_total = 0.0
 
         for keyword in self.active_keywords:
             kw_lower = self._normalize_text(keyword)
@@ -653,7 +924,12 @@ class CustomArticleCollector:
 
             if kw_lower and kw_lower in combined_text:
                 found_keywords.append(keyword)
+                found_keyword_set.add(kw_lower)
                 score += base_w
+                hits = self._keyword_occurrences(combined_text, kw_lower)
+                extra_hits = max(0, min(hits, self.max_hits_per_keyword) - 1)
+                if extra_hits > 0:
+                    repeat_bonus_total += extra_hits * (0.35 * base_w)
                 continue
 
             # Partial token fallback for longer phrases
@@ -662,15 +938,18 @@ class CustomArticleCollector:
                 hits = sum(1 for t in tokens if t in combined_text)
                 if hits >= 2:
                     found_keywords.append(keyword)
+                    found_keyword_set.add(kw_lower)
                     score += base_w * 0.5
 
-        # Bonus for multiple keyword matches
-        if len(found_keywords) > 2:
-            score *= 1.2
-        if len(found_keywords) > 4:
-            score *= 1.4
+        score += min(repeat_bonus_total, self.max_total_repeat_bonus)
+        breadth_bonus = min(
+            max(0, len(found_keyword_set) - 1) * self.unique_keyword_bonus,
+            self.max_unique_keyword_bonus
+        )
+        score += breadth_bonus
+        score += self._combo_bonus(combined_text)
 
-        return score, found_keywords
+        return score, sorted(set(found_keywords))
     
     def try_rss_feed(self, publication: str, feed_url: str) -> List[ArticleCandidate]:
         """Try to fetch articles from a single RSS feed"""
@@ -1279,10 +1558,11 @@ class CustomArticleCollector:
         return filename
 
 def main():
-    print("Luxury Article Collector")
+    topic = os.getenv("TOPIC", "finance").strip().lower()
+    print(f"{topic.title()} Article Collector")
     print("=" * 60)
     
-    collector = CustomArticleCollector()
+    collector = CustomArticleCollector(topic=topic)
     
     print(f"\nAvailable Sources ({len(collector.target_sources)}):")
     for i, pub in enumerate(collector.target_sources.keys(), 1):

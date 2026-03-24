@@ -36,6 +36,11 @@ def _parse_keywords_override() -> list[str]:
     return [k.strip().lower() for k in raw.split(",") if k.strip()]
 
 
+def _parse_topic() -> str:
+    raw = os.getenv("TOPIC", "finance").strip().lower()
+    return raw if raw in {"finance", "luxury"} else "finance"
+
+
 class PipelineRunner:
     """
     Main pipeline orchestrator
@@ -51,7 +56,9 @@ class PipelineRunner:
         
         # Initialize your agents
         print("🤖 Initializing Article Collector...")
-        self.collector = CustomArticleCollector()
+        self.topic = _parse_topic()
+        print(f"Using topic: {self.topic}")
+        self.collector = CustomArticleCollector(topic=self.topic)
 
         
         override_keywords = _parse_keywords_override()

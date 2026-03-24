@@ -34,6 +34,7 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
   const [runStatus, setRunStatus] = useState("idle");
   const [errorMessage, setErrorMessage] = useState(null);
   const [keywordsInput, setKeywordsInput] = useState("");
+  const [topic, setTopic] = useState("finance");
   const pollRef = useRef(null);
 
   const stopPolling = () => {
@@ -85,7 +86,7 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     }
     setErrorMessage(null);
 
-    const payload = keywords.length > 0 ? { keywords } : {};
+    const payload = keywords.length > 0 ? { keywords, topic } : { topic };
     const result = await githubAPI.triggerPipeline(payload);
     if (!result.success) {
       setRunStatus("idle");
@@ -108,6 +109,8 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     errorMessage,
     keywordsInput,
     setKeywordsInput,
+    topic,
+    setTopic,
     triggerRun,
   };
 }

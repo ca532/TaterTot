@@ -14,6 +14,12 @@ on:
         required: false
         default: ""
         type: string
+      topic:
+        description: "Pipeline topic"
+        required: false
+        default: "finance"
+        type: choice
+        options: ["finance", "luxury"]
 
 
 concurrency:
@@ -68,6 +74,7 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           TEST_MODE: ${{ github.event.inputs.test_mode }}
           KEYWORDS_OVERRIDE: ${{ github.event.inputs.keywords }}
+          TOPIC: ${{ github.event.inputs.topic }}
 
 
       - name: Find PDF and Get Date

@@ -3,7 +3,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Literal
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import jwt
@@ -63,6 +63,7 @@ STATE_LOCK = threading.Lock()
 
 class TriggerRequest(BaseModel):
     keywords: Optional[List[str]] = None
+    topic: Literal["finance", "luxury"] = "finance"
 
 
 class LoginRequest(BaseModel):
@@ -186,6 +187,13 @@ def _normalize_keywords(raw: Optional[List[str]]) -> List[str]:
     if len(cleaned) > 25:
         raise HTTPException(status_code=400, detail="Maximum 25 keywords")
     return cleaned
+
+
+def _normalize_topic(raw: Optional[str]) -> str:
+    topic = (raw or "finance").strip().lower()
+    if topic not in {"finance", "luxury"}:
+        raise HTTPException(status_code=400, detail="Invalid topic")
+    return topic
 
 
 def _gh_headers() -> dict:
@@ -313,12 +321,14 @@ def trigger_pipeline(req: TriggerRequest, response: Response, authorization: str
 
         # Trigger dispatch
         url = f"{GITHUB_API_BASE}/actions/workflows/{GITHUB_WORKFLOW}/dispatches"
+        topic = _normalize_topic(req.topic)
         keywords = _normalize_keywords(req.keywords)
         body = {
             "ref": GITHUB_REF,
             "inputs": {
                 "test_mode": "false",
-                "keywords": ",".join(keywords)
+                "keywords": ",".join(keywords),
+                "topic": topic,
             },
         }
 

@@ -107,6 +107,8 @@ function SummariesView() {
     errorMessage,
     keywordsInput,
     setKeywordsInput,
+    topic,
+    setTopic,
     triggerRun,
   } = usePipelineRunner({
     onSuccess: async () => {
@@ -243,9 +245,11 @@ const handleRunPipeline = async () => {
           Click the button below to collect and summarize the latest articles from your publications.
         </p>
 
-        <PipelineStatusCard runStatus={runStatus} errorMessage={errorMessage} />
+        <PipelineStatusCard runStatus={runStatus} errorMessage={errorMessage} topic={topic} />
 
         <RunActions
+          topic={topic}
+          setTopic={setTopic}
           keywordsInput={keywordsInput}
           setKeywordsInput={setKeywordsInput}
           onRunPipeline={handleRunPipeline}
