@@ -1449,8 +1449,11 @@ class CustomArticleCollector:
                 continue
             
             candidates.sort(key=lambda x: x.relevance_score, reverse=True)
-            max_articles_per_publication = baseline_max_articles
-            print(f"  Initial cap: {max_articles_per_publication} (baseline {baseline_max_articles})")
+            max_articles_per_publication = self._dynamic_max_articles_for_publication(candidates)
+            print(
+                f"  Initial cap: {max_articles_per_publication} "
+                f"(baseline {baseline_max_articles}, from candidate quality)"
+            )
             
             # Extract full content and collect articles
             publication_articles = []
