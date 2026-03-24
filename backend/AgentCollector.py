@@ -440,14 +440,6 @@ class CustomArticleCollector:
             'sitemap_url': 'https://a-teaminsight.com/sitemap.xml'
         },
 
-        'CoinDesk': {
-            'base_url': 'https://www.coindesk.com/',
-            'rss_feeds': [
-                'https://www.coindesk.com/arc/outboundfeeds/rss/'
-            ],
-            'sitemap_url': 'https://www.coindesk.com/sitemap-index.xml'
-        },
-
         'FT Alphaville': {
             'base_url': 'https://www.ft.com/ft-alphaville',
             'rss_feeds': [
@@ -475,7 +467,36 @@ class CustomArticleCollector:
             'base_url': 'https://www.cnn.com/',
             'rss_feeds': [],  # business/markets feeds exist but are now poorly documented; many users generate via third-party tools
             'sitemap_url': 'https://www.cnn.com/sitemap/news.xml'
-        }
+        },
+
+        'Economist': {
+            'base_url': 'https://www.economist.com/',
+            'rss_feeds': ['https://www.economist.com/finance-and-economics/rss.xml'],
+            'sitemap_url': 'https://www.economist.com/googlenews.xml'
+        },
+        'CoinDesk': {
+            'base_url': 'https://www.coindesk.com/',
+            'rss_feeds': ['https://www.coindesk.com/arc/outboundfeeds/rss/'],
+            'sitemap_url': 'https://www.coindesk.com/arc/outboundfeeds/news-sitemap-index'
+        },
+        
+        'TechCrunch': {
+            'base_url': 'https://techcrunch.com/',
+            'rss_feeds': ['https://techcrunch.com/feed/'],
+            'sitemap_url': 'https://techcrunch.com/news-sitemap.xml'
+        },
+        'Securities Finance Times': {
+            'base_url': 'https://www.securitiesfinancetimes.com/',
+            'rss_feeds': ['https://www.securitiesfinancetimes.com/rssfeed.php'],
+            'sitemap_url': None  # No sitemap found; robots.txt has no sitemap directive
+        },
+        'Bobsguide': {
+            'base_url': 'https://www.bobsguide.com/',
+            'rss_feeds': ['https://www.bobsguide.com/feed/'],
+            'sitemap_url': 'https://www.bobsguide.com/sitemap.xml'
+},
+
+
 
         }
         
@@ -1209,7 +1230,7 @@ class CustomArticleCollector:
                     sitemap_entries.append((loc, lastmod_dt))
 
                 sitemap_entries.sort(key=lambda x: x[1], reverse=True)
-                max_child_sitemaps = 10
+                max_child_sitemaps = 17
                 for sub_sitemap_url, _ in sitemap_entries[:max_child_sitemaps]:
                     urls.extend(self.fetch_urls_from_sitemap(sub_sitemap_url))
             
