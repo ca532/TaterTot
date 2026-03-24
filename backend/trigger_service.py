@@ -31,6 +31,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "https://repo-trigger.onrender.com",
         "https://ca532.github.io",
+        "https://rrd.claireadler.com",
 
     ],
     allow_credentials=True,

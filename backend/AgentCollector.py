@@ -205,18 +205,6 @@ class CustomArticleCollector:
 
 
 
-        'Banking Technology Magazine': {
-
-                        'base_url': 'https://www.fintechfutures.com/',
-
-                        'rss_feeds': ['https://www.fintechfutures.com/rss.xml'],
-
-                        'sitemap_url': 'https://www.fintechfutures.com/googlenews.xml'
-
-                    },
-
-
-
         'City AM': {
 
                         'base_url': 'https://www.cityam.com/',
