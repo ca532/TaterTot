@@ -796,20 +796,20 @@ class CustomArticleCollector:
         if not candidates:
             return baseline
 
-        top5 = candidates[:5]
-        if not top5:
+        top7 = candidates[:7]
+        if not top7:
             return baseline
 
-        avg_top5 = sum(c.relevance_score for c in top5) / len(top5)
-        strong9 = sum(1 for c in top5 if c.relevance_score >= 9.0)
-        strong12 = sum(1 for c in top5 if c.relevance_score >= 12.0)
+        avg_top7 = sum(c.relevance_score for c in top7) / len(top7)
+        strong7 = sum(1 for c in top7 if c.relevance_score >= 7.0)
+        strong10 = sum(1 for c in top7 if c.relevance_score >= 10.0)
 
         # Very strong source in this run
-        if avg_top5 >= 11.0 and strong12 >= 2:
+        if avg_top7 > 10.0 and strong10 >= 5:
             return 10
 
         # Strong source in this run
-        if avg_top5 >= 9.0 and strong9 >= 3:
+        if avg_top7 >= 7.0 and strong7 >= 3:
             return 8
 
         return baseline
@@ -817,20 +817,20 @@ class CustomArticleCollector:
     def _dynamic_max_from_extracted(self, extracted_articles: List[ArticleCandidate], baseline: int = 5) -> int:
         """
         Recompute cap from extracted/full-content scored articles.
-        Uses up to top 5 extracted items.
+        Uses up to top 7 extracted items.
         """
         if not extracted_articles:
             return baseline
 
         ranked = sorted(extracted_articles, key=lambda x: x.relevance_score, reverse=True)
-        top5 = ranked[:5]
-        avg_top5 = sum(a.relevance_score for a in top5) / len(top5)
-        strong9 = sum(1 for a in top5 if a.relevance_score >= 9.0)
-        strong12 = sum(1 for a in top5 if a.relevance_score >= 12.0)
+        top7 = ranked[:7]
+        avg_top7 = sum(a.relevance_score for a in top7) / len(top7)
+        strong7 = sum(1 for a in top7 if a.relevance_score >= 7.0)
+        strong10 = sum(1 for a in top7 if a.relevance_score >= 10.0)
 
-        if avg_top5 >= 11.0 and strong12 >= 2:
+        if avg_top7 > 10.0 and strong10 >= 5:
             return 10
-        if avg_top5 >= 9.0 and strong9 >= 3:
+        if avg_top7 >= 7.0 and strong7 >= 3:
             return 8
         return baseline
     
