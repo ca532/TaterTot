@@ -542,6 +542,8 @@ class CustomArticleCollector:
         self.use_dynamic_caps = (self.topic != "luxury")
         # Evaluate a few extra candidates past cap, then trim by full-content score.
         self.post_cap_buffer = 3
+        # Stop wasting attempts on a source if it keeps returning 401.
+        self.max_401_per_source = 5
 
         # Initialize scraper with priority order
         if CURL_CFFI_AVAILABLE:
@@ -1349,6 +1351,8 @@ class CustomArticleCollector:
             response = self.make_request(candidate.url, timeout=20)
             
             if response.status_code != 200:
+                if response.status_code == 401:
+                    self.current_source_401_count = getattr(self, "current_source_401_count", 0) + 1
                 # Fallback for blocked pages (common on premium domains):
                 # keep RSS metadata-only candidates when they are already relevant.
                 if response.status_code in {401, 403, 429} and candidate.summary:
@@ -1445,6 +1449,7 @@ class CustomArticleCollector:
                 
             print(f"{publication}:")
             self.requests_per_source = 0
+            self.current_source_401_count = 0
             source_info = self.target_sources[publication]
             
             # Initial collection attempt
@@ -1496,6 +1501,9 @@ class CustomArticleCollector:
             for candidate in candidates[probe_count:max_tries]:
                 if len(publication_articles) >= target_with_buffer:
                     break
+                if self.current_source_401_count >= self.max_401_per_source:
+                    print(f"  Too many HTTP 401 responses ({self.current_source_401_count}) - skipping rest for {publication}")
+                    break
 
                 enhanced = self.extract_full_content(candidate)
                 if enhanced:
@@ -1522,6 +1530,9 @@ class CustomArticleCollector:
                         target_with_buffer = max_articles_per_publication + self.post_cap_buffer
                         for candidate in new_rss_candidates[:30]:
                             if len(publication_articles) >= target_with_buffer:
+                                break
+                            if self.current_source_401_count >= self.max_401_per_source:
+                                print(f"  Too many HTTP 401 responses ({self.current_source_401_count}) - stopping RSS fallback for {publication}")
                                 break
                             
                             enhanced = self.extract_full_content(candidate)
