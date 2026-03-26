@@ -48,6 +48,7 @@ class ArticleCandidate:
     relevance_score: float = 0.0
     keywords_found: List[str] = None
     full_content: str = ""
+    candidate_source: str = "unknown"
 
 class CustomArticleCollector:
     def __init__(self, topic: str = "finance"):
@@ -536,6 +537,11 @@ class CustomArticleCollector:
             self.target_sources = self.finance_sources
             self.keyword_weight_map = self.finance_keyword_weight_map
             self.keyword_combo_bonuses = self.finance_combo_bonuses
+
+        # Cap behavior: keep dynamic caps for finance, fixed cap for luxury.
+        self.use_dynamic_caps = (self.topic != "luxury")
+        # Evaluate a few extra candidates past cap, then trim by full-content score.
+        self.post_cap_buffer = 3
 
         # Initialize scraper with priority order
         if CURL_CFFI_AVAILABLE:
@@ -1032,7 +1038,8 @@ class CustomArticleCollector:
                             published_date=pub_date,
                             summary=summary,
                             relevance_score=score,
-                            keywords_found=keywords
+                            keywords_found=keywords,
+                            candidate_source="rss"
                         )
                         candidates.append(candidate)
                         
@@ -1069,7 +1076,7 @@ class CustomArticleCollector:
         return all_candidates
     
     def is_relevant_url(self, url: str) -> bool:
-        """Enhanced URL filtering - requires at least one active keyword in URL."""
+        """URL filtering focused on article-like structure, not keyword-in-URL."""
         url_lower = url.lower().rstrip('/')
 
         # Explicitly exclude National Jeweler category/section pages
@@ -1115,9 +1122,7 @@ class CustomArticleCollector:
         if any(term in url_lower for term in exclude_terms):
             return False
 
-        # Require at least one active keyword in URL
-        has_keyword = any(keyword.lower() in url_lower for keyword in self.active_keywords)
-        return has_keyword
+        return True
     
     def fetch_urls_from_sitemap(self, sitemap_url: str) -> List[tuple]:
         urls = []
@@ -1269,7 +1274,8 @@ class CustomArticleCollector:
                             publication=publication,
                             published_date=pub_date,
                             summary="",
-                            relevance_score=1.0
+                            relevance_score=1.0,
+                            candidate_source="sitemap"
                         )
                         candidates.append(candidate)
                         
@@ -1423,7 +1429,8 @@ class CustomArticleCollector:
     
     def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
         """Collect top articles per publication with dynamic caps."""
-        print("Weekly Article Collection (Dynamic cap per publication)")
+        cap_label = "Dynamic cap per publication" if self.use_dynamic_caps else "Fixed cap per publication"
+        print(f"Weekly Article Collection ({cap_label})")
         print("=" * 60)
         baseline_max_articles = 5
         
@@ -1448,12 +1455,21 @@ class CustomArticleCollector:
                 time.sleep(random.uniform(3, 6))
                 continue
             
-            candidates.sort(key=lambda x: x.relevance_score, reverse=True)
-            max_articles_per_publication = baseline_max_articles
-            print(
-                f"  Initial cap: {max_articles_per_publication} "
-                f"(baseline {baseline_max_articles}, probe first 5 extracted)"
+            source_priority = {"sitemap": 0, "rss": 1}
+            candidates.sort(
+                key=lambda x: (
+                    source_priority.get(x.candidate_source, 99),
+                    -x.relevance_score
+                )
             )
+            max_articles_per_publication = baseline_max_articles
+            if self.use_dynamic_caps:
+                print(
+                    f"  Initial cap: {max_articles_per_publication} "
+                    f"(baseline {baseline_max_articles}, probe first 5 extracted)"
+                )
+            else:
+                print(f"  Fixed cap: {max_articles_per_publication}")
             
             # Extract full content and collect articles
             publication_articles = []
@@ -1468,15 +1484,17 @@ class CustomArticleCollector:
 
                 time.sleep(random.uniform(1, 2))
 
-            # Recompute cap from extracted article quality (full-content scores) based on probe set
-            dynamic_cap = self._dynamic_max_from_extracted(publication_articles, baseline_max_articles)
-            if dynamic_cap > max_articles_per_publication:
-                print(f"  Raising cap based on extracted quality: {max_articles_per_publication} -> {dynamic_cap}")
-                max_articles_per_publication = dynamic_cap
+            # Recompute cap only when dynamic caps are enabled (finance pipeline).
+            if self.use_dynamic_caps:
+                dynamic_cap = self._dynamic_max_from_extracted(publication_articles, baseline_max_articles)
+                if dynamic_cap > max_articles_per_publication:
+                    print(f"  Raising cap based on extracted quality: {max_articles_per_publication} -> {dynamic_cap}")
+                    max_articles_per_publication = dynamic_cap
 
-            # Pass 2: continue through remaining candidates up to the new cap
+            # Pass 2: continue until cap + buffer, then finalize by score.
+            target_with_buffer = max_articles_per_publication + self.post_cap_buffer
             for candidate in candidates[probe_count:max_tries]:
-                if len(publication_articles) >= max_articles_per_publication:
+                if len(publication_articles) >= target_with_buffer:
                     break
 
                 enhanced = self.extract_full_content(candidate)
@@ -1500,9 +1518,10 @@ class CustomArticleCollector:
                         print(f"  Found {len(new_rss_candidates)} new RSS candidates to try...")
                         new_rss_candidates.sort(key=lambda x: x.relevance_score, reverse=True)
                         
-                        # Try to extract from new RSS candidates
+                        # Try extra RSS candidates up to cap + buffer.
+                        target_with_buffer = max_articles_per_publication + self.post_cap_buffer
                         for candidate in new_rss_candidates[:30]:
-                            if len(publication_articles) >= max_articles_per_publication:
+                            if len(publication_articles) >= target_with_buffer:
                                 break
                             
                             enhanced = self.extract_full_content(candidate)
