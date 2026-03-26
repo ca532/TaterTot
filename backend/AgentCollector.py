@@ -1449,31 +1449,41 @@ class CustomArticleCollector:
                 continue
             
             candidates.sort(key=lambda x: x.relevance_score, reverse=True)
-            max_articles_per_publication = self._dynamic_max_articles_for_publication(candidates)
+            max_articles_per_publication = baseline_max_articles
             print(
                 f"  Initial cap: {max_articles_per_publication} "
-                f"(baseline {baseline_max_articles}, from candidate quality)"
+                f"(baseline {baseline_max_articles}, probe first 5 extracted)"
             )
             
             # Extract full content and collect articles
             publication_articles = []
             max_tries = min(len(candidates), 20)
-            
-            for candidate in candidates[:max_tries]:
-                if len(publication_articles) >= max_articles_per_publication:
-                    break
-                
+            probe_count = min(5, max_tries)
+
+            # Pass 1: probe first 5 candidates with full-content scoring
+            for candidate in candidates[:probe_count]:
                 enhanced = self.extract_full_content(candidate)
                 if enhanced:
                     publication_articles.append(enhanced)
-                
+
                 time.sleep(random.uniform(1, 2))
 
-            # Recompute cap from extracted article quality (full-content scores)
+            # Recompute cap from extracted article quality (full-content scores) based on probe set
             dynamic_cap = self._dynamic_max_from_extracted(publication_articles, baseline_max_articles)
             if dynamic_cap > max_articles_per_publication:
                 print(f"  Raising cap based on extracted quality: {max_articles_per_publication} -> {dynamic_cap}")
                 max_articles_per_publication = dynamic_cap
+
+            # Pass 2: continue through remaining candidates up to the new cap
+            for candidate in candidates[probe_count:max_tries]:
+                if len(publication_articles) >= max_articles_per_publication:
+                    break
+
+                enhanced = self.extract_full_content(candidate)
+                if enhanced:
+                    publication_articles.append(enhanced)
+
+                time.sleep(random.uniform(1, 2))
             
             # If we didn't get 3 articles, try RSS as additional fallback
             if len(publication_articles) < 3 and source_info.get('rss_feeds'):
