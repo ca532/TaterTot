@@ -544,6 +544,8 @@ class CustomArticleCollector:
         self.post_cap_buffer = 3
         # Stop wasting attempts on a source if it keeps returning 401.
         self.max_401_per_source = 5
+        self.max_403_per_source = 8
+        self.max_placeholder_skips_per_source = 5
 
         # Initialize scraper with priority order
         if CURL_CFFI_AVAILABLE:
@@ -1353,6 +1355,8 @@ class CustomArticleCollector:
             if response.status_code != 200:
                 if response.status_code == 401:
                     self.current_source_401_count = getattr(self, "current_source_401_count", 0) + 1
+                if response.status_code == 403:
+                    self.current_source_403_count = getattr(self, "current_source_403_count", 0) + 1
                 # Fallback for blocked pages (common on premium domains):
                 # keep RSS metadata-only candidates when they are already relevant.
                 if response.status_code in {401, 403, 429} and candidate.summary:
@@ -1385,6 +1389,9 @@ class CustomArticleCollector:
 
             # If multiple placeholder markers are present, treat as invalid extraction
             if marker_hits >= 2:
+                self.current_source_placeholder_skip_count = getattr(
+                    self, "current_source_placeholder_skip_count", 0
+                ) + 1
                 print(f"  Skipping placeholder/template content: {candidate.publication}")
                 return None
             
@@ -1450,6 +1457,8 @@ class CustomArticleCollector:
             print(f"{publication}:")
             self.requests_per_source = 0
             self.current_source_401_count = 0
+            self.current_source_403_count = 0
+            self.current_source_placeholder_skip_count = 0
             source_info = self.target_sources[publication]
             
             # Initial collection attempt
@@ -1504,6 +1513,15 @@ class CustomArticleCollector:
                 if self.current_source_401_count >= self.max_401_per_source:
                     print(f"  Too many HTTP 401 responses ({self.current_source_401_count}) - skipping rest for {publication}")
                     break
+                if self.current_source_403_count >= self.max_403_per_source:
+                    print(f"  Too many HTTP 403 responses ({self.current_source_403_count}) - skipping rest for {publication}")
+                    break
+                if self.current_source_placeholder_skip_count >= self.max_placeholder_skips_per_source:
+                    print(
+                        f"  Too many placeholder/template skips "
+                        f"({self.current_source_placeholder_skip_count}) - skipping rest for {publication}"
+                    )
+                    break
 
                 enhanced = self.extract_full_content(candidate)
                 if enhanced:
@@ -1533,6 +1551,15 @@ class CustomArticleCollector:
                                 break
                             if self.current_source_401_count >= self.max_401_per_source:
                                 print(f"  Too many HTTP 401 responses ({self.current_source_401_count}) - stopping RSS fallback for {publication}")
+                                break
+                            if self.current_source_403_count >= self.max_403_per_source:
+                                print(f"  Too many HTTP 403 responses ({self.current_source_403_count}) - stopping RSS fallback for {publication}")
+                                break
+                            if self.current_source_placeholder_skip_count >= self.max_placeholder_skips_per_source:
+                                print(
+                                    f"  Too many placeholder/template skips "
+                                    f"({self.current_source_placeholder_skip_count}) - stopping RSS fallback for {publication}"
+                                )
                                 break
                             
                             enhanced = self.extract_full_content(candidate)

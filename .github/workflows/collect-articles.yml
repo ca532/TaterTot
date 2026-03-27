@@ -65,10 +65,32 @@ jobs:
         run: |
           set -euo pipefail
           cd backend
+
           for i in 1 2; do
-            timeout 45m python pipeline_runner.py && break
-            echo "pipeline failed (attempt $i). Retrying..."
-            sleep 15
+            echo "Starting pipeline attempt $i..."
+            set +e
+            timeout 45m python -u pipeline_runner.py
+            exit_code=$?
+            set -e
+
+            if [ "$exit_code" -eq 0 ]; then
+              echo "Pipeline succeeded on attempt $i."
+              break
+            fi
+
+            if [ "$exit_code" -eq 124 ]; then
+              echo "pipeline failed (attempt $i): timed out after 45m (exit 124)."
+            else
+              echo "pipeline failed (attempt $i): process exited with code $exit_code."
+            fi
+
+            if [ "$i" -lt 2 ]; then
+              echo "Retrying in 15s..."
+              sleep 15
+            else
+              echo "All attempts failed."
+              exit "$exit_code"
+            fi
           done
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
