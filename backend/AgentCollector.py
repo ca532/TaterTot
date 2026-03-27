@@ -546,6 +546,8 @@ class CustomArticleCollector:
         self.max_401_per_source = 5
         self.max_403_per_source = 8
         self.max_placeholder_skips_per_source = 5
+        self.max_curl3_per_source = 5
+        self.logged_bad_url_sources = set()
 
         # Initialize scraper with priority order
         if CURL_CFFI_AVAILABLE:
@@ -1127,6 +1129,39 @@ class CustomArticleCollector:
             return False
 
         return True
+
+    def is_valid_fetch_url(self, url: str) -> bool:
+        """Validate URL before HTTP fetch to avoid curl parser failures."""
+        if not url or not isinstance(url, str):
+            return False
+
+        u = url.strip()
+        if not u:
+            return False
+
+        try:
+            parsed = urlparse(u)
+        except Exception:
+            return False
+
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        if not parsed.netloc:
+            return False
+
+        # Validate port if present in netloc (avoid curl(3) malformed port issues)
+        host_port = parsed.netloc.rsplit("@", 1)[-1]
+        if ":" in host_port:
+            host, port_str = host_port.rsplit(":", 1)
+            # Allow IPv6-in-brackets with optional port; skip strict parsing here
+            if not host.startswith("["):
+                if not port_str.isdigit():
+                    return False
+                p = int(port_str)
+                if p < 1 or p > 65535:
+                    return False
+
+        return True
     
     def fetch_urls_from_sitemap(self, sitemap_url: str) -> List[tuple]:
         urls = []
@@ -1350,6 +1385,13 @@ class CustomArticleCollector:
     
     def extract_full_content(self, candidate: ArticleCandidate) -> ArticleCandidate:
         try:
+            if not self.is_valid_fetch_url(candidate.url):
+                self.current_source_curl3_count = getattr(self, "current_source_curl3_count", 0) + 1
+                if candidate.publication not in self.logged_bad_url_sources:
+                    print(f"  Invalid URL format sample ({candidate.publication}): {candidate.url}")
+                    self.logged_bad_url_sources.add(candidate.publication)
+                return None
+
             response = self.make_request(candidate.url, timeout=20)
             
             if response.status_code != 200:
@@ -1424,6 +1466,11 @@ class CustomArticleCollector:
             
         except Exception as e:
             error_msg = str(e)
+            if 'curl: (3)' in error_msg or 'Port number was not a decimal number' in error_msg:
+                self.current_source_curl3_count = getattr(self, "current_source_curl3_count", 0) + 1
+                if candidate.publication not in self.logged_bad_url_sources:
+                    print(f"  curl(3) sample bad URL ({candidate.publication}): {candidate.url}")
+                    self.logged_bad_url_sources.add(candidate.publication)
             if '403' in error_msg or 'Forbidden' in error_msg:
                 print(f"  Error: HTTP 403 Forbidden - {candidate.publication}")
             elif '404' in error_msg or 'Not Found' in error_msg:
@@ -1459,6 +1506,7 @@ class CustomArticleCollector:
             self.current_source_401_count = 0
             self.current_source_403_count = 0
             self.current_source_placeholder_skip_count = 0
+            self.current_source_curl3_count = 0
             source_info = self.target_sources[publication]
             
             # Initial collection attempt
@@ -1522,6 +1570,9 @@ class CustomArticleCollector:
                         f"({self.current_source_placeholder_skip_count}) - skipping rest for {publication}"
                     )
                     break
+                if self.current_source_curl3_count >= self.max_curl3_per_source:
+                    print(f"  Too many curl(3) URL errors ({self.current_source_curl3_count}) - skipping rest for {publication}")
+                    break
 
                 enhanced = self.extract_full_content(candidate)
                 if enhanced:
@@ -1560,6 +1611,9 @@ class CustomArticleCollector:
                                     f"  Too many placeholder/template skips "
                                     f"({self.current_source_placeholder_skip_count}) - stopping RSS fallback for {publication}"
                                 )
+                                break
+                            if self.current_source_curl3_count >= self.max_curl3_per_source:
+                                print(f"  Too many curl(3) URL errors ({self.current_source_curl3_count}) - stopping RSS fallback for {publication}")
                                 break
                             
                             enhanced = self.extract_full_content(candidate)
