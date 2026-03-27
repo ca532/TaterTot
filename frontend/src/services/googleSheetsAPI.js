@@ -25,7 +25,7 @@ class GoogleSheetsService {
       return [];
     }
 
-    const range = 'Articles!A2:G1000'; // Skip header row, get all data
+    const range = 'Articles!A2:G'; // Skip header row, get all data
     const url = `${this.baseURL}/values/${range}?key=${API_KEY}`;
     
     try {
