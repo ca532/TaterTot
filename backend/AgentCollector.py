@@ -1082,7 +1082,7 @@ class CustomArticleCollector:
         return all_candidates
     
     def is_relevant_url(self, url: str) -> bool:
-        """URL filtering focused on article-like structure, not keyword-in-URL."""
+        """URL filtering; luxury additionally requires keyword-in-URL."""
         url_lower = url.lower().rstrip('/')
 
         # Explicitly exclude National Jeweler category/section pages
@@ -1127,6 +1127,10 @@ class CustomArticleCollector:
         ]
         if any(term in url_lower for term in exclude_terms):
             return False
+
+        # For luxury, require at least one active keyword in URL.
+        if self.topic == "luxury":
+            return any(keyword.lower() in url_lower for keyword in self.active_keywords)
 
         return True
 
@@ -1554,7 +1558,8 @@ class CustomArticleCollector:
                     max_articles_per_publication = dynamic_cap
 
             # Pass 2: continue until cap + buffer, then finalize by score.
-            target_with_buffer = max_articles_per_publication + self.post_cap_buffer
+            effective_buffer = self.post_cap_buffer if self.use_dynamic_caps else 0
+            target_with_buffer = max_articles_per_publication + effective_buffer
             for candidate in candidates[probe_count:max_tries]:
                 if len(publication_articles) >= target_with_buffer:
                     break
@@ -1596,7 +1601,8 @@ class CustomArticleCollector:
                         new_rss_candidates.sort(key=lambda x: x.relevance_score, reverse=True)
                         
                         # Try extra RSS candidates up to cap + buffer.
-                        target_with_buffer = max_articles_per_publication + self.post_cap_buffer
+                        effective_buffer = self.post_cap_buffer if self.use_dynamic_caps else 0
+                        target_with_buffer = max_articles_per_publication + effective_buffer
                         for candidate in new_rss_candidates[:30]:
                             if len(publication_articles) >= target_with_buffer:
                                 break
