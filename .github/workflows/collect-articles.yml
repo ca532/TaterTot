@@ -29,7 +29,7 @@ concurrency:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -69,7 +69,7 @@ jobs:
           for i in 1 2; do
             echo "Starting pipeline attempt $i..."
             set +e
-            timeout 60m python -u pipeline_runner.py
+            timeout 110m python -u pipeline_runner.py
             exit_code=$?
             set -e
 
@@ -79,7 +79,7 @@ jobs:
             fi
 
             if [ "$exit_code" -eq 124 ]; then
-              echo "pipeline failed (attempt $i): timed out after 60m (exit 124)."
+              echo "pipeline failed (attempt $i): timed out after 110m (exit 124)."
             else
               echo "pipeline failed (attempt $i): process exited with code $exit_code."
             fi
