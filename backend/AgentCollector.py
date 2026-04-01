@@ -344,8 +344,8 @@ class CustomArticleCollector:
 
         'World Finance': {
             'base_url': 'https://www.worldfinance.com/',
-            'rss_feeds': ['https://www.worldfinance.com/news/rss-feed'],
-            'sitemap_url': 'https://www.worldfinance.com/sitemap.xml'
+            'rss_feeds': ['https://www.worldfinance.com/feed/'],
+            'sitemap_url': 'https://www.worldfinance.com/wp-sitemap.xml'
         },
 
         'The Times (UK)': {
@@ -393,7 +393,7 @@ class CustomArticleCollector:
             'rss_feeds': [
                 'https://www.investmentweek.co.uk/feeds/rss'
             ],
-            'sitemap_url': None
+            'sitemap_url': 'https://www.investmentweek.co.uk/news-sitemap.xml'
         },
 
         'Wealth & Finance': {
@@ -1081,7 +1081,7 @@ class CustomArticleCollector:
         
         return all_candidates
     
-    def is_relevant_url(self, url: str) -> bool:
+    def is_relevant_url(self, url: str, publication: str = "") -> bool:
         """URL filtering; luxury additionally requires keyword-in-URL."""
         url_lower = url.lower().rstrip('/')
 
@@ -1128,6 +1128,25 @@ class CustomArticleCollector:
         if any(term in url_lower for term in exclude_terms):
             return False
 
+        source_specific_excludes = {
+            "BBC": [
+                "/live/", "/av/", "/iplayer", "/sounds", "/sport/",
+                "/news/topics/", "/newsround/", "/reel/", "/worklife/"
+            ],
+            "The Telegraph": [
+                "/video/", "/podcast/", "/newsletters/", "/opinion/",
+                "/business/live/", "/football/", "/rugby/", "/travel/"
+            ],
+            "Evening Standard": [
+                "/topic/", "/newsletters/", "/comment/", "/esmoney/",
+                "/sport/", "/showbiz/", "/culture/"
+            ],
+        }
+
+        if publication in source_specific_excludes:
+            if any(term in url_lower for term in source_specific_excludes[publication]):
+                return False
+
         # For luxury, require at least one active keyword in URL.
         if self.topic == "luxury":
             return any(keyword.lower() in url_lower for keyword in self.active_keywords)
@@ -1166,6 +1185,17 @@ class CustomArticleCollector:
                     return False
 
         return True
+
+    def sanitize_candidate_url(self, url: str) -> str:
+        """Normalize candidate URL before validation/fetch."""
+        if not url or not isinstance(url, str):
+            return ""
+
+        # Remove control chars, trim, and collapse accidental whitespace.
+        u = re.sub(r"[\x00-\x1f\x7f]", "", url).strip()
+        u = re.sub(r"\s+", "", u)
+
+        return u
     
     def fetch_urls_from_sitemap(self, sitemap_url: str) -> List[tuple]:
         urls = []
@@ -1178,7 +1208,9 @@ class CustomArticleCollector:
                     lastmod_elem = url_elem.find('.//{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod')
                     
                     if loc_elem is not None:
-                        url = loc_elem.text
+                        url = (loc_elem.text or "").strip()
+                        if url and not url.lower().startswith(("http://", "https://")):
+                            url = urljoin(sitemap_url, url)
                         if lastmod_elem is not None:
                             try:
                                 lastmod_str = lastmod_elem.text
@@ -1288,7 +1320,11 @@ class CustomArticleCollector:
                     lastmod_elem = url_elem.find('.//{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod')
                     
                     if loc_elem is not None:
-                        url = loc_elem.text
+                        url = (loc_elem.text or "").strip()
+                        if url and not url.lower().startswith(("http://", "https://")):
+                            base = self.target_sources.get(publication, {}).get("base_url", "")
+                            if base:
+                                url = urljoin(base, url)
                         
                         if lastmod_elem is not None:
                             try:
@@ -1310,7 +1346,7 @@ class CustomArticleCollector:
             
             for url, pub_date in urls[:150]:
                 try:
-                    if self.is_relevant_url(url):
+                    if self.is_relevant_url(url, publication=publication):
                         candidate = ArticleCandidate(
                             title="",
                             url=url,
@@ -1389,8 +1425,11 @@ class CustomArticleCollector:
     
     def extract_full_content(self, candidate: ArticleCandidate) -> ArticleCandidate:
         try:
+            candidate.url = self.sanitize_candidate_url(candidate.url)
+
             if not self.is_valid_fetch_url(candidate.url):
                 self.current_source_curl3_count = getattr(self, "current_source_curl3_count", 0) + 1
+                self.source_fail_counts["invalid_url"] += 1
                 if candidate.publication not in self.logged_bad_url_sources:
                     print(f"  Invalid URL format sample ({candidate.publication}): {candidate.url}")
                     self.logged_bad_url_sources.add(candidate.publication)
@@ -1401,8 +1440,12 @@ class CustomArticleCollector:
             if response.status_code != 200:
                 if response.status_code == 401:
                     self.current_source_401_count = getattr(self, "current_source_401_count", 0) + 1
+                    self.source_fail_counts["http_401"] += 1
                 if response.status_code == 403:
                     self.current_source_403_count = getattr(self, "current_source_403_count", 0) + 1
+                    self.source_fail_counts["http_403"] += 1
+                if response.status_code == 429:
+                    self.source_fail_counts["http_429"] += 1
                 # Fallback for blocked pages (common on premium domains):
                 # keep RSS metadata-only candidates when they are already relevant.
                 if response.status_code in {401, 403, 429} and candidate.summary:
@@ -1421,6 +1464,7 @@ class CustomArticleCollector:
             article.parse()
             
             if not article.text or len(article.text) < 150:
+                self.source_fail_counts["short_text"] += 1
                 return None
 
             # Reject obvious placeholder/template pages that poison summaries
@@ -1438,6 +1482,7 @@ class CustomArticleCollector:
                 self.current_source_placeholder_skip_count = getattr(
                     self, "current_source_placeholder_skip_count", 0
                 ) + 1
+                self.source_fail_counts["placeholder"] += 1
                 print(f"  Skipping placeholder/template content: {candidate.publication}")
                 return None
             
@@ -1466,6 +1511,7 @@ class CustomArticleCollector:
             if full_score >= 1.0:
                 return candidate
             else:
+                self.source_fail_counts["low_score"] += 1
                 return None
             
         except Exception as e:
@@ -1475,6 +1521,7 @@ class CustomArticleCollector:
                 if candidate.publication not in self.logged_bad_url_sources:
                     print(f"  curl(3) sample bad URL ({candidate.publication}): {candidate.url}")
                     self.logged_bad_url_sources.add(candidate.publication)
+            self.source_fail_counts["other_error"] += 1
             if '403' in error_msg or 'Forbidden' in error_msg:
                 print(f"  Error: HTTP 403 Forbidden - {candidate.publication}")
             elif '404' in error_msg or 'Not Found' in error_msg:
@@ -1511,6 +1558,16 @@ class CustomArticleCollector:
             self.current_source_403_count = 0
             self.current_source_placeholder_skip_count = 0
             self.current_source_curl3_count = 0
+            self.source_fail_counts = {
+                "invalid_url": 0,
+                "http_401": 0,
+                "http_403": 0,
+                "http_429": 0,
+                "short_text": 0,
+                "placeholder": 0,
+                "low_score": 0,
+                "other_error": 0,
+            }
             source_info = self.target_sources[publication]
             
             # Initial collection attempt
@@ -1632,6 +1689,14 @@ class CustomArticleCollector:
             
             publication_articles.sort(key=lambda x: x.relevance_score, reverse=True)
             final_3 = publication_articles[:max_articles_per_publication]
+
+            fc = self.source_fail_counts
+            print(
+                "  Fail reasons:"
+                f" invalid={fc['invalid_url']}, 401={fc['http_401']}, 403={fc['http_403']},"
+                f" 429={fc['http_429']}, short={fc['short_text']}, placeholder={fc['placeholder']},"
+                f" low_score={fc['low_score']}, other={fc['other_error']}"
+            )
             
             if final_3:
                 scores = [f"{a.relevance_score:.1f}" for a in final_3]
