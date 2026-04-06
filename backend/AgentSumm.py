@@ -32,6 +32,7 @@ class ArticleSummarizer:
         resolved_model = model or os.getenv("SUMMARIZER_MODEL", "facebook/bart-large-cnn")
         print(f"Loading model: {resolved_model} ... this may take a moment.")
         self.summarizer = pipeline("summarization", model=resolved_model)
+        self.is_promptable = "t5" in resolved_model.lower() or "flan" in resolved_model.lower()
         
         # Setup CloudScraper if available
         if CLOUDSCRAPER_AVAILABLE:
@@ -69,22 +70,36 @@ class ArticleSummarizer:
     ) -> Optional[ArticleSummary]:
         """Summarize an article focusing on luxury brands, jewelry pieces, and celebrities"""
         try:
-            # BART-CNN doesn't use prompts - just give it the article content
-            # Adding a prompt causes hallucinations!
-            
-            # Just use the article content directly
-            input_text = article_content[:4000]  # Use more context
-            
-            summary_text = self.summarizer(
-                input_text,
-                max_length=300,      # Longer summaries for more detail
-                min_length=120,      # Ensure substantial detail
-                do_sample=False,     # Deterministic output
-                truncation=True,
-                num_beams=6,         # Higher beam search for quality
-                length_penalty=1.0,  # No penalty for length
-                early_stopping=True
-            )[0]["summary_text"]
+            input_text = article_content[:3500]
+
+            if self.is_promptable:
+                prompt = (
+                    "Summarize this finance article for PR/media monitoring. "
+                    "Focus on market impact, institutions/companies, regulation/policy, and key numbers. "
+                    "Write one concise paragraph.\n\n"
+                    f"Article:\n{input_text}"
+                )
+                summary_text = self.summarizer(
+                    prompt,
+                    max_length=220,
+                    min_length=80,
+                    do_sample=False,
+                    truncation=True,
+                    num_beams=4,
+                    length_penalty=1.0,
+                    early_stopping=True
+                )[0]["summary_text"]
+            else:
+                summary_text = self.summarizer(
+                    input_text,
+                    max_length=300,
+                    min_length=120,
+                    do_sample=False,
+                    truncation=True,
+                    num_beams=6,
+                    length_penalty=1.0,
+                    early_stopping=True
+                )[0]["summary_text"]
 
             return ArticleSummary(
                 title=title,
