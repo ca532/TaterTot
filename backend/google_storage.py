@@ -98,7 +98,8 @@ class GoogleSheetsDB:
                 article.get('publication', ''),
                 article.get('journalist', 'Unknown'),
                 article.get('summary', ''),
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                article.get('score', 0.0),
             ])
         
         # Append to sheet (keeps history)

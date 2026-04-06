@@ -92,6 +92,7 @@ class PipelineRunner:
             articles_data = []
             for idx, article in enumerate(articles):
                 author = article.author if hasattr(article, 'author') and article.author else 'Unknown'
+                score = float(getattr(article, "relevance_score", 0.0) or 0.0)
 
                 article_dict = {
                     'id': f"article-{datetime.now().strftime('%Y%m%d')}-{idx+1}",
@@ -102,6 +103,7 @@ class PipelineRunner:
                     'journalist': 'Unknown',  # Placeholder
                     'author': author,      # Placeholder
                     'summary': '',            # Will be filled by summarizer
+                    'score': round(score, 2),
                 }
                 articles_data.append(article_dict)
             
