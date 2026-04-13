@@ -3,7 +3,7 @@ import { formatDistanceToNow } from 'date-fns';
 
 function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF }) {
   // Filter articles from the last run only
-  const recentArticles = articles.filter(article => {
+  const filtered = articles.filter(article => {
     if (!lastRunTime) return true; // If no lastRunTime, show all articles
     
     const articleDate = new Date(article.collectedDate);
@@ -14,6 +14,15 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
     const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
     return articleDate >= new Date(runDate.getTime() - bufferTime);
   });
+
+  filtered.sort((a, b) => {
+    const scoreA = Number(a.score || 0);
+    const scoreB = Number(b.score || 0);
+    if (scoreB !== scoreA) return scoreB - scoreA; // higher score first
+    return new Date(b.collectedDate) - new Date(a.collectedDate); // tie-breaker: newer first
+  });
+
+  const recentArticles = filtered;
 
   // Also calculate one week ago for additional context
   const oneWeekAgo = new Date();
