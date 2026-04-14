@@ -235,7 +235,7 @@ class CustomArticleCollector:
 
                         'base_url': 'https://finance.yahoo.com/',
 
-                        'rss_feeds': [],
+                        'rss_feeds': ['https://finance.yahoo.com/news/rss-feed'],
 
                         'sitemap_url': 'https://www.yahoo.com/news-sitemap.xml'
 
@@ -278,7 +278,7 @@ class CustomArticleCollector:
                     },
         'Financial Times (FT)': {
             'base_url': 'https://www.ft.com/',
-            'rss_feeds': [],  # section-only / paid; no simple global feed
+            'rss_feeds': ['https://www.ft.com/rss/home/international'],  # section-only / paid; no simple global feed
             'sitemap_url': 'https://www.ft.com/sitemaps/news.xml'
         },
 
@@ -356,7 +356,7 @@ class CustomArticleCollector:
 
         'The Telegraph': {
             'base_url': 'https://www.telegraph.co.uk/',
-            'rss_feeds': [],  # many section RSS feeds are limited/deprecated
+            'rss_feeds': ['https://www.telegraph.co.uk/rss.xml'],  # many section RSS feeds are limited/deprecated
             'sitemap_url': 'https://www.telegraph.co.uk/sitemap.xml'
         },
 
@@ -495,7 +495,54 @@ class CustomArticleCollector:
             'base_url': 'https://www.bobsguide.com/',
             'rss_feeds': ['https://www.bobsguide.com/feed/'],
             'sitemap_url': 'https://www.bobsguide.com/sitemap.xml'
-},
+        },
+        'Inc': {
+            'base_url': 'https://www.inc.com/',
+            'rss_feeds': [
+                'https://www.inc.com/rss'
+            ],
+            'sitemap_url': 'https://www.inc.com/sitemap/sitemap_news.xml'
+        },
+        'Global Treasurer': {
+            'base_url': 'https://www.theglobaltreasurer.com/',
+            'rss_feeds': [
+                'https://www.theglobaltreasurer.com/feed/'
+            ],
+            'sitemap_url': 'https://www.theglobaltreasurer.com/wp-sitemap.xml'
+        },
+        'The CFO': {
+            'base_url': 'https://the-cfo.io/',
+            'rss_feeds': [
+                'https://the-cfo.io/feed/'
+            ],
+            'sitemap_url': 'https://the-cfo.io/sitemap_index.xml'
+        },
+        'Portfolio Institutional': {
+            'base_url': 'https://www.portfolio-institutional.co.uk/',
+            'rss_feeds': [
+                'https://www.portfolio-institutional.co.uk/feed/'
+            ],
+            'sitemap_url': 'https://www.portfolio-institutional.co.uk/sitemap_index.xml'
+        },
+        'The Trade': {
+            'base_url': 'https://www.thetradenews.com/',
+            'rss_feeds': [],
+            'sitemap_url': 'https://www.thetradenews.com/sitemap_index.xml'
+        },
+        'Asset Servicing Times': {
+            'base_url': 'https://www.assetservicingtimes.com/',
+            'rss_feeds': [
+                'https://www.assetservicingtimes.com/rssfeed.php'
+            ],
+            'sitemap_url': None
+        },
+        'Finance Magnates': {
+            'base_url': 'https://www.financemagnates.com/',
+            'rss_feeds': [
+                'https://www.financemagnates.com/feed/'
+            ],
+            'sitemap_url': 'https://www.financemagnates.com/sitemap.xml'
+        },
 
 
 
@@ -1213,13 +1260,40 @@ class CustomArticleCollector:
         u = re.sub(r"\s+", "", u)
 
         return u
+
+    def _parse_xml_with_cleanup(self, raw_bytes: bytes):
+        """Parse XML robustly when hosts prepend junk/whitespace before XML."""
+        if not raw_bytes:
+            raise ET.ParseError("empty response")
+
+        text = None
+        for enc in ("utf-8", "utf-8-sig", "iso-8859-1"):
+            try:
+                text = raw_bytes.decode(enc, errors="strict")
+                break
+            except Exception:
+                text = None
+
+        if text is None:
+            text = raw_bytes.decode("utf-8", errors="replace")
+
+        text = text.lstrip("\ufeff\r\n\t ")
+
+        xml_decl_pos = text.find("<?xml")
+        root_pos = text.find("<urlset")
+        smi_pos = text.find("<sitemapindex")
+        starts = [p for p in (xml_decl_pos, root_pos, smi_pos) if p != -1]
+        if starts:
+            text = text[min(starts):]
+
+        return ET.fromstring(text)
     
     def fetch_urls_from_sitemap(self, sitemap_url: str) -> List[tuple]:
         urls = []
         try:
             response = self.make_request(sitemap_url, timeout=10)
             if response.status_code == 200:
-                root = ET.fromstring(response.content)
+                root = self._parse_xml_with_cleanup(response.content)
                 for url_elem in root:
                     loc_elem = url_elem.find('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc')
                     lastmod_elem = url_elem.find('.//{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod')
@@ -1256,41 +1330,16 @@ class CustomArticleCollector:
             if response.status_code != 200:
                 return candidates
             
-            # Try multiple decoding strategies for problematic sitemaps
-            xml_content = None
-            
             try:
-                xml_content = response.text
-                root = ET.fromstring(xml_content)
-            except (ET.ParseError, UnicodeDecodeError):
-                xml_content = None
-            
-            if xml_content is None:
-                try:
-                    xml_content = response.content.decode('utf-8')
-                    root = ET.fromstring(xml_content)
-                except (ET.ParseError, UnicodeDecodeError):
-                    xml_content = None
-            
-            if xml_content is None:
-                try:
-                    xml_content = response.content.decode('iso-8859-1')
-                    root = ET.fromstring(xml_content)
-                except (ET.ParseError, UnicodeDecodeError):
-                    xml_content = None
-            
-            if xml_content is None:
+                root = self._parse_xml_with_cleanup(response.content)
+            except Exception:
                 try:
                     import gzip
                     decompressed = gzip.decompress(response.content)
-                    xml_content = decompressed.decode('utf-8')
-                    root = ET.fromstring(xml_content)
-                except:
-                    xml_content = None
-            
-            if xml_content is None:
-                print(f"  Sitemap error: Cannot parse XML")
-                return candidates
+                    root = self._parse_xml_with_cleanup(decompressed)
+                except Exception:
+                    print(f"  Sitemap error: Cannot parse XML")
+                    return candidates
             
             urls = []
             

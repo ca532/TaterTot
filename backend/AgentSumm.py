@@ -70,7 +70,7 @@ class ArticleSummarizer:
     ) -> Optional[ArticleSummary]:
         """Summarize an article focusing on luxury brands, jewelry pieces, and celebrities"""
         try:
-            input_text = article_content[:3500]
+            input_text = article_content[:4000]
 
             if self.is_promptable:
                 prompt = (
@@ -81,8 +81,8 @@ class ArticleSummarizer:
                 )
                 summary_text = self.summarizer(
                     prompt,
-                    max_length=220,
-                    min_length=80,
+                    max_length=260,
+                    min_length=100,
                     do_sample=False,
                     truncation=True,
                     num_beams=4,
