@@ -1084,6 +1084,18 @@ class CustomArticleCollector:
     def is_relevant_url(self, url: str, publication: str = "") -> bool:
         """URL filtering; luxury additionally requires keyword-in-URL."""
         url_lower = url.lower().rstrip('/')
+        parsed = urlparse(url_lower)
+        host = parsed.netloc or ""
+
+        # Exclude registration/event hosts and known non-editorial subdomains.
+        blocked_host_terms = [
+            "register.",
+            "events.",
+            "conference.",
+            "webinars.",
+        ]
+        if any(term in host for term in blocked_host_terms):
+            return False
 
         # Explicitly exclude National Jeweler category/section pages
         national_jeweler_excluded = [
@@ -1123,12 +1135,17 @@ class CustomArticleCollector:
             '/tag/', '/tags/', '/category/', '/categories/', '/author/', '/authors/',
             '/search', '/topic/', '/topics/', '/video/', '/videos/', '/podcast/',
             '/podcasts/', '/gallery/', '/galleries/', '/live/', '/live-blog/', '/events/',
-            '/newsletter', '/subscribe', '/privacy', '/terms'
+            '/newsletter', '/subscribe', '/privacy', '/terms',
+            '/register', '/registration', '/roundtable', '/conference', '/summit',
+            '/webinar', '/event-registration'
         ]
         if any(term in url_lower for term in exclude_terms):
             return False
 
         source_specific_excludes = {
+            "Institutional Investor": [
+                "/roundtable", "/events", "/awards", "/membership", "/subscribe"
+            ],
             "BBC": [
                 "/live/", "/av/", "/iplayer", "/sounds", "/sport/",
                 "/news/topics/", "/newsround/", "/reel/", "/worklife/"
