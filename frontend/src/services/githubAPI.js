@@ -6,6 +6,25 @@ const PIPELINE_API_BASE = import.meta.env.VITE_PIPELINE_API_BASE || "http://loca
 const TOKEN_KEY = "access_token";
 
 class PipelineService {
+  normalizeUrlForId(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+      const path = u.pathname.replace(/\/+$/, "") || "/";
+      const params = new URLSearchParams(u.search);
+      const kept = [];
+      for (const [k, v] of params.entries()) {
+        const lk = k.toLowerCase();
+        if (lk.startsWith("utm_") || ["gclid", "fbclid", "mc_cid", "mc_eid"].includes(lk)) continue;
+        kept.push([k, v]);
+      }
+      const qs = kept.length ? "?" + new URLSearchParams(kept).toString() : "";
+      return `${u.protocol.toLowerCase()}//${host}${path}${qs}`;
+    } catch {
+      return (url || "").trim();
+    }
+  }
+
   getToken() {
     return sessionStorage.getItem(TOKEN_KEY);
   }
@@ -211,6 +230,65 @@ class PipelineService {
     const match = contentDisposition.match(/filename="([^"]+)"/i);
     const filename = match?.[1] || "latest-artifact.zip";
     return { success: true, blob, filename };
+  }
+
+  async getCurrentWeekStars() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars/current-week`, { method: "GET" });
+      if (!res.ok) return { success: false, stars: [] };
+      const data = await res.json();
+      return { success: true, stars: data.stars || [] };
+    } catch (err) {
+      return { success: false, error: err.message, stars: [] };
+    }
+  }
+
+  async addStar(article) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: article.title,
+          url: article.url,
+          publication: article.publication,
+          summary: article.summary,
+          author: article.journalist || "Unknown",
+          score: Number(article.score || 0),
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async removeStarById(starId) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars/${encodeURIComponent(starId)}`, {
+        method: "DELETE"
+      });
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async removeStarByArticleId(articleId) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ article_id: articleId })
+      });
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   }
 
   // Backward compatibility if anything else still calls this

@@ -15,6 +15,7 @@ function SummariesView() {
   const [viewStatus, setViewStatus] = useState("idle"); // idle|running|complete
   const [isViewingResults, setIsViewingResults] = useState(false);
   const [articles, setArticles] = useState([]);
+  const [starredByArticleId, setStarredByArticleId] = useState({});
   const [lastRunTime, setLastRunTime] = useState(null);
   const [pdfLink, setPdfLink] = useState(null);
   const [rateLimitInfo, setRateLimitInfo] = useState(null);
@@ -68,11 +69,53 @@ function SummariesView() {
     }
   };
 
+  const articleIdFromUrl = (url) => githubAPI.normalizeUrlForId(url);
+
+  const loadCurrentWeekStars = async () => {
+    const res = await githubAPI.getCurrentWeekStars();
+    if (!res.success) return;
+    const map = {};
+    for (const s of res.stars) {
+      if (s.article_id) map[s.article_id] = s;
+    }
+    setStarredByArticleId(map);
+  };
+
+  const toggleStar = async (article) => {
+    const articleId = articleIdFromUrl(article.url);
+    const existing = starredByArticleId[articleId];
+
+    if (existing?.star_id) {
+      const del = await githubAPI.removeStarById(existing.star_id);
+      if (!del.success) {
+        alert(`Failed to unstar: ${del.error || "unknown error"}`);
+        return;
+      }
+      setStarredByArticleId((prev) => {
+        const next = { ...prev };
+        delete next[articleId];
+        return next;
+      });
+      return;
+    }
+
+    const add = await githubAPI.addStar(article);
+    if (!add.success) {
+      alert(`Failed to star: ${add.error || "unknown error"}`);
+      return;
+    }
+    setStarredByArticleId((prev) => ({
+      ...prev,
+      [articleId]: { star_id: add.star_id, article_id: add.article_id }
+    }));
+  };
+
   const loadResultsAfterPipeline = async () => {
     try {
       const articlesData = await googleSheetsAPI.getArticles();
       if (articlesData.length > 0) {
         setArticles(articlesData);
+        await loadCurrentWeekStars();
         const dates = articlesData.map((a) => new Date(a.collectedDate));
         setLastRunTime(new Date(Math.max(...dates)));
 
@@ -206,10 +249,14 @@ const handleRunPipeline = async () => {
     return (
       <ArticlesList
         articles={articles}
+        starredByArticleId={starredByArticleId}
+        articleIdFromUrl={articleIdFromUrl}
+        onToggleStar={toggleStar}
         onRunAgain={() => {
           setViewStatus("idle");
           setRunStatus("idle");
           setArticles([]);
+          setStarredByArticleId({});
           updateRateLimitInfo();
         }}
         lastRunTime={lastRunTime}

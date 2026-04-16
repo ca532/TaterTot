@@ -2,15 +2,21 @@ import json
 import os
 import threading
 import time
+import hashlib
+import uuid
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import List, Optional, Literal
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import jwt
+import gspread
 from fastapi import FastAPI, Header, HTTPException, Response, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
+from google.oauth2.service_account import Credentials
 
 app = FastAPI()
 
@@ -57,8 +63,12 @@ COOLDOWN_SECONDS = int(os.environ.get("PIPELINE_COOLDOWN_SECONDS", "1800"))
 STATE_FILE = Path(os.environ.get("PIPELINE_STATE_FILE", "backend/data/pipeline_state.json"))
 
 GITHUB_API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
+GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS")
+STARRED_SHEET_NAME = os.environ.get("STARRED_SHEET_NAME", "Starred Summaries")
 
 STATE_LOCK = threading.Lock()
+_STARS_SHEET = None
 
 
 class TriggerRequest(BaseModel):
@@ -72,6 +82,23 @@ class LoginRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: Optional[str] = None
+
+
+class StarCreateRequest(BaseModel):
+    title: str
+    url: str
+    publication: str
+    summary: str
+    author: Optional[str] = "Unknown"
+    score: Optional[float] = 0.0
+    week_key: Optional[str] = None
+    user: Optional[str] = "default"
+
+
+class StarDeleteRequest(BaseModel):
+    article_id: str
+    week_key: Optional[str] = None
+    user: Optional[str] = "default"
 
 
 def _issue_token(token_type: str, expires_in: int) -> str:
@@ -111,6 +138,69 @@ def _check_auth(authorization: str) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     token = authorization.split(" ", 1)[1].strip()
     _decode_token(token, "access")
+
+
+def _get_week_key(dt: Optional[datetime] = None) -> str:
+    d = dt or datetime.now(timezone.utc)
+    iso_year, iso_week, _ = d.isocalendar()
+    return f"{iso_year}-W{iso_week:02d}"
+
+
+def _normalize_url_for_id(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return ""
+    parsed = urlparse(u)
+    host = (parsed.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    qs = parse_qsl(parsed.query, keep_blank_values=False)
+    keep = []
+    for k, v in qs:
+        lk = k.lower()
+        if lk.startswith("utm_") or lk in {"gclid", "fbclid", "mc_cid", "mc_eid"}:
+            continue
+        keep.append((k, v))
+    new_query = urlencode(keep, doseq=True)
+
+    path = parsed.path.rstrip("/") or "/"
+    scheme = parsed.scheme.lower() if parsed.scheme else "https"
+    return urlunparse((scheme, host, path, "", new_query, ""))
+
+
+def _article_id_from_url(url: str) -> str:
+    normalized = _normalize_url_for_id(url)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _load_stars_sheet():
+    global _STARS_SHEET
+    if _STARS_SHEET is not None:
+        return _STARS_SHEET
+
+    if not GOOGLE_SHEET_ID or not GOOGLE_CREDENTIALS:
+        raise HTTPException(status_code=500, detail="Missing Google Sheets env (GOOGLE_SHEET_ID/GOOGLE_CREDENTIALS)")
+
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDENTIALS), scopes=scope)
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+
+    try:
+        ws = spreadsheet.worksheet(STARRED_SHEET_NAME)
+    except Exception:
+        ws = spreadsheet.add_worksheet(title=STARRED_SHEET_NAME, rows=2000, cols=12)
+        ws.update("A1:K1", [[
+            "star_id", "article_id", "title", "url", "publication", "summary",
+            "author", "score", "starred_at", "week_key", "user"
+        ]])
+
+    _STARS_SHEET = ws
+    return _STARS_SHEET
 
 
 @app.post("/auth/login")
@@ -166,6 +256,113 @@ def auth_refresh(request: Request, req: RefreshRequest, response: Response):
 def auth_logout(response: Response):
     response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/auth")
     return {"ok": True}
+
+
+@app.get("/stars")
+def get_stars(week_key: Optional[str] = None, user: Optional[str] = "default", authorization: str = Header(default="")):
+    _check_auth(authorization)
+    wk = week_key or _get_week_key()
+    usr = (user or "default").strip()
+    ws = _load_stars_sheet()
+
+    rows = ws.get_all_records()
+    out = []
+    for r in rows:
+        if str(r.get("week_key", "")).strip() != wk:
+            continue
+        if str(r.get("user", "default")).strip() != usr:
+            continue
+        out.append(r)
+    return {"week_key": wk, "count": len(out), "stars": out}
+
+
+@app.get("/stars/current-week")
+def get_stars_current_week(user: Optional[str] = "default", authorization: str = Header(default="")):
+    return get_stars(week_key=_get_week_key(), user=user, authorization=authorization)
+
+
+@app.post("/stars")
+def create_star(req: StarCreateRequest, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    ws = _load_stars_sheet()
+
+    wk = req.week_key or _get_week_key()
+    usr = (req.user or "default").strip()
+    article_id = _article_id_from_url(req.url)
+
+    rows = ws.get_all_records()
+    for r in rows:
+        if (
+            str(r.get("article_id", "")).strip() == article_id
+            and str(r.get("week_key", "")).strip() == wk
+            and str(r.get("user", "default")).strip() == usr
+        ):
+            return {"ok": True, "star_id": r.get("star_id"), "article_id": article_id, "existing": True}
+
+    star_id = str(uuid.uuid4())
+    ws.append_row([
+        star_id,
+        article_id,
+        req.title or "",
+        req.url or "",
+        req.publication or "",
+        req.summary or "",
+        req.author or "Unknown",
+        float(req.score or 0.0),
+        datetime.now(timezone.utc).isoformat(),
+        wk,
+        usr,
+    ], value_input_option="USER_ENTERED")
+
+    return {"ok": True, "star_id": star_id, "article_id": article_id, "existing": False}
+
+
+@app.delete("/stars/{star_id}")
+def delete_star(star_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    ws = _load_stars_sheet()
+
+    values = ws.get_all_values()
+    if not values:
+        return {"ok": True, "deleted": False}
+
+    for i in range(2, len(values) + 1):
+        row = values[i - 1]
+        if len(row) > 0 and row[0] == star_id:
+            ws.delete_rows(i)
+            return {"ok": True, "deleted": True}
+    return {"ok": True, "deleted": False}
+
+
+@app.delete("/stars")
+def delete_star_by_article(req: StarDeleteRequest, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    ws = _load_stars_sheet()
+
+    wk = req.week_key or _get_week_key()
+    usr = (req.user or "default").strip()
+
+    values = ws.get_all_values()
+    if len(values) <= 1:
+        return {"ok": True, "deleted": False}
+
+    headers = values[0]
+    idx = {h: n for n, h in enumerate(headers)}
+    ai = idx.get("article_id")
+    wi = idx.get("week_key")
+    ui = idx.get("user")
+    if ai is None or wi is None:
+        raise HTTPException(status_code=500, detail="Starred sheet missing required columns")
+
+    for i in range(2, len(values) + 1):
+        row = values[i - 1]
+        row_article = row[ai] if ai < len(row) else ""
+        row_week = row[wi] if wi < len(row) else ""
+        row_user = row[ui] if ui is not None and ui < len(row) else "default"
+        if row_article == req.article_id and row_week == wk and row_user == usr:
+            ws.delete_rows(i)
+            return {"ok": True, "deleted": True}
+    return {"ok": True, "deleted": False}
 
 
 def _normalize_keywords(raw: Optional[List[str]]) -> List[str]:

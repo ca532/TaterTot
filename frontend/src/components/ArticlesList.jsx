@@ -1,7 +1,16 @@
-import { RefreshCw, ExternalLink, User, Calendar, Download } from 'lucide-react';
+import { RefreshCw, ExternalLink, User, Calendar, Download, Star } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
-function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF }) {
+function ArticlesList({
+  articles,
+  onRunAgain,
+  lastRunTime,
+  onDownloadPDF,
+  hasPDF,
+  starredByArticleId = {},
+  articleIdFromUrl = (u) => u,
+  onToggleStar = () => {},
+}) {
   // Filter articles from the last run only
   const filtered = articles.filter(article => {
     if (!lastRunTime) return true; // If no lastRunTime, show all articles
@@ -106,9 +115,28 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
               {/* Article Header */}
               <div className="mb-4">
                 {/* Full title - no truncation */}
-                <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                  {article.title}
-                </h3>
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                    {article.title}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => onToggleStar(article)}
+                    className="shrink-0 p-1 rounded hover:bg-gray-100"
+                    aria-label="Toggle star"
+                    title="Star this summary"
+                  >
+                    {(() => {
+                      const aid = articleIdFromUrl(article.url);
+                      const isStarred = !!starredByArticleId[aid];
+                      return (
+                        <Star
+                          className={`w-5 h-5 ${isStarred ? "fill-[#b8860b] text-[#b8860b]" : "text-gray-400"}`}
+                        />
+                      );
+                    })()}
+                  </button>
+                </div>
                 
                 {/* Meta info */}
                 <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">

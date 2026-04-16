@@ -1714,6 +1714,10 @@ class CustomArticleCollector:
                 
                 try:
                     rss_candidates = self.try_multiple_rss_feeds(publication, source_info['rss_feeds'])
+                    rss_401_start = self.current_source_401_count
+                    rss_403_start = self.current_source_403_count
+                    rss_placeholder_start = self.current_source_placeholder_skip_count
+                    rss_curl3_start = self.current_source_curl3_count
                     
                     # Remove candidates we already tried
                     tried_urls = {c.url for c in candidates}
@@ -1729,19 +1733,19 @@ class CustomArticleCollector:
                         for candidate in new_rss_candidates[:30]:
                             if len(publication_articles) >= target_with_buffer:
                                 break
-                            if self.current_source_401_count >= self.max_401_per_source:
+                            if (self.current_source_401_count - rss_401_start) >= self.max_401_per_source:
                                 print(f"  Too many HTTP 401 responses ({self.current_source_401_count}) - stopping RSS fallback for {publication}")
                                 break
-                            if self.current_source_403_count >= self.max_403_per_source:
+                            if (self.current_source_403_count - rss_403_start) >= self.max_403_per_source:
                                 print(f"  Too many HTTP 403 responses ({self.current_source_403_count}) - stopping RSS fallback for {publication}")
                                 break
-                            if self.current_source_placeholder_skip_count >= self.max_placeholder_skips_per_source:
+                            if (self.current_source_placeholder_skip_count - rss_placeholder_start) >= self.max_placeholder_skips_per_source:
                                 print(
                                     f"  Too many placeholder/template skips "
                                     f"({self.current_source_placeholder_skip_count}) - stopping RSS fallback for {publication}"
                                 )
                                 break
-                            if self.current_source_curl3_count >= self.max_curl3_per_source:
+                            if (self.current_source_curl3_count - rss_curl3_start) >= self.max_curl3_per_source:
                                 print(f"  Too many curl(3) URL errors ({self.current_source_curl3_count}) - stopping RSS fallback for {publication}")
                                 break
                             
