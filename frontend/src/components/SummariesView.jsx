@@ -16,6 +16,7 @@ function SummariesView() {
   const [isViewingResults, setIsViewingResults] = useState(false);
   const [articles, setArticles] = useState([]);
   const [starredByArticleId, setStarredByArticleId] = useState({});
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [lastRunTime, setLastRunTime] = useState(null);
   const [pdfLink, setPdfLink] = useState(null);
   const [rateLimitInfo, setRateLimitInfo] = useState(null);
@@ -115,6 +116,7 @@ function SummariesView() {
       const articlesData = await googleSheetsAPI.getArticles();
       if (articlesData.length > 0) {
         setArticles(articlesData);
+        setShowStarredOnly(false);
         await loadCurrentWeekStars();
         const dates = articlesData.map((a) => new Date(a.collectedDate));
         setLastRunTime(new Date(Math.max(...dates)));
@@ -252,11 +254,15 @@ const handleRunPipeline = async () => {
         starredByArticleId={starredByArticleId}
         articleIdFromUrl={articleIdFromUrl}
         onToggleStar={toggleStar}
+        showStarredOnly={showStarredOnly}
+        onShowAll={() => setShowStarredOnly(false)}
+        onShowStarredOnly={() => setShowStarredOnly(true)}
         onRunAgain={() => {
           setViewStatus("idle");
           setRunStatus("idle");
           setArticles([]);
           setStarredByArticleId({});
+          setShowStarredOnly(false);
           updateRateLimitInfo();
         }}
         lastRunTime={lastRunTime}

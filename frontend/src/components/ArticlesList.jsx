@@ -10,6 +10,9 @@ function ArticlesList({
   starredByArticleId = {},
   articleIdFromUrl = (u) => u,
   onToggleStar = () => {},
+  showStarredOnly = false,
+  onShowAll = () => {},
+  onShowStarredOnly = () => {},
 }) {
   // Filter articles from the last run only
   const filtered = articles.filter(article => {
@@ -32,6 +35,11 @@ function ArticlesList({
   });
 
   const recentArticles = filtered;
+  const starredSet = new Set(Object.keys(starredByArticleId || {}));
+  const starredRecentArticles = recentArticles.filter((article) =>
+    starredSet.has(articleIdFromUrl(article.url))
+  );
+  const displayedArticles = showStarredOnly ? starredRecentArticles : recentArticles;
 
   // Also calculate one week ago for additional context
   const oneWeekAgo = new Date();
@@ -70,6 +78,20 @@ function ArticlesList({
               Download PDF
             </button>
           )}
+
+          <button
+            onClick={onShowAll}
+            className={`inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg border ${!showStarredOnly ? "bg-[#b8860b] text-black border-[#b8860b]" : "bg-white text-gray-700 border-gray-300"}`}
+          >
+            All This Run
+          </button>
+
+          <button
+            onClick={onShowStarredOnly}
+            className={`inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg border ${showStarredOnly ? "bg-[#b8860b] text-black border-[#b8860b]" : "bg-white text-gray-700 border-gray-300"}`}
+          >
+            Starred This Week ({starredRecentArticles.length})
+          </button>
           
           <button
             onClick={onRunAgain}
@@ -97,17 +119,21 @@ function ArticlesList({
       </div>
 
       {/* No articles message */}
-      {recentArticles.length === 0 && (
+      {displayedArticles.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-600 text-lg">No articles found from the latest run.</p>
-          <p className="text-gray-500 mt-2">Try running the pipeline to collect new articles.</p>
+          <p className="text-gray-600 text-lg">
+            {showStarredOnly ? "No starred summaries for this week yet." : "No articles found from the latest run."}
+          </p>
+          <p className="text-gray-500 mt-2">
+            {showStarredOnly ? "Star summaries to pin them for the week." : "Try running the pipeline to collect new articles."}
+          </p>
         </div>
       )}
 
       {/* Articles Grid */}
-      {recentArticles.length > 0 && (
+      {displayedArticles.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
-          {recentArticles.map(article => (
+          {displayedArticles.map(article => (
             <div 
               key={article.id}
               className="bg-white rounded-lg shadow-lg border border-gray-200 p-4 sm:p-6 hover:shadow-xl hover:border-[#b8860b] transition-all flex flex-col h-full"
