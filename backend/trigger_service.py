@@ -212,6 +212,28 @@ def _load_stars_sheet():
     return _STARS_SHEET
 
 
+def _stars_rows(ws):
+    values = ws.get_all_values()
+    if not values:
+        return []
+
+    headers = values[0]
+    if not headers:
+        return []
+
+    rows = []
+    for r in values[1:]:
+        if not any((c or "").strip() for c in r):
+            continue
+        row = {}
+        for i, h in enumerate(headers):
+            if not h:
+                continue
+            row[h] = r[i] if i < len(r) else ""
+        rows.append(row)
+    return rows
+
+
 @app.post("/auth/login")
 def auth_login(req: LoginRequest, response: Response):
     if req.password != APP_LOGIN_PASSWORD:
@@ -280,7 +302,7 @@ def get_stars(week_key: Optional[str] = None, user: Optional[str] = "default", a
         except Exception as e:
             print(f"[STARS_DEBUG] get_stars probe error={e}")
 
-    rows = ws.get_all_records()
+    rows = _stars_rows(ws)
     out = []
     for r in rows:
         if str(r.get("week_key", "")).strip() != wk:
@@ -311,7 +333,7 @@ def create_star(req: StarCreateRequest, authorization: str = Header(default=""))
     usr = (req.user or "default").strip()
     article_id = _article_id_from_url(req.url)
 
-    rows = ws.get_all_records()
+    rows = _stars_rows(ws)
     for r in rows:
         if (
             str(r.get("article_id", "")).strip() == article_id
