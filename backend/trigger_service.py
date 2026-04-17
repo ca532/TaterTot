@@ -66,6 +66,7 @@ GITHUB_API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS")
 STARRED_SHEET_NAME = os.environ.get("STARRED_SHEET_NAME", "Starred Summaries")
+STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
 
 STATE_LOCK = threading.Lock()
 _STARS_SHEET = None
@@ -199,6 +200,14 @@ def _load_stars_sheet():
             "author", "score", "starred_at", "week_key", "user"
         ]])
 
+    if STARS_DEBUG_LOG:
+        try:
+            print(f"[STARS_DEBUG] spreadsheet_title={spreadsheet.title!r}")
+            print(f"[STARS_DEBUG] worksheet_title={ws.title!r}")
+            print(f"[STARS_DEBUG] A1:K1={ws.get('A1:K1')!r}")
+        except Exception as e:
+            print(f"[STARS_DEBUG] header_probe_error={e}")
+
     _STARS_SHEET = ws
     return _STARS_SHEET
 
@@ -264,6 +273,12 @@ def get_stars(week_key: Optional[str] = None, user: Optional[str] = "default", a
     wk = week_key or _get_week_key()
     usr = (user or "default").strip()
     ws = _load_stars_sheet()
+    if STARS_DEBUG_LOG:
+        try:
+            print(f"[STARS_DEBUG] get_stars worksheet_title={ws.title!r}")
+            print(f"[STARS_DEBUG] get_stars A1:K1={ws.get('A1:K1')!r}")
+        except Exception as e:
+            print(f"[STARS_DEBUG] get_stars probe error={e}")
 
     rows = ws.get_all_records()
     out = []
@@ -285,6 +300,12 @@ def get_stars_current_week(user: Optional[str] = "default", authorization: str =
 def create_star(req: StarCreateRequest, authorization: str = Header(default="")):
     _check_auth(authorization)
     ws = _load_stars_sheet()
+    if STARS_DEBUG_LOG:
+        try:
+            print(f"[STARS_DEBUG] create_star worksheet_title={ws.title!r}")
+            print(f"[STARS_DEBUG] create_star A1:K1={ws.get('A1:K1')!r}")
+        except Exception as e:
+            print(f"[STARS_DEBUG] create_star probe error={e}")
 
     wk = req.week_key or _get_week_key()
     usr = (req.user or "default").strip()
