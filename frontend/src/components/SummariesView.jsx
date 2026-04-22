@@ -77,7 +77,8 @@ function SummariesView() {
     if (!res.success) return;
     const map = {};
     for (const s of res.stars) {
-      if (s.article_id) map[s.article_id] = s;
+      const key = articleIdFromUrl(s.url || "");
+      if (key) map[key] = s;
     }
     setStarredByArticleId(map);
   };
