@@ -16,6 +16,7 @@ function SummariesView() {
   const [isViewingResults, setIsViewingResults] = useState(false);
   const [articles, setArticles] = useState([]);
   const [starredByArticleId, setStarredByArticleId] = useState({});
+  const [weekStars, setWeekStars] = useState([]);
   const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [lastRunTime, setLastRunTime] = useState(null);
   const [pdfLink, setPdfLink] = useState(null);
@@ -75,6 +76,7 @@ function SummariesView() {
   const loadCurrentWeekStars = async () => {
     const res = await githubAPI.getCurrentWeekStars();
     if (!res.success) return;
+    setWeekStars(res.stars || []);
     const map = {};
     for (const s of res.stars) {
       const key = articleIdFromUrl(s.url || "");
@@ -98,6 +100,7 @@ function SummariesView() {
         delete next[articleId];
         return next;
       });
+      setWeekStars((prev) => prev.filter((s) => (s.star_id || "") !== existing.star_id));
       return;
     }
 
@@ -110,6 +113,20 @@ function SummariesView() {
       ...prev,
       [articleId]: { star_id: add.star_id, article_id: add.article_id }
     }));
+    setWeekStars((prev) => [
+      ...prev,
+      {
+        star_id: add.star_id,
+        article_id: add.article_id,
+        title: article.title,
+        url: article.url,
+        publication: article.publication,
+        summary: article.summary,
+        author: article.journalist || "Unknown",
+        score: Number(article.score || 0),
+        starred_at: new Date().toISOString(),
+      },
+    ]);
   };
 
   const loadResultsAfterPipeline = async () => {
@@ -188,7 +205,7 @@ const handleRunPipeline = async () => {
   }
 
   const confirmed = window.confirm(
-    "Are you sure you want to run the pipeline?\n\nThis process usually takes 15-20 minutes."
+    "Are you sure you want to run the pipeline?\n\nThis process usually takes 1 and a half hour."
   );
   if (!confirmed) return;
 
@@ -253,6 +270,7 @@ const handleRunPipeline = async () => {
       <ArticlesList
         articles={articles}
         starredByArticleId={starredByArticleId}
+        weekStars={weekStars}
         articleIdFromUrl={articleIdFromUrl}
         onToggleStar={toggleStar}
         showStarredOnly={showStarredOnly}
@@ -263,6 +281,7 @@ const handleRunPipeline = async () => {
           setRunStatus("idle");
           setArticles([]);
           setStarredByArticleId({});
+          setWeekStars([]);
           setShowStarredOnly(false);
           updateRateLimitInfo();
         }}

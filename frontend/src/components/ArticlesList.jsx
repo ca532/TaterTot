@@ -8,6 +8,7 @@ function ArticlesList({
   onDownloadPDF,
   hasPDF,
   starredByArticleId = {},
+  weekStars = [],
   articleIdFromUrl = (u) => u,
   onToggleStar = () => {},
   showStarredOnly = false,
@@ -35,11 +36,17 @@ function ArticlesList({
   });
 
   const recentArticles = filtered;
-  const starredSet = new Set(Object.keys(starredByArticleId || {}));
-  const starredRecentArticles = recentArticles.filter((article) =>
-    starredSet.has(articleIdFromUrl(article.url))
-  );
-  const displayedArticles = showStarredOnly ? starredRecentArticles : recentArticles;
+  const starredWeekArticles = (weekStars || []).map((s, i) => ({
+    id: s.star_id || `star-${i}`,
+    title: s.title || "Untitled",
+    url: s.url || "#",
+    publication: s.publication || "Unknown",
+    journalist: s.author || "Unknown",
+    summary: s.summary || "No summary available",
+    collectedDate: s.starred_at || "",
+    score: Number(s.score || 0),
+  }));
+  const displayedArticles = showStarredOnly ? starredWeekArticles : recentArticles;
 
   // Also calculate one week ago for additional context
   const oneWeekAgo = new Date();
@@ -90,7 +97,7 @@ function ArticlesList({
             onClick={onShowStarredOnly}
             className={`inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg border ${showStarredOnly ? "bg-[#b8860b] text-black border-[#b8860b]" : "bg-white text-gray-700 border-gray-300"}`}
           >
-            Starred This Week ({starredRecentArticles.length})
+            Starred This Week ({starredWeekArticles.length})
           </button>
           
           <button

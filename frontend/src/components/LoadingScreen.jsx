@@ -53,7 +53,7 @@ function LoadingScreen() {
           Pipeline Running
         </h2>
         <p className="text-sm sm:text-base text-gray-600 mb-6">
-          This usually takes 15-20 minutes...
+          This usually takes 1 and a half hour...
         </p>
 
         {/* Progress Bar */}
