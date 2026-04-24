@@ -2,42 +2,59 @@ import { useState, useEffect } from 'react';
 import { Loader2, CheckCircle, Clock } from 'lucide-react';
 
 function LoadingScreen() {
-  const [currentStep, setCurrentStep] = useState(0);
-  const [progress, setProgress] = useState(0);
+  const API_BASE = import.meta.env.VITE_PIPELINE_API_BASE || "http://localhost:8000";
+  const [live, setLive] = useState({ status: "queued", phase: "initializing" });
+
+  const phaseToStep = {
+    initializing: "Initializing pipeline...",
+    collecting: "Collecting articles from publications...",
+    summarizing: "Running AI summarization...",
+    saving: "Saving to Google Sheets...",
+    complete: "Complete",
+    failed: "Failed",
+    idle: "Idle",
+  };
 
   const steps = [
-    { label: 'Initializing pipeline...', duration: 1000 },
-    { label: 'Collecting articles from publications...', duration: 2000 },
-    { label: 'Running AI summarization...', duration: 1500 },
-    { label: 'Saving to Google Sheets...', duration: 500 },
+    { key: "initializing", label: "Initializing pipeline..." },
+    { key: "collecting", label: "Collecting articles from publications..." },
+    { key: "summarizing", label: "Running AI summarization..." },
+    { key: "saving", label: "Saving to Google Sheets..." },
   ];
 
   useEffect(() => {
-    let stepTimer;
-    let progressTimer;
+    const es = new EventSource(`${API_BASE}/pipeline/events`, { withCredentials: true });
 
-    progressTimer = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 100) return 100;
-        return prev + 1;
-      });
-    }, 50);
-
-    const progressSteps = () => {
-      if (currentStep < steps.length - 1) {
-        stepTimer = setTimeout(() => {
-          setCurrentStep(prev => prev + 1);
-        }, steps[currentStep].duration);
+    es.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        setLive(data);
+      } catch (_e) {
+        // no-op
       }
     };
 
-    progressSteps();
+    es.onerror = () => {
+      es.close();
+    };
 
     return () => {
-      clearTimeout(stepTimer);
-      clearInterval(progressTimer);
+      es.close();
     };
-  }, [currentStep]);
+  }, [API_BASE]);
+
+  const phaseOrder = ["initializing", "collecting", "summarizing", "saving"];
+  const phaseIndex = phaseOrder.indexOf(live.phase);
+  const currentStep = phaseIndex >= 0 ? phaseIndex : 0;
+  const completedSteps = live.phase === "complete" ? steps.length : Math.max(0, currentStep);
+
+  const progress = (() => {
+    if (live.phase === "complete") return 100;
+    if (live.phase === "failed") return 100;
+    if (live.phase === "idle") return 5;
+    if (phaseIndex < 0) return 10;
+    return Math.min(90, 10 + phaseIndex * 25);
+  })();
 
   return (
     <div className="w-full h-full flex items-center justify-center px-4 sm:px-6 py-4">
@@ -53,7 +70,7 @@ function LoadingScreen() {
           Pipeline Running
         </h2>
         <p className="text-sm sm:text-base text-gray-600 mb-6">
-          This usually takes 1 and a half hour...
+          {phaseToStep[live.phase] || "Processing..."}
         </p>
 
         {/* Progress Bar */}
@@ -73,24 +90,24 @@ function LoadingScreen() {
             <div 
               key={index}
               className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
-                index === currentStep 
+                index === currentStep && live.phase !== "complete"
                   ? 'bg-[#faf8f3] border-2 border-[#b8860b]' 
-                  : index < currentStep
+                  : index < completedSteps
                   ? 'bg-green-50 border-2 border-green-500'
                   : 'bg-white border-2 border-gray-200'
               }`}
             >
-              {index < currentStep ? (
+              {index < completedSteps ? (
                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-              ) : index === currentStep ? (
+              ) : index === currentStep && live.phase !== "complete" ? (
                 <Loader2 className="w-5 h-5 text-[#b8860b] flex-shrink-0 animate-spin" />
               ) : (
                 <Clock className="w-5 h-5 text-gray-400 flex-shrink-0" />
               )}
               <span className={`text-xs sm:text-sm font-semibold ${
-                index === currentStep 
+                index === currentStep && live.phase !== "complete"
                   ? 'text-gray-900' 
-                  : index < currentStep
+                  : index < completedSteps
                   ? 'text-green-900'
                   : 'text-gray-500'
               }`}>

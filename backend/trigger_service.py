@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import time
+import asyncio
 import hashlib
 import uuid
 from pathlib import Path
@@ -141,6 +142,20 @@ def _check_auth(authorization: str) -> None:
     _decode_token(token, "access")
 
 
+def _check_auth_or_refresh_cookie(request: Request, authorization: str) -> None:
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        _decode_token(token, "access")
+        return
+
+    cookie_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if cookie_token:
+        _decode_token(cookie_token, "refresh")
+        return
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 def _get_week_key(dt: Optional[datetime] = None) -> str:
     d = dt or datetime.now(timezone.utc)
     iso_year, iso_week, _ = d.isocalendar()
@@ -247,7 +262,7 @@ def auth_login(req: LoginRequest, response: Response):
         secure=REFRESH_COOKIE_SECURE,
         samesite=REFRESH_COOKIE_SAMESITE,
         max_age=REFRESH_EXPIRES_SECONDS,
-        path="/auth",
+        path="/",
     )
     return {
         "access_token": access_token,
@@ -273,7 +288,7 @@ def auth_refresh(request: Request, req: RefreshRequest, response: Response):
         secure=REFRESH_COOKIE_SECURE,
         samesite=REFRESH_COOKIE_SAMESITE,
         max_age=REFRESH_EXPIRES_SECONDS,
-        path="/auth",
+        path="/",
     )
 
     return {
@@ -285,7 +300,7 @@ def auth_refresh(request: Request, req: RefreshRequest, response: Response):
 
 @app.post("/auth/logout")
 def auth_logout(response: Response):
-    response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/auth")
+    response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/")
     return {"ok": True}
 
 
@@ -614,6 +629,51 @@ def pipeline_status(authorization: str = Header(default="")):
             "createdAt": latest_run.get("created_at") if latest_run else None,
             "updatedAt": latest_run.get("updated_at") if latest_run else None,
         }
+
+
+@app.get("/pipeline/events")
+async def pipeline_events(request: Request, authorization: str = Header(default="")):
+    _check_auth_or_refresh_cookie(request, authorization)
+
+    async def event_stream():
+        last_payload = None
+        while True:
+            with STATE_LOCK:
+                state = _read_state()
+                latest_run = _get_latest_run()
+                normalized_status, conclusion = _normalize_status(latest_run)
+                state["status"] = normalized_status
+                state["last_conclusion"] = conclusion
+                state["last_run_id"] = latest_run.get("id") if latest_run else state.get("last_run_id")
+                _write_state(state)
+
+                phase_map = {
+                    "queued": "initializing",
+                    "running": "collecting",
+                    "in_progress": "collecting",
+                    "success": "complete",
+                    "failed": "failed",
+                    "idle": "idle",
+                }
+                payload = {
+                    "status": state["status"],
+                    "phase": phase_map.get(state["status"], "idle"),
+                    "runId": state.get("last_run_id"),
+                    "updatedAt": state.get("last_updated_at"),
+                }
+
+            body = json.dumps(payload)
+            if body != last_payload:
+                yield f"data: {body}\n\n"
+                last_payload = body
+
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/pipeline/latest-artifact")
