@@ -69,6 +69,7 @@ GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS")
 STARRED_SHEET_NAME = os.environ.get("STARRED_SHEET_NAME", "Starred Summaries")
 STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
 DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
+GITHUB_TERMINAL_POLL_SECONDS = int(os.environ.get("GITHUB_TERMINAL_POLL_SECONDS", "60"))
 
 STATE_LOCK = threading.Lock()
 _STARS_SHEET = None
@@ -83,6 +84,13 @@ STATUS_CACHE = {
     "updatedAt": None,
 }
 STATUS_CACHE_LOCK = asyncio.Lock()
+GH_TERMINAL_LOCK = threading.Lock()
+GH_TERMINAL_CACHE = {
+    "checked_at": 0.0,
+    "status": None,
+    "conclusion": None,
+    "run_id": None,
+}
 
 
 class TriggerRequest(BaseModel):
@@ -612,6 +620,42 @@ def _normalize_status(run: Optional[dict]) -> tuple[str, Optional[str]]:
     return "idle", gh_conclusion
 
 
+def _maybe_get_terminal_from_github(force: bool = False) -> tuple[Optional[str], Optional[str], Optional[int]]:
+    now = time.time()
+
+    with GH_TERMINAL_LOCK:
+        checked_at = float(GH_TERMINAL_CACHE.get("checked_at", 0.0) or 0.0)
+        if not force and (now - checked_at) < GITHUB_TERMINAL_POLL_SECONDS:
+            return (
+                GH_TERMINAL_CACHE.get("status"),
+                GH_TERMINAL_CACHE.get("conclusion"),
+                GH_TERMINAL_CACHE.get("run_id"),
+            )
+
+    term_status = None
+    term_conclusion = None
+    term_run_id = None
+
+    try:
+        latest_run = _get_latest_run()
+        status, conclusion = _normalize_status(latest_run)
+        if status in {"success", "failed"}:
+            term_status = status
+            term_conclusion = conclusion
+            term_run_id = latest_run.get("id") if latest_run else None
+    except Exception as e:
+        if DEBUG_PROGRESS:
+            print(f"[WS_STATUS] github terminal poll error: {e}")
+
+    with GH_TERMINAL_LOCK:
+        GH_TERMINAL_CACHE["checked_at"] = now
+        GH_TERMINAL_CACHE["status"] = term_status
+        GH_TERMINAL_CACHE["conclusion"] = term_conclusion
+        GH_TERMINAL_CACHE["run_id"] = term_run_id
+
+    return term_status, term_conclusion, term_run_id
+
+
 async def _broadcast_status(payload: dict) -> None:
     dead_clients = []
     async with WS_CLIENTS_LOCK:
@@ -660,6 +704,19 @@ async def _refresh_status_once() -> dict:
         status = "idle"
         normalized_phase = "idle"
 
+    gh_run_id = None
+    if status == "running":
+        gh_status, gh_conclusion, gh_run_id = _maybe_get_terminal_from_github()
+        if gh_status in {"success", "failed"}:
+            status = gh_status
+            normalized_phase = "complete" if gh_status == "success" else "failed"
+            if not message:
+                message = (
+                    "Pipeline completed"
+                    if gh_status == "success"
+                    else f"Pipeline {gh_conclusion or 'failed'}"
+                )
+
     with STATE_LOCK:
         state = _read_state()
         state["status"] = status
@@ -672,7 +729,7 @@ async def _refresh_status_once() -> dict:
         "current": current,
         "total": total,
         "message": message,
-        "runId": None,
+        "runId": gh_run_id,
         "conclusion": "success" if status == "success" else ("failed" if status == "failed" else None),
         "updatedAt": updated_at,
     }
