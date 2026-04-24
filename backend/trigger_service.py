@@ -657,10 +657,8 @@ async def _refresh_status_once() -> dict:
         status = "running"
         normalized_phase = phase
     else:
-        with STATE_LOCK:
-            state = _read_state()
-            status = state.get("status", "idle")
-            normalized_phase = _status_to_phase(status)
+        status = "idle"
+        normalized_phase = "idle"
 
     with STATE_LOCK:
         state = _read_state()
