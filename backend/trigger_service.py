@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 import jwt
 import gspread
-from fastapi import FastAPI, Header, HTTPException, Response, Request
+from fastapi import FastAPI, Header, HTTPException, Response, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
@@ -71,6 +71,17 @@ STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
 
 STATE_LOCK = threading.Lock()
 _STARS_SHEET = None
+_MAIN_SPREADSHEET = None
+WS_CLIENTS: set[WebSocket] = set()
+WS_CLIENTS_LOCK = asyncio.Lock()
+STATUS_CACHE = {
+    "status": "idle",
+    "phase": "idle",
+    "runId": None,
+    "conclusion": None,
+    "updatedAt": None,
+}
+STATUS_CACHE_LOCK = asyncio.Lock()
 
 
 class TriggerRequest(BaseModel):
@@ -156,6 +167,25 @@ def _check_auth_or_refresh_cookie(request: Request, authorization: str) -> None:
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def _check_ws_cookie_auth(websocket: WebSocket) -> None:
+    cookie_token = websocket.cookies.get(REFRESH_COOKIE_NAME)
+    if not cookie_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _decode_token(cookie_token, "refresh")
+
+
+def _status_to_phase(status: str) -> str:
+    phase_map = {
+        "queued": "initializing",
+        "running": "collecting",
+        "in_progress": "collecting",
+        "success": "complete",
+        "failed": "failed",
+        "idle": "idle",
+    }
+    return phase_map.get(status, "idle")
+
+
 def _get_week_key(dt: Optional[datetime] = None) -> str:
     d = dt or datetime.now(timezone.utc)
     iso_year, iso_week, _ = d.isocalendar()
@@ -225,6 +255,44 @@ def _load_stars_sheet():
 
     _STARS_SHEET = ws
     return _STARS_SHEET
+
+
+def _load_main_spreadsheet():
+    global _MAIN_SPREADSHEET
+    if _MAIN_SPREADSHEET is not None:
+        return _MAIN_SPREADSHEET
+
+    if not GOOGLE_SHEET_ID or not GOOGLE_CREDENTIALS:
+        raise HTTPException(status_code=500, detail="Missing Google Sheets env (GOOGLE_SHEET_ID/GOOGLE_CREDENTIALS)")
+
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(json.loads(GOOGLE_CREDENTIALS), scopes=scope)
+    client = gspread.authorize(creds)
+    _MAIN_SPREADSHEET = client.open_by_key(GOOGLE_SHEET_ID)
+    return _MAIN_SPREADSHEET
+
+
+def _read_metadata_map() -> dict:
+    try:
+        spreadsheet = _load_main_spreadsheet()
+        ws = spreadsheet.worksheet("Metadata")
+        values = ws.get_all_values()
+        if len(values) <= 1:
+            return {}
+        out = {}
+        for row in values[1:]:
+            if not row or len(row) < 2:
+                continue
+            key = str(row[0]).strip()
+            val = str(row[1]).strip() if len(row) > 1 else ""
+            if key:
+                out[key] = val
+        return out
+    except Exception:
+        return {}
 
 
 def _stars_rows(ws):
@@ -533,6 +601,98 @@ def _normalize_status(run: Optional[dict]) -> tuple[str, Optional[str]]:
     return "idle", gh_conclusion
 
 
+async def _broadcast_status(payload: dict) -> None:
+    dead_clients = []
+    async with WS_CLIENTS_LOCK:
+        clients = list(WS_CLIENTS)
+    for ws in clients:
+        try:
+            await ws.send_text(json.dumps(payload))
+        except Exception:
+            dead_clients.append(ws)
+    if dead_clients:
+        async with WS_CLIENTS_LOCK:
+            for ws in dead_clients:
+                WS_CLIENTS.discard(ws)
+
+
+async def _refresh_status_once() -> dict:
+    metadata = _read_metadata_map()
+
+    phase = (metadata.get("latest_pipeline_phase") or "").strip().lower()
+    current_raw = metadata.get("latest_pipeline_current", "0")
+    total_raw = metadata.get("latest_pipeline_total", "0")
+    message = metadata.get("latest_pipeline_message", "")
+
+    try:
+        current = int(float(current_raw))
+    except Exception:
+        current = 0
+    try:
+        total = int(float(total_raw))
+    except Exception:
+        total = 0
+
+    if phase in {"complete", "completed", "success", "done"}:
+        status = "success"
+        normalized_phase = "complete"
+    elif phase in {"failed", "error"}:
+        status = "failed"
+        normalized_phase = "failed"
+    elif phase in {"initializing", "collecting", "summarizing", "saving"}:
+        status = "running"
+        normalized_phase = phase
+    elif phase:
+        status = "running"
+        normalized_phase = phase
+    else:
+        with STATE_LOCK:
+            state = _read_state()
+            status = state.get("status", "idle")
+            normalized_phase = _status_to_phase(status)
+
+    with STATE_LOCK:
+        state = _read_state()
+        state["status"] = status
+        _write_state(state)
+        updated_at = state.get("last_updated_at")
+
+    payload = {
+        "status": status,
+        "phase": normalized_phase,
+        "current": current,
+        "total": total,
+        "message": message,
+        "runId": None,
+        "conclusion": "success" if status == "success" else ("failed" if status == "failed" else None),
+        "updatedAt": updated_at,
+    }
+
+    async with STATUS_CACHE_LOCK:
+        STATUS_CACHE.update(payload)
+    return payload
+
+
+async def _status_refresher_loop() -> None:
+    slow_mode = False
+    while True:
+        try:
+            payload = await _refresh_status_once()
+            await _broadcast_status(payload)
+
+            phase = str((payload or {}).get("phase", "")).lower()
+            if phase in {"collecting", "summarizing", "saving", "complete", "failed"}:
+                slow_mode = True
+        except Exception as e:
+            print(f"[WS_STATUS] refresh error: {e}")
+        await asyncio.sleep(60 if slow_mode else 5)
+
+
+@app.on_event("startup")
+async def startup_status_refresher():
+    asyncio.create_task(_status_refresher_loop())
+
+
 @app.post("/pipeline/trigger")
 def trigger_pipeline(req: TriggerRequest, response: Response, authorization: str = Header(default="")):
     _check_auth(authorization)
@@ -605,75 +765,56 @@ def trigger_pipeline(req: TriggerRequest, response: Response, authorization: str
 
 
 @app.get("/pipeline/status")
-def pipeline_status(authorization: str = Header(default="")):
+async def pipeline_status(authorization: str = Header(default="")):
     _check_auth(authorization)
+    async with STATUS_CACHE_LOCK:
+        cached = dict(STATUS_CACHE)
+    if not cached.get("updatedAt"):
+        cached = await _refresh_status_once()
 
     with STATE_LOCK:
         state = _read_state()
-        latest_run = _get_latest_run()
-        normalized_status, conclusion = _normalize_status(latest_run)
-
-        state["status"] = normalized_status
-        state["last_conclusion"] = conclusion
-        state["last_run_id"] = latest_run.get("id") if latest_run else state.get("last_run_id")
-        _write_state(state)
-
         return {
-            "status": state["status"],  # idle|queued|running|failed|success
-            "conclusion": state["last_conclusion"],
-            "runId": state["last_run_id"],
+            "status": cached.get("status", state.get("status", "idle")),
+            "conclusion": cached.get("conclusion", state.get("last_conclusion")),
+            "runId": cached.get("runId", state.get("last_run_id")),
             "queuedRequests": state.get("queued_requests", 0),
             "lastTriggeredAt": state.get("last_triggered_at"),
-            "lastUpdatedAt": state.get("last_updated_at"),
+            "lastUpdatedAt": cached.get("updatedAt", state.get("last_updated_at")),
             "lastError": state.get("last_error"),
-            "createdAt": latest_run.get("created_at") if latest_run else None,
-            "updatedAt": latest_run.get("updated_at") if latest_run else None,
+            "createdAt": None,
+            "updatedAt": None,
         }
 
 
-@app.get("/pipeline/events")
-async def pipeline_events(request: Request, authorization: str = Header(default="")):
-    _check_auth_or_refresh_cookie(request, authorization)
+@app.websocket("/pipeline/ws")
+async def pipeline_ws(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        _check_ws_cookie_auth(websocket)
+    except Exception:
+        await websocket.close(code=4401)
+        return
 
-    async def event_stream():
-        last_payload = None
+    async with WS_CLIENTS_LOCK:
+        WS_CLIENTS.add(websocket)
+
+    try:
+        async with STATUS_CACHE_LOCK:
+            cached = dict(STATUS_CACHE)
+        if not cached.get("updatedAt"):
+            cached = await _refresh_status_once()
+        await websocket.send_text(json.dumps(cached))
+
         while True:
-            with STATE_LOCK:
-                state = _read_state()
-                latest_run = _get_latest_run()
-                normalized_status, conclusion = _normalize_status(latest_run)
-                state["status"] = normalized_status
-                state["last_conclusion"] = conclusion
-                state["last_run_id"] = latest_run.get("id") if latest_run else state.get("last_run_id")
-                _write_state(state)
-
-                phase_map = {
-                    "queued": "initializing",
-                    "running": "collecting",
-                    "in_progress": "collecting",
-                    "success": "complete",
-                    "failed": "failed",
-                    "idle": "idle",
-                }
-                payload = {
-                    "status": state["status"],
-                    "phase": phase_map.get(state["status"], "idle"),
-                    "runId": state.get("last_run_id"),
-                    "updatedAt": state.get("last_updated_at"),
-                }
-
-            body = json.dumps(payload)
-            if body != last_payload:
-                yield f"data: {body}\n\n"
-                last_payload = body
-
-            await asyncio.sleep(2)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        async with WS_CLIENTS_LOCK:
+            WS_CLIENTS.discard(websocket)
 
 
 @app.get("/pipeline/latest-artifact")

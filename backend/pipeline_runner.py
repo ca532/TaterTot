@@ -252,13 +252,18 @@ class PipelineRunner:
         start_time = datetime.now()
         
         try:
+            self.db.save_pipeline_progress("initializing", 0, 4, "Initializing pipeline")
+
             # Step 1: Collect articles (NO author extraction)
+            self.db.save_pipeline_progress("collecting", 1, 4, "Collecting articles")
             articles_data = self.run_collection()
             
             # Step 2: Summarize and extract authors (AUTHOR EXTRACTION HERE)
+            self.db.save_pipeline_progress("summarizing", 2, 4, "Summarizing articles")
             summarized_articles = self.run_summarization(articles_data)
             
             # Step 3: Save to Google Sheets
+            self.db.save_pipeline_progress("summarizing", 3, 3, "Finalizing output")
             print("\n💾 Saving to Google Sheets...")
             self.db.save_articles(summarized_articles)
             
@@ -276,6 +281,7 @@ class PipelineRunner:
 
             # Save pipeline stats for UI diagnostics (including zero-article runs)
             self.db.save_pipeline_stats(len(summarized_articles))
+            self.db.save_pipeline_progress("complete", 4, 4, "Pipeline completed")
             
             # Summary
             end_time = datetime.now()
@@ -299,6 +305,7 @@ class PipelineRunner:
             }
             
         except Exception as e:
+            self.db.save_pipeline_progress("failed", 4, 4, f"Pipeline failed: {str(e)[:200]}")
             print("\n" + "="*60)
             print("❌ PIPELINE FAILED")
             print("="*60)

@@ -3,13 +3,14 @@ import { Loader2, CheckCircle, Clock } from 'lucide-react';
 
 function LoadingScreen() {
   const API_BASE = import.meta.env.VITE_PIPELINE_API_BASE || "http://localhost:8000";
+  const WS_BASE = API_BASE.replace("https://", "wss://").replace("http://", "ws://");
   const [live, setLive] = useState({ status: "queued", phase: "initializing" });
 
   const phaseToStep = {
     initializing: "Initializing pipeline...",
     collecting: "Collecting articles from publications...",
     summarizing: "Running AI summarization...",
-    saving: "Saving to Google Sheets...",
+    saving: "Running AI summarization...",
     complete: "Complete",
     failed: "Failed",
     idle: "Idle",
@@ -19,31 +20,59 @@ function LoadingScreen() {
     { key: "initializing", label: "Initializing pipeline..." },
     { key: "collecting", label: "Collecting articles from publications..." },
     { key: "summarizing", label: "Running AI summarization..." },
-    { key: "saving", label: "Saving to Google Sheets..." },
   ];
 
   useEffect(() => {
-    const es = new EventSource(`${API_BASE}/pipeline/events`, { withCredentials: true });
+    let ws = null;
+    let retry = 0;
+    let retryTimer = null;
+    let isClosed = false;
 
-    es.onmessage = (evt) => {
-      try {
-        const data = JSON.parse(evt.data);
-        setLive(data);
-      } catch (_e) {
-        // no-op
-      }
+    const connect = () => {
+      if (isClosed) return;
+      ws = new WebSocket(`${WS_BASE}/pipeline/ws`);
+
+      ws.onopen = () => {
+        retry = 0;
+      };
+
+      ws.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          setLive((prev) => ({ ...prev, ...data }));
+        } catch (_e) {
+          // no-op
+        }
+      };
+
+      ws.onclose = () => {
+        if (isClosed) return;
+        const backoffMs = Math.min(15000, 1000 * (2 ** retry));
+        retry += 1;
+        retryTimer = setTimeout(connect, backoffMs);
+      };
+
+      ws.onerror = () => {
+        try {
+          ws.close();
+        } catch (_e) {
+          // no-op
+        }
+      };
     };
 
-    es.onerror = () => {
-      es.close();
-    };
+    connect();
 
     return () => {
-      es.close();
+      isClosed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
     };
-  }, [API_BASE]);
+  }, [WS_BASE]);
 
-  const phaseOrder = ["initializing", "collecting", "summarizing", "saving"];
+  const phaseOrder = ["initializing", "collecting", "summarizing"];
   const phaseIndex = phaseOrder.indexOf(live.phase);
   const currentStep = phaseIndex >= 0 ? phaseIndex : 0;
   const completedSteps = live.phase === "complete" ? steps.length : Math.max(0, currentStep);

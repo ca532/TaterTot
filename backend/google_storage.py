@@ -433,6 +433,39 @@ class GoogleSheetsDB:
             print(f"✅ Saved {key}={value} to Metadata sheet")
         except Exception as e:
             print(f"⚠️  Error saving pipeline stats: {str(e)}")
+
+    def save_pipeline_progress(self, phase: str, current: int = 0, total: int = 0, message: str = ""):
+        """
+        Save live pipeline progress for UI consumption.
+        Keys written to Metadata:
+        - latest_pipeline_phase
+        - latest_pipeline_current
+        - latest_pipeline_total
+        - latest_pipeline_message
+        """
+        try:
+            try:
+                metadata_sheet = self.spreadsheet.worksheet('Metadata')
+            except Exception:
+                metadata_sheet = self.spreadsheet.add_worksheet(title='Metadata', rows=30, cols=3)
+                metadata_sheet.update('A1:C1', [['Key', 'Value', 'Updated']])
+
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            def upsert(key, value):
+                try:
+                    cell = metadata_sheet.find(key)
+                    row_num = cell.row
+                    metadata_sheet.update(f'B{row_num}:C{row_num}', [[str(value), timestamp]])
+                except Exception:
+                    metadata_sheet.append_row([key, str(value), timestamp])
+
+            upsert('latest_pipeline_phase', (phase or "").strip().lower())
+            upsert('latest_pipeline_current', int(current))
+            upsert('latest_pipeline_total', int(total))
+            upsert('latest_pipeline_message', message or "")
+        except Exception as e:
+            print(f"⚠️ Error saving pipeline progress: {str(e)}")
     
     def update_draft_status(self, draft_id, approved=True):
         """
