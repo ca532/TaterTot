@@ -8,6 +8,8 @@ import sys
 from datetime import datetime
 from google_storage import GoogleSheetsDB
 
+DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
+
 # Import your existing agents
 try:
     from AgentCollector import CustomArticleCollector
@@ -252,17 +254,25 @@ class PipelineRunner:
         start_time = datetime.now()
         
         try:
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: initializing")
             self.db.save_pipeline_progress("initializing", 0, 4, "Initializing pipeline")
 
             # Step 1: Collect articles (NO author extraction)
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: collecting")
             self.db.save_pipeline_progress("collecting", 1, 4, "Collecting articles")
             articles_data = self.run_collection()
             
             # Step 2: Summarize and extract authors (AUTHOR EXTRACTION HERE)
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: summarizing")
             self.db.save_pipeline_progress("summarizing", 2, 4, "Summarizing articles")
             summarized_articles = self.run_summarization(articles_data)
             
             # Step 3: Save to Google Sheets
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: final summarizing")
             self.db.save_pipeline_progress("summarizing", 3, 3, "Finalizing output")
             print("\n💾 Saving to Google Sheets...")
             self.db.save_articles(summarized_articles)
@@ -281,6 +291,8 @@ class PipelineRunner:
 
             # Save pipeline stats for UI diagnostics (including zero-article runs)
             self.db.save_pipeline_stats(len(summarized_articles))
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: complete")
             self.db.save_pipeline_progress("complete", 4, 4, "Pipeline completed")
             
             # Summary
@@ -305,6 +317,8 @@ class PipelineRunner:
             }
             
         except Exception as e:
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: failed")
             self.db.save_pipeline_progress("failed", 4, 4, f"Pipeline failed: {str(e)[:200]}")
             print("\n" + "="*60)
             print("❌ PIPELINE FAILED")

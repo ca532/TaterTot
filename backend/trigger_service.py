@@ -68,6 +68,7 @@ GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS")
 STARRED_SHEET_NAME = os.environ.get("STARRED_SHEET_NAME", "Starred Summaries")
 STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
+DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
 
 STATE_LOCK = threading.Lock()
 _STARS_SHEET = None
@@ -290,6 +291,16 @@ def _read_metadata_map() -> dict:
             val = str(row[1]).strip() if len(row) > 1 else ""
             if key:
                 out[key] = val
+        if DEBUG_PROGRESS:
+            print(
+                "[WS_STATUS] metadata keys:",
+                {k: out.get(k) for k in [
+                    "latest_pipeline_phase",
+                    "latest_pipeline_current",
+                    "latest_pipeline_total",
+                    "latest_pipeline_message",
+                ]}
+            )
         return out
     except Exception:
         return {}
@@ -667,6 +678,17 @@ async def _refresh_status_once() -> dict:
         "conclusion": "success" if status == "success" else ("failed" if status == "failed" else None),
         "updatedAt": updated_at,
     }
+    if DEBUG_PROGRESS:
+        print(
+            "[WS_STATUS] payload:",
+            {
+                "status": payload.get("status"),
+                "phase": payload.get("phase"),
+                "current": payload.get("current"),
+                "total": payload.get("total"),
+                "message": payload.get("message"),
+            }
+        )
 
     async with STATUS_CACHE_LOCK:
         STATUS_CACHE.update(payload)

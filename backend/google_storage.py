@@ -12,6 +12,8 @@ import os
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
+
 
 class GoogleSheetsDB:
     """
@@ -460,10 +462,18 @@ class GoogleSheetsDB:
                 except Exception:
                     metadata_sheet.append_row([key, str(value), timestamp])
 
+            if DEBUG_PROGRESS:
+                print(
+                    f"[PIPELINE_PROGRESS] phase={phase!r} current={current} total={total} "
+                    f"message={message!r} sheet={self.spreadsheet.title!r}"
+                )
+
             upsert('latest_pipeline_phase', (phase or "").strip().lower())
             upsert('latest_pipeline_current', int(current))
             upsert('latest_pipeline_total', int(total))
             upsert('latest_pipeline_message', message or "")
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] upsert complete: latest_pipeline_*")
         except Exception as e:
             print(f"⚠️ Error saving pipeline progress: {str(e)}")
     
