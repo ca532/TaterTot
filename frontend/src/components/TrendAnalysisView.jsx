@@ -2,33 +2,45 @@ import { useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 
-function isValidWeekKey(v) {
-  if (!v) return true;
-  return /^\d{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$/.test(v.trim());
+function toIsoWeekKeyFromDateInput(yyyyMmDd) {
+  if (!yyyyMmDd) return "";
+  const [y, m, d] = yyyyMmDd.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  const week = String(weekNo).padStart(2, "0");
+
+  return `${date.getUTCFullYear()}-W${week}`;
+}
+
+function formatDdMmYyyy(yyyyMmDd) {
+  if (!yyyyMmDd) return "";
+  const [y, m, d] = yyyyMmDd.split("-");
+  return `${d}/${m}/${y}`;
 }
 
 export default function TrendAnalysisView() {
   const [topic, setTopic] = useState("luxury");
-  const [targetWeekKey, setTargetWeekKey] = useState("");
+  const [targetDate, setTargetDate] = useState("");
   const [extraStopwords, setExtraStopwords] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const weekKeyValid = useMemo(() => isValidWeekKey(targetWeekKey), [targetWeekKey]);
+  const targetWeekKey = useMemo(() => toIsoWeekKeyFromDateInput(targetDate), [targetDate]);
+  const targetDateDisplay = useMemo(() => formatDdMmYyyy(targetDate), [targetDate]);
 
   const onRun = async () => {
     setError("");
     setMessage("");
-    if (!weekKeyValid) {
-      setError("Target week must be blank or in format YYYY-Www (example: 2026-W18).");
-      return;
-    }
-
     setIsRunning(true);
     const res = await githubAPI.triggerTrendAnalysis({
       topic,
-      target_week_key: targetWeekKey.trim(),
+      target_week_key: targetWeekKey,
       extra_stopwords: extraStopwords.trim(),
     });
     setIsRunning(false);
@@ -37,7 +49,10 @@ export default function TrendAnalysisView() {
       setError(res.error || "Failed to trigger trend analysis workflow.");
       return;
     }
-    setMessage("Trend analysis workflow queued successfully.");
+    const suffix = targetDateDisplay
+      ? ` for ${targetDateDisplay} (${targetWeekKey})`
+      : " for current week";
+    setMessage(`Trend analysis workflow queued successfully${suffix}.`);
   };
 
   return (
@@ -47,7 +62,7 @@ export default function TrendAnalysisView() {
           <BarChart3 className="w-8 h-8 text-[#b8860b]" />
         </div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Trend Analysis</h2>
-        <p className="text-gray-600">Run Phase 4A trend extraction workflow for a selected topic and week.</p>
+        <p className="text-gray-600">Run Phase 4A trend extraction workflow for a selected topic and date.</p>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-5">
@@ -72,17 +87,18 @@ export default function TrendAnalysisView() {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Target Week (optional)</label>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Target Date (optional)</label>
           <input
-            type="text"
-            value={targetWeekKey}
-            onChange={(e) => setTargetWeekKey(e.target.value)}
-            placeholder="YYYY-Www (example: 2026-W18)"
-            className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b] ${
-              weekKeyValid ? "border-gray-300" : "border-red-400"
-            }`}
+            type="date"
+            value={targetDate}
+            onChange={(e) => setTargetDate(e.target.value)}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b]"
           />
-          <p className="text-xs text-gray-500 mt-1">Leave blank to use current ISO week.</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {targetDate
+              ? `Selected: ${targetDateDisplay} (mapped to ${targetWeekKey})`
+              : "Leave blank to use current week."}
+          </p>
         </div>
 
         <div>
