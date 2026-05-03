@@ -8,7 +8,6 @@ from trend_analyzer import compute_trends, iso_week_key
 TREND_SHEET_NAME = os.getenv("TREND_SHEET_NAME", "Trend Signals")
 TARGET_WEEK_KEY = os.getenv("TARGET_WEEK_KEY", "").strip()
 TOPIC = os.getenv("TOPIC", "luxury").strip().lower()
-EXTRA_STOPWORDS = os.getenv("EXTRA_STOPWORDS", "").strip()
 WINDOW_START_DATE = os.getenv("WINDOW_START_DATE", "").strip()
 WINDOW_END_DATE = os.getenv("WINDOW_END_DATE", "").strip()
 BASELINE_WEEKS = int(os.getenv("BASELINE_WEEKS", "4"))
@@ -85,7 +84,6 @@ def main():
         articles=articles,
         target_week_key=week_key,
         topic=TOPIC,
-        extra_stopwords_csv=EXTRA_STOPWORDS,
         min_mentions=3,
         min_lift=1.5,
         min_publications=2,

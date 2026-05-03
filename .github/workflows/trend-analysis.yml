@@ -16,10 +16,6 @@ on:
         default: "luxury"
         type: choice
         options: ["luxury", "finance"]
-      extra_stopwords:
-        description: "Optional comma-separated extra stopwords"
-        required: false
-        default: ""
       window_start_date:
         description: "Optional start date YYYY-MM-DD"
         required: false
@@ -65,7 +61,6 @@ jobs:
           TARGET_WEEK_KEY: ${{ github.event.inputs.target_week_key }}
           TREND_SHEET_NAME: Trend Signals
           TOPIC: ${{ github.event.inputs.topic }}
-          EXTRA_STOPWORDS: ${{ github.event.inputs.extra_stopwords }}
           WINDOW_START_DATE: ${{ github.event.inputs.window_start_date }}
           WINDOW_END_DATE: ${{ github.event.inputs.window_end_date }}
           BASELINE_WEEKS: ${{ github.event.inputs.baseline_weeks }}

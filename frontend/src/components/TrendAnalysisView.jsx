@@ -27,10 +27,9 @@ function formatDdMmYyyy(yyyyMmDd) {
 export default function TrendAnalysisView() {
   const [viewStatus, setViewStatus] = useState("idle"); // idle|complete
   const [topic, setTopic] = useState("luxury");
-  const [targetDate, setTargetDate] = useState("");
+  const [windowMode, setWindowMode] = useState("current_week"); // current_week|current_month|custom
   const [windowStartDate, setWindowStartDate] = useState("");
   const [windowEndDate, setWindowEndDate] = useState("");
-  const [extraStopwords, setExtraStopwords] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [isViewingResults, setIsViewingResults] = useState(false);
   const [trends, setTrends] = useState([]);
@@ -38,24 +37,63 @@ export default function TrendAnalysisView() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const targetWeekKey = useMemo(() => toIsoWeekKeyFromDateInput(targetDate), [targetDate]);
-  const targetDateDisplay = useMemo(() => formatDdMmYyyy(targetDate), [targetDate]);
+  const now = useMemo(() => new Date(), []);
+  const currentWeekDate = useMemo(() => {
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }, [now]);
+  const currentWeekKey = useMemo(() => toIsoWeekKeyFromDateInput(currentWeekDate), [currentWeekDate]);
+
+  const currentMonthBounds = useMemo(() => {
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const start = new Date(y, m, 1);
+    const end = new Date(y, m + 1, 0);
+    const fmt = (dt) =>
+      `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    return { start: fmt(start), end: fmt(end) };
+  }, [now]);
+
   const rangeValid = !windowStartDate || !windowEndDate || windowStartDate <= windowEndDate;
 
   const onRun = async () => {
     setError("");
     setMessage("");
-    if (!rangeValid) {
+    if (windowMode === "custom" && !rangeValid) {
       setError("End date must be on or after start date.");
       return;
     }
+
+    let targetWeekKey = "";
+    let payloadStart = "";
+    let payloadEnd = "";
+
+    if (windowMode === "current_week") {
+      targetWeekKey = currentWeekKey;
+      payloadStart = "";
+      payloadEnd = "";
+    } else if (windowMode === "current_month") {
+      targetWeekKey = "";
+      payloadStart = "";
+      payloadEnd = "";
+    } else {
+      if (!windowStartDate || !windowEndDate) {
+        setError("For custom range, please select both start and end date.");
+        return;
+      }
+      targetWeekKey = "";
+      payloadStart = windowStartDate;
+      payloadEnd = windowEndDate;
+    }
+
     setIsRunning(true);
     const res = await githubAPI.triggerTrendAnalysis({
       topic,
       target_week_key: targetWeekKey,
-      extra_stopwords: extraStopwords.trim(),
-      window_start_date: windowStartDate,
-      window_end_date: windowEndDate,
+      window_start_date: payloadStart,
+      window_end_date: payloadEnd,
     });
     setIsRunning(false);
 
@@ -63,9 +101,11 @@ export default function TrendAnalysisView() {
       setError(res.error || "Failed to trigger trend analysis workflow.");
       return;
     }
-    const suffix = targetDateDisplay
-      ? ` for ${targetDateDisplay} (${targetWeekKey})`
-      : " for current week";
+    let suffix = " for current week";
+    if (windowMode === "current_month") suffix = " for current month";
+    if (windowMode === "custom") {
+      suffix = ` for custom range ${formatDdMmYyyy(windowStartDate)} to ${formatDdMmYyyy(windowEndDate)}`;
+    }
     setMessage(`Trend analysis workflow queued successfully${suffix}.`);
   };
 
@@ -132,55 +172,48 @@ export default function TrendAnalysisView() {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Target Date (optional)</label>
-          <input
-            type="date"
-            value={targetDate}
-            onChange={(e) => setTargetDate(e.target.value)}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b]"
-          />
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Window</label>
+          <select
+            value={windowMode}
+            onChange={(e) => setWindowMode(e.target.value)}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b] bg-white"
+          >
+            <option value="current_week">Current Week</option>
+            <option value="current_month">Current Month</option>
+            <option value="custom">Custom</option>
+          </select>
           <p className="text-xs text-gray-500 mt-1">
-            {targetDate
-              ? `Selected: ${targetDateDisplay} (mapped to ${targetWeekKey})`
-              : "Leave blank to use current week."}
+            {windowMode === "current_week" && `Uses current ISO week (${currentWeekKey}).`}
+            {windowMode === "current_month" && "Uses current calendar month."}
+            {windowMode === "custom" && "Select a start and end date."}
           </p>
         </div>
 
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Window Start Date (optional)</label>
-          <input
-            type="date"
-            value={windowStartDate}
-            onChange={(e) => setWindowStartDate(e.target.value)}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b]"
-          />
-        </div>
+        {windowMode === "custom" && (
+          <>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Start Date</label>
+              <input
+                type="date"
+                value={windowStartDate}
+                onChange={(e) => setWindowStartDate(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b]"
+              />
+            </div>
 
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Window End Date (optional)</label>
-          <input
-            type="date"
-            value={windowEndDate}
-            onChange={(e) => setWindowEndDate(e.target.value)}
-            className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b] ${
-              rangeValid ? "border-gray-300" : "border-red-400"
-            }`}
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            Leave both blank to use current month.
-          </p>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Extra Stopwords (optional)</label>
-          <textarea
-            value={extraStopwords}
-            onChange={(e) => setExtraStopwords(e.target.value)}
-            placeholder="comma-separated stopwords"
-            rows={3}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b]"
-          />
-        </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">End Date</label>
+              <input
+                type="date"
+                value={windowEndDate}
+                onChange={(e) => setWindowEndDate(e.target.value)}
+                className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b] ${
+                  rangeValid ? "border-gray-300" : "border-red-400"
+                }`}
+              />
+            </div>
+          </>
+        )}
 
         {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</div>}
         {message && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-3">{message}</div>}

@@ -36,8 +36,8 @@ export default function TrendResultsList({ trends = [], weekKey = "", onRunAgain
 
       {trends.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-600 text-lg">No trends found for this week.</p>
-          <p className="text-gray-500 mt-2">Try another date or reduce filtering constraints.</p>
+          <p className="text-gray-600 text-lg">Not enough samples to detect trends for this window.</p>
+          <p className="text-gray-500 mt-2">Try a broader date range or lower trend thresholds.</p>
         </div>
       )}
 

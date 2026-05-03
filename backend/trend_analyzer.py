@@ -73,16 +73,10 @@ def _parse_yyyy_mm_dd(v: str) -> Optional[datetime]:
         return None
 
 
-def _parse_extra_stopwords(raw: str) -> set[str]:
-    if not raw:
-        return set()
-    return {x.strip().lower() for x in raw.split(",") if x.strip()}
-
-
-def get_stopwords_for_topic(topic: str, extra_stopwords_csv: str = "") -> set[str]:
+def get_stopwords_for_topic(topic: str) -> set[str]:
     t = (topic or DEFAULT_TOPIC).strip().lower()
     topic_words = TOPIC_STOPWORDS.get(t, set())
-    return BASE_STOPWORDS | topic_words | _parse_extra_stopwords(extra_stopwords_csv)
+    return BASE_STOPWORDS | topic_words
 
 
 def make_doc_text(article: Dict) -> str:
@@ -142,7 +136,6 @@ def compute_trends(
     articles: List[Dict],
     target_week_key: Optional[str] = None,
     topic: str = "luxury",
-    extra_stopwords_csv: str = "",
     min_mentions: int = 3,
     min_lift: float = 1.5,
     min_publications: int = 2,
@@ -211,7 +204,7 @@ def compute_trends(
         if id(a) in current_article_set or wk in hist_weeks
     ]
     texts = [make_doc_text(a) for a in relevant_articles]
-    stopwords = get_stopwords_for_topic(topic, extra_stopwords_csv)
+    stopwords = get_stopwords_for_topic(topic)
     kws_per_doc = extract_keywords_tfidf(texts, stopwords=stopwords, top_k_per_doc=8)
 
     for a, kws in zip(relevant_articles, kws_per_doc):

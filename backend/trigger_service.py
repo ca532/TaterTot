@@ -126,7 +126,6 @@ class StarDeleteRequest(BaseModel):
 class TrendTriggerRequest(BaseModel):
     topic: Literal["finance", "luxury"] = "luxury"
     target_week_key: Optional[str] = None
-    extra_stopwords: Optional[str] = ""
     window_start_date: Optional[str] = None
     window_end_date: Optional[str] = None
     baseline_weeks: Optional[int] = 4
@@ -1053,7 +1052,6 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
 
     topic = _normalize_topic(req.topic)
     week_key = (req.target_week_key or "").strip()
-    extra_stopwords = (req.extra_stopwords or "").strip()
     window_start_date = (req.window_start_date or "").strip()
     window_end_date = (req.window_end_date or "").strip()
     baseline_weeks = int(req.baseline_weeks or 4)
@@ -1063,7 +1061,6 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
         "inputs": {
             "target_week_key": week_key,
             "topic": topic,
-            "extra_stopwords": extra_stopwords,
             "window_start_date": window_start_date,
             "window_end_date": window_end_date,
             "baseline_weeks": str(baseline_weeks),
