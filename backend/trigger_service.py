@@ -123,6 +123,12 @@ class StarDeleteRequest(BaseModel):
     user: Optional[str] = "default"
 
 
+class TrendTriggerRequest(BaseModel):
+    topic: Literal["finance", "luxury"] = "luxury"
+    target_week_key: Optional[str] = None
+    extra_stopwords: Optional[str] = ""
+
+
 def _issue_token(token_type: str, expires_in: int) -> str:
     now = int(time.time())
     payload = {
@@ -996,3 +1002,68 @@ def latest_result(authorization: str = Header(default="")):
         "updatedAt": status.get("updatedAt"),
         "artifact": artifact,
     }
+
+
+@app.get("/trends/current-week")
+def get_trends_current_week(authorization: str = Header(default="")):
+    _check_auth(authorization)
+    wk = _get_week_key()
+    spreadsheet = _load_main_spreadsheet()
+    try:
+        ws = spreadsheet.worksheet("Trend Signals")
+    except Exception:
+        return {"week_key": wk, "count": 0, "trends": []}
+
+    values = ws.get_all_values()
+    if len(values) <= 1:
+        return {"week_key": wk, "count": 0, "trends": []}
+
+    headers = values[0]
+    idx = {h: i for i, h in enumerate(headers)}
+    trends = []
+    for row in values[1:]:
+        if not row:
+            continue
+        week = row[idx.get("week_key", 0)] if idx.get("week_key", 0) < len(row) else ""
+        if week != wk:
+            continue
+        trends.append({
+            "week_key": week,
+            "keyword": row[idx.get("keyword", 1)] if idx.get("keyword", 1) < len(row) else "",
+            "count_current": row[idx.get("count_current", 2)] if idx.get("count_current", 2) < len(row) else "0",
+            "baseline_4wk": row[idx.get("baseline_4wk", 3)] if idx.get("baseline_4wk", 3) < len(row) else "0",
+            "pct_change": row[idx.get("pct_change", 4)] if idx.get("pct_change", 4) < len(row) else "0",
+            "trend_score": row[idx.get("trend_score", 5)] if idx.get("trend_score", 5) < len(row) else "0",
+            "publication_count": row[idx.get("publication_count", 6)] if idx.get("publication_count", 6) < len(row) else "0",
+            "supporting_urls": row[idx.get("supporting_urls", 7)] if idx.get("supporting_urls", 7) < len(row) else "",
+            "status": row[idx.get("status", 8)] if idx.get("status", 8) < len(row) else "trending",
+        })
+
+    return {"week_key": wk, "count": len(trends), "trends": trends}
+
+
+@app.post("/trends/trigger")
+def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    workflow = "trend-analysis.yml"
+    url = f"{GITHUB_API_BASE}/actions/workflows/{workflow}/dispatches"
+
+    topic = _normalize_topic(req.topic)
+    week_key = (req.target_week_key or "").strip()
+    extra_stopwords = (req.extra_stopwords or "").strip()
+
+    body = {
+        "ref": GITHUB_REF,
+        "inputs": {
+            "target_week_key": week_key,
+            "topic": topic,
+            "extra_stopwords": extra_stopwords,
+        },
+    }
+
+    r = _gh_request("POST", url, json=body)
+    if r.status_code != 204:
+        raise HTTPException(status_code=502, detail=f"GitHub trend dispatch failed: {r.status_code} {r.text}")
+
+    response.status_code = 202
+    return {"ok": True, "state": "queued", "message": "Trend analysis workflow triggered"}

@@ -33,3 +33,4 @@ PyJWT==2.9.0
 # Anti-blocking (optional but recommended)
 cloudscraper==1.2.71
 curl-cffi>=0.5.0
+scikit-learn==1.5.2
