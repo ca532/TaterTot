@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import githubAPI from "../services/githubAPI";
+import TrendResultsList from "./TrendResultsList";
 
 function toIsoWeekKeyFromDateInput(yyyyMmDd) {
   if (!yyyyMmDd) return "";
@@ -24,24 +25,37 @@ function formatDdMmYyyy(yyyyMmDd) {
 }
 
 export default function TrendAnalysisView() {
+  const [viewStatus, setViewStatus] = useState("idle"); // idle|complete
   const [topic, setTopic] = useState("luxury");
   const [targetDate, setTargetDate] = useState("");
+  const [windowStartDate, setWindowStartDate] = useState("");
+  const [windowEndDate, setWindowEndDate] = useState("");
   const [extraStopwords, setExtraStopwords] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [isViewingResults, setIsViewingResults] = useState(false);
+  const [trends, setTrends] = useState([]);
+  const [weekKey, setWeekKey] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   const targetWeekKey = useMemo(() => toIsoWeekKeyFromDateInput(targetDate), [targetDate]);
   const targetDateDisplay = useMemo(() => formatDdMmYyyy(targetDate), [targetDate]);
+  const rangeValid = !windowStartDate || !windowEndDate || windowStartDate <= windowEndDate;
 
   const onRun = async () => {
     setError("");
     setMessage("");
+    if (!rangeValid) {
+      setError("End date must be on or after start date.");
+      return;
+    }
     setIsRunning(true);
     const res = await githubAPI.triggerTrendAnalysis({
       topic,
       target_week_key: targetWeekKey,
       extra_stopwords: extraStopwords.trim(),
+      window_start_date: windowStartDate,
+      window_end_date: windowEndDate,
     });
     setIsRunning(false);
 
@@ -54,6 +68,37 @@ export default function TrendAnalysisView() {
       : " for current week";
     setMessage(`Trend analysis workflow queued successfully${suffix}.`);
   };
+
+  const onViewResults = async () => {
+    setError("");
+    setMessage("");
+    setIsViewingResults(true);
+    const res = await githubAPI.getCurrentWeekTrends();
+    setIsViewingResults(false);
+    if (!res.success) {
+      setError(res.error || "Failed to load trend results.");
+      return;
+    }
+    setTrends(res.trends || []);
+    setWeekKey(res.week_key || "");
+    setViewStatus("complete");
+  };
+
+  if (viewStatus === "complete") {
+    return (
+      <TrendResultsList
+        trends={trends}
+        weekKey={weekKey}
+        onRunAgain={() => {
+          setViewStatus("idle");
+          setTrends([]);
+          setWeekKey("");
+          setError("");
+          setMessage("");
+        }}
+      />
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6">
@@ -102,6 +147,31 @@ export default function TrendAnalysisView() {
         </div>
 
         <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Window Start Date (optional)</label>
+          <input
+            type="date"
+            value={windowStartDate}
+            onChange={(e) => setWindowStartDate(e.target.value)}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b]"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Window End Date (optional)</label>
+          <input
+            type="date"
+            value={windowEndDate}
+            onChange={(e) => setWindowEndDate(e.target.value)}
+            className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b] ${
+              rangeValid ? "border-gray-300" : "border-red-400"
+            }`}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Leave both blank to use current month.
+          </p>
+        </div>
+
+        <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Extra Stopwords (optional)</label>
           <textarea
             value={extraStopwords}
@@ -122,6 +192,14 @@ export default function TrendAnalysisView() {
           className="inline-flex items-center justify-center px-6 py-3 bg-[#b8860b] text-black font-bold rounded-lg hover:bg-[#8b6914] disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
           {isRunning ? "Triggering..." : "Run Trend Analysis"}
+        </button>
+        <button
+          type="button"
+          onClick={onViewResults}
+          disabled={isViewingResults}
+          className="ml-0 sm:ml-3 mt-3 sm:mt-0 inline-flex items-center justify-center px-6 py-3 bg-white text-[#b8860b] font-semibold rounded-lg border-2 border-[#b8860b] hover:bg-[#faf8f3] disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {isViewingResults ? "Loading Results..." : "View Trend Results"}
         </button>
       </div>
     </div>

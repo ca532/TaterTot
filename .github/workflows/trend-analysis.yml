@@ -20,6 +20,18 @@ on:
         description: "Optional comma-separated extra stopwords"
         required: false
         default: ""
+      window_start_date:
+        description: "Optional start date YYYY-MM-DD"
+        required: false
+        default: ""
+      window_end_date:
+        description: "Optional end date YYYY-MM-DD"
+        required: false
+        default: ""
+      baseline_weeks:
+        description: "Historical baseline weeks"
+        required: false
+        default: "4"
 
 jobs:
   trend-analysis:
@@ -54,6 +66,9 @@ jobs:
           TREND_SHEET_NAME: Trend Signals
           TOPIC: ${{ github.event.inputs.topic }}
           EXTRA_STOPWORDS: ${{ github.event.inputs.extra_stopwords }}
+          WINDOW_START_DATE: ${{ github.event.inputs.window_start_date }}
+          WINDOW_END_DATE: ${{ github.event.inputs.window_end_date }}
+          BASELINE_WEEKS: ${{ github.event.inputs.baseline_weeks }}
         run: python -u run_trend_analysis.py
 
       - name: Cleanup credentials

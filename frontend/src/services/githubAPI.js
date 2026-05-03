@@ -225,6 +225,21 @@ class PipelineService {
     }
   }
 
+  async getCurrentWeekTrends() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/trends/current-week`, {
+        method: "GET"
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.detail || `HTTP ${res.status}`, trends: [] };
+      }
+      return { success: true, week_key: data.week_key, count: data.count || 0, trends: data.trends || [] };
+    } catch (err) {
+      return { success: false, error: err.message, trends: [] };
+    }
+  }
+
   async downloadLatestArtifactZip() {
     const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
       method: "GET"

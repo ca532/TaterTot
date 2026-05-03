@@ -9,6 +9,9 @@ TREND_SHEET_NAME = os.getenv("TREND_SHEET_NAME", "Trend Signals")
 TARGET_WEEK_KEY = os.getenv("TARGET_WEEK_KEY", "").strip()
 TOPIC = os.getenv("TOPIC", "luxury").strip().lower()
 EXTRA_STOPWORDS = os.getenv("EXTRA_STOPWORDS", "").strip()
+WINDOW_START_DATE = os.getenv("WINDOW_START_DATE", "").strip()
+WINDOW_END_DATE = os.getenv("WINDOW_END_DATE", "").strip()
+BASELINE_WEEKS = int(os.getenv("BASELINE_WEEKS", "4"))
 
 
 def ensure_trend_sheet(db: GoogleSheetsDB):
@@ -87,9 +90,13 @@ def main():
         min_lift=1.5,
         min_publications=2,
         top_n=20,
+        window_start_date=WINDOW_START_DATE,
+        window_end_date=WINDOW_END_DATE,
+        baseline_weeks=BASELINE_WEEKS,
     )
 
     upsert_week_rows(ws, week_key, rows)
+    print(f"Window: start={WINDOW_START_DATE or 'current-month-start'} end={WINDOW_END_DATE or 'current-month-end'} baseline_weeks={BASELINE_WEEKS}")
     print(f"Trend analysis complete for {week_key}: {len(rows)} rows written to '{TREND_SHEET_NAME}'")
 
 

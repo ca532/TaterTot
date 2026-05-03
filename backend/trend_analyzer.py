@@ -4,7 +4,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -51,6 +51,15 @@ def iso_week_key(dt: datetime) -> str:
 
 def parse_dt(s: str) -> Optional[datetime]:
     if not s:
+        return None
+
+
+def _parse_yyyy_mm_dd(v: str) -> Optional[datetime]:
+    if not v:
+        return None
+    try:
+        return datetime.strptime(v.strip(), "%Y-%m-%d")
+    except Exception:
         return None
     s = s.strip()
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%m/%d/%Y %H:%M:%S", "%Y-%m-%d"):
@@ -131,27 +140,76 @@ def week_sequence_desc(week_key: str, n_back: int = 4) -> List[str]:
 
 def compute_trends(
     articles: List[Dict],
-    target_week_key: str,
+    target_week_key: Optional[str] = None,
     topic: str = "luxury",
     extra_stopwords_csv: str = "",
     min_mentions: int = 3,
     min_lift: float = 1.5,
     min_publications: int = 2,
     top_n: int = 20,
+    window_start_date: str = "",
+    window_end_date: str = "",
+    baseline_weeks: int = 4,
 ) -> List[TrendRow]:
+    baseline_weeks = max(1, int(baseline_weeks or 4))
     by_week: Dict[str, List[Dict]] = defaultdict(list)
+    parsed_rows = []
     for a in articles:
         dt = parse_dt(str(a.get("collectedDate", "") or a.get("collected_date", "")))
         if not dt:
             continue
-        by_week[iso_week_key(dt)].append(a)
+        wk = iso_week_key(dt)
+        by_week[wk].append(a)
+        parsed_rows.append((a, dt, wk))
 
-    current = by_week.get(target_week_key, [])
-    if not current:
+    if not parsed_rows:
         return []
 
-    hist_weeks = set(week_sequence_desc(target_week_key, 4))
-    relevant_articles = [a for wk, arr in by_week.items() for a in arr if wk == target_week_key or wk in hist_weeks]
+    start_dt = _parse_yyyy_mm_dd(window_start_date)
+    end_dt = _parse_yyyy_mm_dd(window_end_date)
+
+    # Default window: current calendar month [month_start, next_month_start)
+    if not start_dt and not end_dt:
+        now = datetime.now()
+        start_dt = datetime(now.year, now.month, 1)
+        if now.month == 12:
+            end_dt = datetime(now.year + 1, 1, 1)
+        else:
+            end_dt = datetime(now.year, now.month + 1, 1)
+    elif start_dt and not end_dt:
+        # Inclusive end of provided start month -> exclusive next month start
+        if start_dt.month == 12:
+            end_dt = datetime(start_dt.year + 1, 1, 1)
+        else:
+            end_dt = datetime(start_dt.year, start_dt.month + 1, 1)
+    elif end_dt and not start_dt:
+        start_dt = datetime(end_dt.year, end_dt.month, 1)
+        end_dt = end_dt + timedelta(days=1)
+    else:
+        # include user-selected end date by converting to exclusive bound (+1 day)
+        end_dt = end_dt + timedelta(days=1)
+
+    current_articles = []
+    for a, dt, wk in parsed_rows:
+        if start_dt <= dt < end_dt:
+            current_articles.append((a, dt, wk))
+
+    if not current_articles:
+        return []
+
+    if target_week_key:
+        label_week_key = target_week_key
+    else:
+        latest_dt = max(dt for _, dt, _ in current_articles)
+        label_week_key = iso_week_key(latest_dt)
+
+    hist_weeks = set(week_sequence_desc(label_week_key, baseline_weeks))
+    current_article_set = {id(a) for a, _, _ in current_articles}
+    relevant_articles = [
+        a for wk, arr in by_week.items()
+        for a in arr
+        if id(a) in current_article_set or wk in hist_weeks
+    ]
     texts = [make_doc_text(a) for a in relevant_articles]
     stopwords = get_stopwords_for_topic(topic, extra_stopwords_csv)
     kws_per_doc = extract_keywords_tfidf(texts, stopwords=stopwords, top_k_per_doc=8)
@@ -173,7 +231,8 @@ def compute_trends(
         pub = (a.get("publication") or "").strip()
         url = (a.get("url") or "").strip()
 
-        if wk == target_week_key:
+        in_current_window = id(a) in current_article_set
+        if in_current_window:
             for kw in kws:
                 current_counts[kw] += 1
                 if pub:
@@ -205,7 +264,7 @@ def compute_trends(
 
         rows.append(
             TrendRow(
-                week_key=target_week_key,
+                week_key=label_week_key,
                 keyword=kw,
                 count_current=c,
                 baseline_4wk=round(baseline, 3),
