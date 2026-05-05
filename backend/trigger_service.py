@@ -1073,6 +1073,12 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
     window_mode = (req.window_mode or "current_month").strip().lower()
     if window_mode not in {"current_week", "current_month", "custom"}:
         raise HTTPException(status_code=400, detail="Invalid window_mode")
+    print(
+        "[TREND_TRIGGER] "
+        f"run_id={trend_run_id} topic={topic} window_mode={window_mode} "
+        f"week_key={week_key or '-'} start={window_start_date or '-'} end={window_end_date or '-'} "
+        f"baseline_weeks={baseline_weeks} ref={GITHUB_REF}"
+    )
 
     body = {
         "ref": GITHUB_REF,
@@ -1088,6 +1094,11 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
     }
 
     r = _gh_request("POST", url, json=body)
+    print(
+        "[TREND_TRIGGER_RESULT] "
+        f"run_id={trend_run_id} status_code={r.status_code} "
+        f"workflow=trend-analysis.yml repo={GITHUB_OWNER}/{GITHUB_REPO}"
+    )
     if r.status_code != 204:
         raise HTTPException(status_code=502, detail=f"GitHub trend dispatch failed: {r.status_code} {r.text}")
 
@@ -1106,6 +1117,7 @@ def get_trends_by_run(run_id: str, authorization: str = Header(default="")):
     rid = (run_id or "").strip()
     if not rid:
         raise HTTPException(status_code=400, detail="run_id is required")
+    print(f"[TREND_FETCH_BY_RUN] run_id={rid}")
 
     spreadsheet = _load_main_spreadsheet()
     try:
@@ -1139,6 +1151,7 @@ def get_trends_by_run(run_id: str, authorization: str = Header(default="")):
             "window_mode": row[idx.get("window_mode", 10)] if idx.get("window_mode", 10) < len(row) else "",
         })
 
+    print(f"[TREND_FETCH_BY_RUN_RESULT] run_id={rid} count={len(trends)}")
     return {"trend_run_id": rid, "count": len(trends), "trends": trends}
 
 
@@ -1146,6 +1159,7 @@ def get_trends_by_run(run_id: str, authorization: str = Header(default="")):
 def get_latest_trends(authorization: str = Header(default="")):
     _check_auth(authorization)
     rid = _metadata_get("latest_trend_run_id")
+    print(f"[TREND_FETCH_LATEST] latest_trend_run_id={rid}")
     if not rid:
         return {"trend_run_id": None, "count": 0, "trends": []}
     return get_trends_by_run(run_id=rid, authorization=authorization)

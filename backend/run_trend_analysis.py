@@ -108,9 +108,16 @@ def upsert_metadata_key(db: GoogleSheetsDB, key: str, value: str):
 
 
 def main():
+    print(
+        "[TREND_RUN_START] "
+        f"run_id={TREND_RUN_ID} topic={TOPIC} window_mode={WINDOW_MODE} "
+        f"target_week_key={TARGET_WEEK_KEY or '-'} start={WINDOW_START_DATE or '-'} "
+        f"end={WINDOW_END_DATE or '-'} baseline_weeks={BASELINE_WEEKS}"
+    )
     db = GoogleSheetsDB()
     ws = ensure_trend_sheet(db)
     articles = load_articles(db)
+    print(f"[TREND_ARTICLES] total_articles_loaded={len(articles)}")
 
     week_key = TARGET_WEEK_KEY or iso_week_key(datetime.now())
     rows = compute_trends(
@@ -125,14 +132,26 @@ def main():
         window_end_date=WINDOW_END_DATE,
         baseline_weeks=BASELINE_WEEKS,
     )
+    print(f"[TREND_COMPUTE_RESULT] run_id={TREND_RUN_ID} week_key={week_key} trend_rows={len(rows)}")
 
     upsert_run_rows(ws, TREND_RUN_ID, rows, WINDOW_MODE)
+    print(f"[TREND_SHEET_WRITE] run_id={TREND_RUN_ID} sheet={TREND_SHEET_NAME} rows_written={len(rows)}")
     upsert_metadata_key(db, "latest_trend_run_id", TREND_RUN_ID)
     upsert_metadata_key(db, "latest_trend_week_key", week_key)
     upsert_metadata_key(db, "latest_trend_window_mode", WINDOW_MODE)
     upsert_metadata_key(db, "latest_trend_window_start", WINDOW_START_DATE or "")
     upsert_metadata_key(db, "latest_trend_window_end", WINDOW_END_DATE or "")
     upsert_metadata_key(db, "latest_trend_topic", TOPIC)
+    print(
+        "[TREND_METADATA_WRITE] "
+        f"latest_trend_run_id={TREND_RUN_ID} latest_trend_week_key={week_key} "
+        f"window_mode={WINDOW_MODE} start={WINDOW_START_DATE or '-'} end={WINDOW_END_DATE or '-'} topic={TOPIC}"
+    )
+    print(
+        "[TREND_RUN_SUMMARY] "
+        f"run_id={TREND_RUN_ID} week_key={week_key} topic={TOPIC} window_mode={WINDOW_MODE} "
+        f"start={WINDOW_START_DATE or '-'} end={WINDOW_END_DATE or '-'} baseline_weeks={BASELINE_WEEKS} rows_written={len(rows)}"
+    )
     print(f"Window: start={WINDOW_START_DATE or 'current-month-start'} end={WINDOW_END_DATE or 'current-month-end'} baseline_weeks={BASELINE_WEEKS}")
     print(f"Trend analysis complete for {week_key}: {len(rows)} rows written to '{TREND_SHEET_NAME}' (run_id={TREND_RUN_ID})")
 

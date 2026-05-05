@@ -189,6 +189,11 @@ def compute_trends(
 
     if not current_articles:
         return []
+    print(
+        "[TREND_WINDOW] "
+        f"start={start_dt.strftime('%Y-%m-%d')} end_exclusive={end_dt.strftime('%Y-%m-%d')} "
+        f"current_articles={len(current_articles)} baseline_weeks={baseline_weeks}"
+    )
 
     if target_week_key:
         label_week_key = target_week_key
@@ -209,6 +214,8 @@ def compute_trends(
 
     for a, kws in zip(relevant_articles, kws_per_doc):
         a["_kws"] = kws
+    total_kw = sum(len(a.get("_kws", [])) for a in relevant_articles)
+    print(f"[TREND_KEYWORDS] relevant_articles={len(relevant_articles)} extracted_keywords_total={total_kw}")
 
     current_counts = Counter()
     hist_counts_by_week = {wk: Counter() for wk in hist_weeks}
@@ -237,13 +244,17 @@ def compute_trends(
                 hist_counts_by_week[wk][kw] += 1
 
     rows: List[TrendRow] = []
+    gate = {"seen": 0, "pass_mentions": 0, "pass_publications": 0, "pass_lift": 0}
     for kw, c in current_counts.items():
+        gate["seen"] += 1
         if c < min_mentions:
             continue
+        gate["pass_mentions"] += 1
 
         pub_count = len(current_pubsets[kw])
         if pub_count < min_publications:
             continue
+        gate["pass_publications"] += 1
 
         hist_vals = [hist_counts_by_week[wk].get(kw, 0) for wk in hist_weeks]
         baseline = sum(hist_vals) / max(1, len(hist_vals))
@@ -251,6 +262,7 @@ def compute_trends(
         lift = (c + 1.0) / (baseline + 1.0)
         if lift < min_lift:
             continue
+        gate["pass_lift"] += 1
 
         pct_change = ((c - baseline) / (baseline + 1.0)) * 100.0
         trend_score = lift * math.log1p(c)
@@ -269,4 +281,5 @@ def compute_trends(
         )
 
     rows.sort(key=lambda r: (r.trend_score, r.count_current), reverse=True)
+    print(f"[TREND_GATES] {gate} final_rows={len(rows[:top_n])}")
     return rows[:top_n]

@@ -90,6 +90,13 @@ export default function TrendAnalysisView() {
     }
 
     setIsRunning(true);
+    console.log("[TREND_UI_TRIGGER]", {
+      topic,
+      windowMode,
+      targetWeekKey,
+      windowStartDate: payloadStart,
+      windowEndDate: payloadEnd,
+    });
     const res = await githubAPI.triggerTrendAnalysis({
       topic,
       target_week_key: targetWeekKey,
@@ -98,6 +105,7 @@ export default function TrendAnalysisView() {
       window_mode: windowMode,
     });
     setIsRunning(false);
+    console.log("[TREND_UI_TRIGGER_RESULT]", res);
 
     if (!res.success) {
       setError(res.error || "Failed to trigger trend analysis workflow.");
@@ -116,10 +124,16 @@ export default function TrendAnalysisView() {
     setError("");
     setMessage("");
     setIsViewingResults(true);
+    console.log("[TREND_UI_FETCH_RESULTS]", { trendRunId });
     const res = trendRunId
       ? await githubAPI.getTrendsByRun(trendRunId)
       : await githubAPI.getLatestTrends();
     setIsViewingResults(false);
+    console.log("[TREND_UI_FETCH_RESULTS_RESULT]", {
+      success: res.success,
+      trend_run_id: res.trend_run_id,
+      count: (res.trends || []).length,
+    });
     if (!res.success) {
       setError(res.error || "Failed to load trend results.");
       return;
