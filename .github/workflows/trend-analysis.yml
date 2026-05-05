@@ -28,6 +28,14 @@ on:
         description: "Historical baseline weeks"
         required: false
         default: "4"
+      trend_run_id:
+        description: "Unique trend run id"
+        required: false
+        default: ""
+      window_mode:
+        description: "current_week | current_month | custom"
+        required: false
+        default: "current_month"
 
 jobs:
   trend-analysis:
@@ -64,6 +72,8 @@ jobs:
           WINDOW_START_DATE: ${{ github.event.inputs.window_start_date }}
           WINDOW_END_DATE: ${{ github.event.inputs.window_end_date }}
           BASELINE_WEEKS: ${{ github.event.inputs.baseline_weeks }}
+          TREND_RUN_ID: ${{ github.event.inputs.trend_run_id }}
+          WINDOW_MODE: ${{ github.event.inputs.window_mode }}
         run: python -u run_trend_analysis.py
 
       - name: Cleanup credentials

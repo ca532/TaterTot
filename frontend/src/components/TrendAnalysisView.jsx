@@ -34,6 +34,7 @@ export default function TrendAnalysisView() {
   const [isViewingResults, setIsViewingResults] = useState(false);
   const [trends, setTrends] = useState([]);
   const [weekKey, setWeekKey] = useState("");
+  const [trendRunId, setTrendRunId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -94,6 +95,7 @@ export default function TrendAnalysisView() {
       target_week_key: targetWeekKey,
       window_start_date: payloadStart,
       window_end_date: payloadEnd,
+      window_mode: windowMode,
     });
     setIsRunning(false);
 
@@ -101,6 +103,7 @@ export default function TrendAnalysisView() {
       setError(res.error || "Failed to trigger trend analysis workflow.");
       return;
     }
+    setTrendRunId(res.trend_run_id || "");
     let suffix = " for current week";
     if (windowMode === "current_month") suffix = " for current month";
     if (windowMode === "custom") {
@@ -113,13 +116,15 @@ export default function TrendAnalysisView() {
     setError("");
     setMessage("");
     setIsViewingResults(true);
-    const res = await githubAPI.getCurrentWeekTrends();
+    const res = trendRunId
+      ? await githubAPI.getTrendsByRun(trendRunId)
+      : await githubAPI.getLatestTrends();
     setIsViewingResults(false);
     if (!res.success) {
       setError(res.error || "Failed to load trend results.");
       return;
     }
-    setTrends(res.trends || []);
+    setTrends((res.trends || []).filter((t) => t.keyword !== "__NO_TRENDS__"));
     setWeekKey(res.week_key || "");
     setViewStatus("complete");
   };
@@ -129,10 +134,12 @@ export default function TrendAnalysisView() {
       <TrendResultsList
         trends={trends}
         weekKey={weekKey}
+        trendRunId={trendRunId}
         onRunAgain={() => {
           setViewStatus("idle");
           setTrends([]);
           setWeekKey("");
+          setTrendRunId("");
           setError("");
           setMessage("");
         }}

@@ -129,6 +129,7 @@ class TrendTriggerRequest(BaseModel):
     window_start_date: Optional[str] = None
     window_end_date: Optional[str] = None
     baseline_weeks: Optional[int] = 4
+    window_mode: Optional[Literal["current_week", "current_month", "custom"]] = "current_month"
 
 
 def _issue_token(token_type: str, expires_in: int) -> str:
@@ -342,6 +343,19 @@ def _stars_rows(ws):
             row[h] = r[i] if i < len(r) else ""
         rows.append(row)
     return rows
+
+
+def _metadata_get(key: str) -> Optional[str]:
+    try:
+        spreadsheet = _load_main_spreadsheet()
+        ws = spreadsheet.worksheet("Metadata")
+        values = ws.get_all_values()
+        for row in values[1:]:
+            if row and len(row) >= 2 and str(row[0]).strip() == key:
+                return str(row[1]).strip()
+    except Exception:
+        return None
+    return None
 
 
 @app.post("/auth/login")
@@ -1055,6 +1069,10 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
     window_start_date = (req.window_start_date or "").strip()
     window_end_date = (req.window_end_date or "").strip()
     baseline_weeks = int(req.baseline_weeks or 4)
+    trend_run_id = f"trend-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    window_mode = (req.window_mode or "current_month").strip().lower()
+    if window_mode not in {"current_week", "current_month", "custom"}:
+        raise HTTPException(status_code=400, detail="Invalid window_mode")
 
     body = {
         "ref": GITHUB_REF,
@@ -1064,6 +1082,8 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
             "window_start_date": window_start_date,
             "window_end_date": window_end_date,
             "baseline_weeks": str(baseline_weeks),
+            "trend_run_id": trend_run_id,
+            "window_mode": window_mode,
         },
     }
 
@@ -1072,4 +1092,60 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
         raise HTTPException(status_code=502, detail=f"GitHub trend dispatch failed: {r.status_code} {r.text}")
 
     response.status_code = 202
-    return {"ok": True, "state": "queued", "message": "Trend analysis workflow triggered"}
+    return {
+        "ok": True,
+        "state": "queued",
+        "message": "Trend analysis workflow triggered",
+        "trend_run_id": trend_run_id,
+    }
+
+
+@app.get("/trends/by-run")
+def get_trends_by_run(run_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    rid = (run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    spreadsheet = _load_main_spreadsheet()
+    try:
+        ws = spreadsheet.worksheet("Trend Signals")
+    except Exception:
+        return {"trend_run_id": rid, "count": 0, "trends": []}
+
+    values = ws.get_all_values()
+    if len(values) <= 1:
+        return {"trend_run_id": rid, "count": 0, "trends": []}
+
+    headers = values[0]
+    idx = {h: i for i, h in enumerate(headers)}
+    ridx = idx.get("trend_run_id", 0)
+
+    trends = []
+    for row in values[1:]:
+        if not row or ridx >= len(row) or row[ridx] != rid:
+            continue
+        trends.append({
+            "trend_run_id": row[ridx],
+            "week_key": row[idx.get("week_key", 1)] if idx.get("week_key", 1) < len(row) else "",
+            "keyword": row[idx.get("keyword", 2)] if idx.get("keyword", 2) < len(row) else "",
+            "count_current": row[idx.get("count_current", 3)] if idx.get("count_current", 3) < len(row) else "0",
+            "baseline_4wk": row[idx.get("baseline_4wk", 4)] if idx.get("baseline_4wk", 4) < len(row) else "0",
+            "pct_change": row[idx.get("pct_change", 5)] if idx.get("pct_change", 5) < len(row) else "0",
+            "trend_score": row[idx.get("trend_score", 6)] if idx.get("trend_score", 6) < len(row) else "0",
+            "publication_count": row[idx.get("publication_count", 7)] if idx.get("publication_count", 7) < len(row) else "0",
+            "supporting_urls": row[idx.get("supporting_urls", 8)] if idx.get("supporting_urls", 8) < len(row) else "",
+            "status": row[idx.get("status", 9)] if idx.get("status", 9) < len(row) else "trending",
+            "window_mode": row[idx.get("window_mode", 10)] if idx.get("window_mode", 10) < len(row) else "",
+        })
+
+    return {"trend_run_id": rid, "count": len(trends), "trends": trends}
+
+
+@app.get("/trends/latest")
+def get_latest_trends(authorization: str = Header(default="")):
+    _check_auth(authorization)
+    rid = _metadata_get("latest_trend_run_id")
+    if not rid:
+        return {"trend_run_id": None, "count": 0, "trends": []}
+    return get_trends_by_run(run_id=rid, authorization=authorization)

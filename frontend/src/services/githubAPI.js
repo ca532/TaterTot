@@ -240,6 +240,31 @@ class PipelineService {
     }
   }
 
+  async getTrendsByRun(runId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/trends/by-run?run_id=${encodeURIComponent(runId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, trends: [] };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message, trends: [] };
+    }
+  }
+
+  async getLatestTrends() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/trends/latest`, { method: "GET" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, trends: [] };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message, trends: [] };
+    }
+  }
+
   async downloadLatestArtifactZip() {
     const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
       method: "GET"

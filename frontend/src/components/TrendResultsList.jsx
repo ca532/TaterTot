@@ -7,7 +7,7 @@ function splitUrls(raw) {
     .filter(Boolean);
 }
 
-export default function TrendResultsList({ trends = [], weekKey = "", onRunAgain }) {
+export default function TrendResultsList({ trends = [], weekKey = "", trendRunId = "", onRunAgain }) {
   return (
     <div className="w-full h-full flex flex-col px-4 sm:px-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
@@ -16,6 +16,9 @@ export default function TrendResultsList({ trends = [], weekKey = "", onRunAgain
           <p className="text-base text-gray-600 mt-2">
             {trends.length} trends {weekKey ? `for ${weekKey}` : "for current week"}
           </p>
+          {trendRunId && (
+            <p className="text-sm text-gray-500 mt-1">Run ID: {trendRunId}</p>
+          )}
         </div>
 
         <button

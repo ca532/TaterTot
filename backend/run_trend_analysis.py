@@ -11,6 +11,8 @@ TOPIC = os.getenv("TOPIC", "luxury").strip().lower()
 WINDOW_START_DATE = os.getenv("WINDOW_START_DATE", "").strip()
 WINDOW_END_DATE = os.getenv("WINDOW_END_DATE", "").strip()
 BASELINE_WEEKS = int(os.getenv("BASELINE_WEEKS", "4"))
+TREND_RUN_ID = os.getenv("TREND_RUN_ID", "").strip() or f"trend-{int(datetime.now().timestamp())}"
+WINDOW_MODE = os.getenv("WINDOW_MODE", "").strip() or "current_month"
 
 
 def ensure_trend_sheet(db: GoogleSheetsDB):
@@ -18,7 +20,8 @@ def ensure_trend_sheet(db: GoogleSheetsDB):
         ws = db.spreadsheet.worksheet(TREND_SHEET_NAME)
     except Exception:
         ws = db.spreadsheet.add_worksheet(title=TREND_SHEET_NAME, rows=2000, cols=12)
-        ws.update("A1:I1", [[
+        ws.update("A1:K1", [[
+            "trend_run_id",
             "week_key",
             "keyword",
             "count_current",
@@ -28,6 +31,7 @@ def ensure_trend_sheet(db: GoogleSheetsDB):
             "publication_count",
             "supporting_urls",
             "status",
+            "window_mode",
         ]])
     return ws
 
@@ -48,17 +52,21 @@ def load_articles(db: GoogleSheetsDB):
     return out
 
 
-def upsert_week_rows(ws, week_key: str, rows):
+def upsert_run_rows(ws, trend_run_id: str, rows, window_mode: str):
     all_vals = ws.get_all_values()
     if len(all_vals) > 1:
         to_delete = []
+        headers = all_vals[0]
+        idx = {h: i for i, h in enumerate(headers)}
+        ridx = idx.get("trend_run_id", 0)
         for i, row in enumerate(all_vals[1:], start=2):
-            if row and row[0] == week_key:
+            if row and ridx < len(row) and row[ridx] == trend_run_id:
                 to_delete.append(i)
         for idx in reversed(to_delete):
             ws.delete_rows(idx)
 
     payload = [[
+        trend_run_id,
         r.week_key,
         r.keyword,
         r.count_current,
@@ -68,10 +76,35 @@ def upsert_week_rows(ws, week_key: str, rows):
         r.publication_count,
         r.supporting_urls,
         r.status,
+        window_mode,
     ] for r in rows]
 
     if payload:
         ws.append_rows(payload, value_input_option="USER_ENTERED")
+
+
+def upsert_metadata_key(db: GoogleSheetsDB, key: str, value: str):
+    try:
+        try:
+            ws = db.spreadsheet.worksheet("Metadata")
+        except Exception:
+            ws = db.spreadsheet.add_worksheet(title="Metadata", rows=50, cols=3)
+            ws.update("A1:C1", [["Key", "Value", "Updated"]])
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        values = ws.get_all_values()
+        row_idx = None
+        for i, row in enumerate(values[1:], start=2):
+            if row and str(row[0]).strip() == key:
+                row_idx = i
+                break
+
+        if row_idx:
+            ws.update(f"B{row_idx}:C{row_idx}", [[str(value), ts]])
+        else:
+            ws.append_row([key, str(value), ts], value_input_option="USER_ENTERED")
+    except Exception as e:
+        print(f"Warning: metadata upsert failed for {key}: {e}")
 
 
 def main():
@@ -93,9 +126,15 @@ def main():
         baseline_weeks=BASELINE_WEEKS,
     )
 
-    upsert_week_rows(ws, week_key, rows)
+    upsert_run_rows(ws, TREND_RUN_ID, rows, WINDOW_MODE)
+    upsert_metadata_key(db, "latest_trend_run_id", TREND_RUN_ID)
+    upsert_metadata_key(db, "latest_trend_week_key", week_key)
+    upsert_metadata_key(db, "latest_trend_window_mode", WINDOW_MODE)
+    upsert_metadata_key(db, "latest_trend_window_start", WINDOW_START_DATE or "")
+    upsert_metadata_key(db, "latest_trend_window_end", WINDOW_END_DATE or "")
+    upsert_metadata_key(db, "latest_trend_topic", TOPIC)
     print(f"Window: start={WINDOW_START_DATE or 'current-month-start'} end={WINDOW_END_DATE or 'current-month-end'} baseline_weeks={BASELINE_WEEKS}")
-    print(f"Trend analysis complete for {week_key}: {len(rows)} rows written to '{TREND_SHEET_NAME}'")
+    print(f"Trend analysis complete for {week_key}: {len(rows)} rows written to '{TREND_SHEET_NAME}' (run_id={TREND_RUN_ID})")
 
 
 if __name__ == "__main__":
