@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
-from publication_metadata_pipeline import run_publication_metadata_pipeline
+from backend.publication_metadata_pipeline import run_publication_metadata_pipeline
 
 app = FastAPI()
 
