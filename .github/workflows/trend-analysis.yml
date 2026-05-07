@@ -14,8 +14,6 @@ on:
         description: "Topic for trend stopword profile"
         required: false
         default: "luxury"
-        type: choice
-        options: ["luxury", "finance"]
       window_start_date:
         description: "Optional start date YYYY-MM-DD"
         required: false

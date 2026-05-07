@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 import TrendResultsList from "./TrendResultsList";
@@ -26,7 +26,8 @@ function formatDdMmYyyy(yyyyMmDd) {
 
 export default function TrendAnalysisView() {
   const [viewStatus, setViewStatus] = useState("idle"); // idle|complete
-  const [topic, setTopic] = useState("luxury");
+  const [topic, setTopic] = useState("");
+  const [sourceLists, setSourceLists] = useState([]);
   const [windowMode, setWindowMode] = useState("current_week"); // current_week|current_month|custom
   const [windowStartDate, setWindowStartDate] = useState("");
   const [windowEndDate, setWindowEndDate] = useState("");
@@ -35,6 +36,9 @@ export default function TrendAnalysisView() {
   const [trends, setTrends] = useState([]);
   const [weekKey, setWeekKey] = useState("");
   const [trendRunId, setTrendRunId] = useState("");
+  const [lastWindowMode, setLastWindowMode] = useState("");
+  const [lastWindowStartDate, setLastWindowStartDate] = useState("");
+  const [lastWindowEndDate, setLastWindowEndDate] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -58,6 +62,18 @@ export default function TrendAnalysisView() {
   }, [now]);
 
   const rangeValid = !windowStartDate || !windowEndDate || windowStartDate <= windowEndDate;
+
+  useEffect(() => {
+    const loadSourceLists = async () => {
+      const res = await githubAPI.getSourceLists();
+      if (!res.success) return;
+      setSourceLists(res.lists || []);
+      if (!topic && (res.lists || []).length > 0) {
+        setTopic(res.lists[0].list_name);
+      }
+    };
+    loadSourceLists();
+  }, [topic]);
 
   const onRun = async () => {
     setError("");
@@ -111,6 +127,9 @@ export default function TrendAnalysisView() {
       setError(res.error || "Failed to trigger trend analysis workflow.");
       return;
     }
+    setLastWindowMode(windowMode);
+    setLastWindowStartDate(payloadStart);
+    setLastWindowEndDate(payloadEnd);
     setTrendRunId(res.trend_run_id || "");
     let suffix = " for current week";
     if (windowMode === "current_month") suffix = " for current month";
@@ -149,11 +168,17 @@ export default function TrendAnalysisView() {
         trends={trends}
         weekKey={weekKey}
         trendRunId={trendRunId}
+        windowMode={lastWindowMode}
+        windowStartDate={lastWindowStartDate}
+        windowEndDate={lastWindowEndDate}
         onRunAgain={() => {
           setViewStatus("idle");
           setTrends([]);
           setWeekKey("");
           setTrendRunId("");
+          setLastWindowMode("");
+          setLastWindowStartDate("");
+          setLastWindowEndDate("");
           setError("");
           setMessage("");
         }}
@@ -168,28 +193,22 @@ export default function TrendAnalysisView() {
           <BarChart3 className="w-8 h-8 text-[#b8860b]" />
         </div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Trend Analysis</h2>
-        <p className="text-gray-600">Run Phase 4A trend extraction workflow for a selected topic and date.</p>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-5">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Topic</label>
-          <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setTopic("luxury")}
-              className={`px-4 py-2 text-sm font-semibold ${topic === "luxury" ? "bg-[#b8860b] text-black" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-            >
-              Luxury
-            </button>
-            <button
-              type="button"
-              onClick={() => setTopic("finance")}
-              className={`px-4 py-2 text-sm font-semibold border-l border-gray-300 ${topic === "finance" ? "bg-[#b8860b] text-black" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-            >
-              Finance
-            </button>
-          </div>
+          <select
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b] bg-white"
+          >
+            {sourceLists.map((s) => (
+              <option key={s.list_name} value={s.list_name}>
+                {s.list_name} ({s.active_rows}/{s.total_rows} active)
+              </option>
+            ))}
+          </select>
         </div>
 
         <div>
@@ -204,7 +223,6 @@ export default function TrendAnalysisView() {
             <option value="custom">Custom</option>
           </select>
           <p className="text-xs text-gray-500 mt-1">
-            {windowMode === "current_week" && `Uses current ISO week (${currentWeekKey}).`}
             {windowMode === "current_month" && "Uses current calendar month."}
             {windowMode === "custom" && "Select a start and end date."}
           </p>

@@ -158,7 +158,7 @@ def _meta_job_get(job_id: str):
 
 
 class TrendTriggerRequest(BaseModel):
-    topic: Literal["finance", "luxury"] = "luxury"
+    topic: str = "luxury"
     target_week_key: Optional[str] = None
     window_start_date: Optional[str] = None
     window_end_date: Optional[str] = None
@@ -1140,7 +1140,9 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
     workflow = "trend-analysis.yml"
     url = f"{GITHUB_API_BASE}/actions/workflows/{workflow}/dispatches"
 
-    topic = _normalize_topic(req.topic)
+    topic = (req.topic or "").strip().lower()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
     week_key = (req.target_week_key or "").strip()
     window_start_date = (req.window_start_date or "").strip()
     window_end_date = (req.window_end_date or "").strip()

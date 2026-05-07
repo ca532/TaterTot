@@ -1,4 +1,4 @@
-import { ExternalLink, RefreshCw, Calendar, Hash } from "lucide-react";
+import { ExternalLink, ArrowLeft, Calendar, Hash } from "lucide-react";
 
 function splitUrls(raw) {
   return String(raw || "")
@@ -7,14 +7,36 @@ function splitUrls(raw) {
     .filter(Boolean);
 }
 
-export default function TrendResultsList({ trends = [], weekKey = "", trendRunId = "", onRunAgain }) {
+function formatDdMmYyyy(yyyyMmDd) {
+  if (!yyyyMmDd || !/^\d{4}-\d{2}-\d{2}$/.test(yyyyMmDd)) return yyyyMmDd || "";
+  const [y, m, d] = yyyyMmDd.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+export default function TrendResultsList({
+  trends = [],
+  weekKey = "",
+  trendRunId = "",
+  windowMode = "",
+  windowStartDate = "",
+  windowEndDate = "",
+  onRunAgain,
+}) {
+  const rangeLabel =
+    windowMode === "custom" && windowStartDate && windowEndDate
+      ? `${formatDdMmYyyy(windowStartDate)} to ${formatDdMmYyyy(windowEndDate)}`
+      : windowMode === "current_month"
+      ? "current month"
+      : weekKey
+      ? weekKey
+      : "current window";
   return (
     <div className="w-full h-full flex flex-col px-4 sm:px-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Trend Analysis Results</h2>
           <p className="text-base text-gray-600 mt-2">
-            {trends.length} trends {weekKey ? `for ${weekKey}` : "for current week"}
+            {trends.length} trends for {rangeLabel}
           </p>
           {trendRunId && (
             <p className="text-sm text-gray-500 mt-1">Run ID: {trendRunId}</p>
@@ -25,8 +47,8 @@ export default function TrendResultsList({ trends = [], weekKey = "", trendRunId
           onClick={onRunAgain}
           className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 bg-[#b8860b] text-black font-semibold rounded-lg hover:bg-[#8b6914] transition-colors shadow-md hover:shadow-lg"
         >
-          <RefreshCw className="w-5 h-5" />
-          Home
+          <ArrowLeft className="w-5 h-5" />
+          Back
         </button>
       </div>
 
