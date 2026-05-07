@@ -89,7 +89,7 @@ def make_doc_text(article: Dict) -> str:
 def extract_keywords_tfidf(
     texts: List[str],
     stopwords: set[str],
-    top_k_per_doc: int = 8
+    top_k_per_doc: int = 12
 ) -> List[List[str]]:
     if not texts:
         return []
@@ -98,7 +98,7 @@ def extract_keywords_tfidf(
         lowercase=True,
         token_pattern=r"(?u)\b[a-zA-Z][a-zA-Z0-9\-]{1,}\b",
         min_df=1,
-        max_df=0.85,
+        max_df=0.95,
         stop_words=sorted(stopwords),
     )
     mat = vec.fit_transform(texts)
@@ -189,10 +189,15 @@ def compute_trends(
 
     if not current_articles:
         return []
+    effective_min_publications = min_publications
+    window_days = (end_dt - start_dt).days
+    if window_days >= 28 and effective_min_publications > 1:
+        effective_min_publications = 1
     print(
         "[TREND_WINDOW] "
         f"start={start_dt.strftime('%Y-%m-%d')} end_exclusive={end_dt.strftime('%Y-%m-%d')} "
-        f"current_articles={len(current_articles)} baseline_weeks={baseline_weeks}"
+        f"current_articles={len(current_articles)} baseline_weeks={baseline_weeks} "
+        f"effective_min_publications={effective_min_publications}"
     )
 
     if target_week_key:
@@ -252,7 +257,7 @@ def compute_trends(
         gate["pass_mentions"] += 1
 
         pub_count = len(current_pubsets[kw])
-        if pub_count < min_publications:
+        if pub_count < effective_min_publications:
             continue
         gate["pass_publications"] += 1
 

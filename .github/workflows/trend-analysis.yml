@@ -83,6 +83,10 @@ jobs:
           BASELINE_WEEKS: ${{ github.event.inputs.baseline_weeks }}
           TREND_RUN_ID: ${{ github.event.inputs.trend_run_id }}
           WINDOW_MODE: ${{ github.event.inputs.window_mode }}
+          TREND_MIN_MENTIONS: "2"
+          TREND_MIN_LIFT: "1.2"
+          TREND_MIN_PUBLICATIONS: "1"
+          TREND_TOP_N: "25"
         run: python -u run_trend_analysis.py
 
       - name: Cleanup credentials

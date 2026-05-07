@@ -13,6 +13,10 @@ WINDOW_END_DATE = os.getenv("WINDOW_END_DATE", "").strip()
 BASELINE_WEEKS = int(os.getenv("BASELINE_WEEKS", "4"))
 TREND_RUN_ID = os.getenv("TREND_RUN_ID", "").strip() or f"trend-{int(datetime.now().timestamp())}"
 WINDOW_MODE = os.getenv("WINDOW_MODE", "").strip() or "current_month"
+MIN_MENTIONS = int(os.getenv("TREND_MIN_MENTIONS", "2"))
+MIN_LIFT = float(os.getenv("TREND_MIN_LIFT", "1.2"))
+MIN_PUBLICATIONS = int(os.getenv("TREND_MIN_PUBLICATIONS", "1"))
+TOP_N = int(os.getenv("TREND_TOP_N", "25"))
 
 
 def ensure_trend_sheet(db: GoogleSheetsDB):
@@ -118,21 +122,42 @@ def main():
     ws = ensure_trend_sheet(db)
     articles = load_articles(db)
     print(f"[TREND_ARTICLES] total_articles_loaded={len(articles)}")
+    print(
+        "[TREND_THRESHOLDS] "
+        f"min_mentions={MIN_MENTIONS} min_lift={MIN_LIFT} "
+        f"min_publications={MIN_PUBLICATIONS} top_n={TOP_N}"
+    )
 
     week_key = TARGET_WEEK_KEY or iso_week_key(datetime.now())
     rows = compute_trends(
         articles=articles,
         target_week_key=week_key,
         topic=TOPIC,
-        min_mentions=3,
-        min_lift=1.5,
-        min_publications=2,
-        top_n=20,
+        min_mentions=MIN_MENTIONS,
+        min_lift=MIN_LIFT,
+        min_publications=MIN_PUBLICATIONS,
+        top_n=TOP_N,
         window_start_date=WINDOW_START_DATE,
         window_end_date=WINDOW_END_DATE,
         baseline_weeks=BASELINE_WEEKS,
     )
     print(f"[TREND_COMPUTE_RESULT] run_id={TREND_RUN_ID} week_key={week_key} trend_rows={len(rows)}")
+
+    if not rows:
+        from trend_analyzer import TrendRow
+        rows = [
+            TrendRow(
+                week_key=week_key,
+                keyword="__NO_TRENDS__",
+                count_current=0,
+                baseline_4wk=0.0,
+                pct_change=0.0,
+                trend_score=0.0,
+                publication_count=0,
+                supporting_urls="",
+                status="no_trends",
+            )
+        ]
 
     upsert_run_rows(ws, TREND_RUN_ID, rows, WINDOW_MODE)
     print(f"[TREND_SHEET_WRITE] run_id={TREND_RUN_ID} sheet={TREND_SHEET_NAME} rows_written={len(rows)}")
