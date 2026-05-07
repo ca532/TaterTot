@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -93,6 +94,11 @@ def _topic_label(topic_words: List[tuple]) -> str:
     return " | ".join(terms) if terms else "Unknown Topic"
 
 
+def _tlog(event: str, **kwargs):
+    payload = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in kwargs.items())
+    print(f"[TREND_BERTOPIC_{event}] {payload}")
+
+
 def compute_trends(
     articles: List[Dict],
     target_week_key: Optional[str] = None,
@@ -105,6 +111,18 @@ def compute_trends(
     window_end_date: str = "",
     baseline_weeks: int = 4,
 ) -> List[TrendRow]:
+    _tlog(
+        "START",
+        topic=topic,
+        target_week_key=target_week_key,
+        window_start_date=window_start_date or "-",
+        window_end_date=window_end_date or "-",
+        baseline_weeks=baseline_weeks,
+        min_mentions=min_mentions,
+        min_lift=min_lift,
+        min_publications=min_publications,
+        top_n=top_n,
+    )
     baseline_weeks = max(1, int(baseline_weeks or 4))
 
     parsed_rows = []
@@ -136,6 +154,15 @@ def compute_trends(
         end_dt = end_dt + timedelta(days=1)
 
     current_rows = [(a, dt, wk) for a, dt, wk in parsed_rows if start_dt <= dt < end_dt]
+    _tlog(
+        "PARSE_WINDOW",
+        input_articles=len(articles),
+        parsed_rows=len(parsed_rows),
+        missing_date=(len(articles) - len(parsed_rows)),
+        current_rows=len(current_rows),
+        window_start=str(start_dt.date()),
+        window_end_exclusive=str(end_dt.date()),
+    )
     if not current_rows:
         return []
 
@@ -147,14 +174,21 @@ def compute_trends(
     docs = [make_doc_text(a) for a, _, _ in relevant_rows]
     stopwords = get_stopwords_for_topic(topic)
 
-    print(f"[TREND_BERTOPIC] docs={len(docs)} current_docs={len(current_rows)} hist_weeks={len(hist_weeks)}")
+    min_topic_size_cfg = 3 if len(docs) < 60 else 5
+    _tlog(
+        "MODEL_CFG",
+        docs=len(docs),
+        min_topic_size=min_topic_size_cfg,
+        model="all-MiniLM-L6-v2",
+        hist_weeks_count=len(hist_weeks),
+    )
 
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
     topic_model = BERTopic(
         embedding_model=embedding_model,
         language="english",
         calculate_probabilities=False,
-        min_topic_size=5,
+        min_topic_size=min_topic_size_cfg,
         verbose=False,
     )
 
@@ -170,6 +204,15 @@ def compute_trends(
             "signature": _topic_signature(words),
             "label": _topic_label(words),
         }
+    outlier_docs = sum(1 for t in topics if t == -1)
+    unique_topics = len(set(t for t in topics if t != -1))
+    _tlog(
+        "MODEL_OUT",
+        total_docs=len(topics),
+        outlier_docs=outlier_docs,
+        unique_topics=unique_topics,
+        kept_topics=len(topic_info),
+    )
 
     current_counts = Counter()
     hist_counts_by_week = {wk: Counter() for wk in hist_weeks}
@@ -239,5 +282,23 @@ def compute_trends(
         )
 
     rows.sort(key=lambda r: (r.trend_score, r.count_current), reverse=True)
-    print(f"[TREND_BERTOPIC_GATES] {gate} final_rows={len(rows[:top_n])}")
+    _tlog(
+        "GATES",
+        seen=gate["seen"],
+        pass_mentions=gate["pass_mentions"],
+        pass_publications=gate["pass_publications"],
+        pass_lift=gate["pass_lift"],
+        final_rows=min(len(rows), top_n),
+    )
+    preview = [
+        {
+            "keyword": r.keyword,
+            "count_current": r.count_current,
+            "baseline_4wk": r.baseline_4wk,
+            "trend_score": r.trend_score,
+            "publication_count": r.publication_count,
+        }
+        for r in rows[:3]
+    ]
+    _tlog("TOP3", rows=preview)
     return rows[:top_n]

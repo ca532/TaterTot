@@ -1157,6 +1157,12 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
         f"week_key={week_key or '-'} start={window_start_date or '-'} end={window_end_date or '-'} "
         f"baseline_weeks={baseline_weeks} ref={GITHUB_REF}"
     )
+    print(
+        "[TREND_TRIGGER_PAYLOAD] "
+        f"run_id={trend_run_id} topic={topic} window_mode={window_mode} "
+        f"week_key={week_key or '-'} start={window_start_date or '-'} end={window_end_date or '-'} "
+        f"baseline_weeks={baseline_weeks} ref={GITHUB_REF}"
+    )
 
     body = {
         "ref": GITHUB_REF,
@@ -1177,6 +1183,7 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
         f"run_id={trend_run_id} status_code={r.status_code} "
         f"workflow=trend-analysis.yml repo={GITHUB_OWNER}/{GITHUB_REPO}"
     )
+    print(f"[TREND_TRIGGER_ACK] run_id={trend_run_id} status_code={r.status_code}")
     if r.status_code != 204:
         raise HTTPException(status_code=502, detail=f"GitHub trend dispatch failed: {r.status_code} {r.text}")
 

@@ -141,6 +141,11 @@ def main():
         window_end_date=WINDOW_END_DATE,
         baseline_weeks=BASELINE_WEEKS,
     )
+    print(
+        f"[TREND_RUN_RESULT] run_id={TREND_RUN_ID} week_key={week_key} "
+        f"topic={TOPIC} window_mode={WINDOW_MODE} start={WINDOW_START_DATE or '-'} "
+        f"end={WINDOW_END_DATE or '-'} rows={len(rows)}"
+    )
     print(f"[TREND_COMPUTE_RESULT] run_id={TREND_RUN_ID} week_key={week_key} trend_rows={len(rows)}")
 
     if not rows:
@@ -158,9 +163,14 @@ def main():
                 status="no_trends",
             )
         ]
+        print(
+            f"[TREND_SENTINEL] run_id={TREND_RUN_ID} week_key={week_key} "
+            f"reason=no_trends_after_filters topic={TOPIC} window_mode={WINDOW_MODE}"
+        )
 
     upsert_run_rows(ws, TREND_RUN_ID, rows, WINDOW_MODE)
     print(f"[TREND_SHEET_WRITE] run_id={TREND_RUN_ID} sheet={TREND_SHEET_NAME} rows_written={len(rows)}")
+    print(f"[TREND_WRITE] run_id={TREND_RUN_ID} sheet={TREND_SHEET_NAME} rows_written={len(rows)}")
     upsert_metadata_key(db, "latest_trend_run_id", TREND_RUN_ID)
     upsert_metadata_key(db, "latest_trend_week_key", week_key)
     upsert_metadata_key(db, "latest_trend_window_mode", WINDOW_MODE)

@@ -26,6 +26,8 @@ function formatDdMmYyyy(yyyyMmDd) {
 
 export default function TrendAnalysisView() {
   const [viewStatus, setViewStatus] = useState("idle"); // idle|complete
+  const [trendRunState, setTrendRunState] = useState("idle"); // idle|queued|running|completed|empty|failed
+  const [trendRunMessage, setTrendRunMessage] = useState("");
   const [topic, setTopic] = useState("");
   const [sourceLists, setSourceLists] = useState([]);
   const [windowMode, setWindowMode] = useState("current_week"); // current_week|current_month|custom
@@ -125,6 +127,8 @@ export default function TrendAnalysisView() {
 
     if (!res.success) {
       setError(res.error || "Failed to trigger trend analysis workflow.");
+      setTrendRunState("failed");
+      setTrendRunMessage(res.error || "Failed to trigger trend analysis workflow.");
       return;
     }
     setLastWindowMode(windowMode);
@@ -136,7 +140,55 @@ export default function TrendAnalysisView() {
     if (windowMode === "custom") {
       suffix = ` for custom range ${formatDdMmYyyy(windowStartDate)} to ${formatDdMmYyyy(windowEndDate)}`;
     }
-    setMessage(`Trend analysis workflow queued successfully${suffix}.`);
+    const queuedMsg = `Trend analysis workflow queued successfully${suffix}.`;
+    setMessage(queuedMsg);
+    setTrendRunState("queued");
+    setTrendRunMessage(queuedMsg);
+    if (res.trend_run_id) {
+      startTrendRunPolling(res.trend_run_id);
+    }
+  };
+
+  const startTrendRunPolling = (runId) => {
+    let attempts = 0;
+    const maxAttempts = 60;
+    const intervalMs = 5000;
+
+    setTrendRunState("running");
+    setTrendRunMessage("Trend analysis is running...");
+
+    const timer = setInterval(async () => {
+      attempts += 1;
+      try {
+        console.log("[TREND_UI_POLL]", { trendRunId: runId, attempt: attempts });
+        const data = await githubAPI.getTrendsByRun(runId);
+        const list = Array.isArray(data?.trends) ? data.trends : [];
+        const hasSentinel = list.some((t) => t.keyword === "__NO_TRENDS__" || t.status === "no_trends");
+        console.log("[TREND_UI_POLL_RESULT]", { count: list.length, hasSentinel });
+
+        if (list.length > 0) {
+          if (hasSentinel) {
+            setTrendRunState("empty");
+            setTrendRunMessage("Run completed, but no trends passed thresholds for this window.");
+          } else {
+            setTrendRunState("completed");
+            setTrendRunMessage(`Run completed with ${list.length} trend result(s).`);
+          }
+          clearInterval(timer);
+          return;
+        }
+
+        if (attempts >= maxAttempts) {
+          setTrendRunState("failed");
+          setTrendRunMessage("Timed out waiting for trend results. Please check workflow logs.");
+          clearInterval(timer);
+        }
+      } catch (e) {
+        setTrendRunState("failed");
+        setTrendRunMessage(`Trend status check failed: ${e?.message || "unknown error"}`);
+        clearInterval(timer);
+      }
+    }, intervalMs);
   };
 
   const onViewResults = async () => {
@@ -256,6 +308,21 @@ export default function TrendAnalysisView() {
 
         {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</div>}
         {message && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-3">{message}</div>}
+        {trendRunState !== "idle" && (
+          <div
+            className={`text-sm rounded p-3 border ${
+              trendRunState === "completed"
+                ? "text-green-700 bg-green-50 border-green-200"
+                : trendRunState === "empty"
+                  ? "text-amber-700 bg-amber-50 border-amber-200"
+                  : trendRunState === "failed"
+                    ? "text-red-700 bg-red-50 border-red-200"
+                    : "text-blue-700 bg-blue-50 border-blue-200"
+            }`}
+          >
+            {trendRunMessage}
+          </div>
+        )}
 
         <button
           type="button"
