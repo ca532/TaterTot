@@ -124,13 +124,56 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
         )}
 
         {report?.success && report.summary && (
-          <div className="mt-4 p-3 bg-white rounded border border-gray-200">
-            <h4 className="font-semibold mb-2">Validation Report</h4>
-            <p className="text-sm">{report.summary.summary_text}</p>
+          <div className="mt-4">
+            <div className="p-3 bg-white rounded border border-gray-200 mb-3">
+              <h4 className="font-semibold mb-2">Validation Report</h4>
+              <p className="text-sm mb-2">{report.summary.summary_text}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-sm">
+                <div>Total: <span className="font-semibold">{report.summary.total}</span></div>
+                <div>Valid sitemap: <span className="font-semibold">{report.summary.valid_sitemap}</span></div>
+                <div>Valid RSS: <span className="font-semibold">{report.summary.valid_rss}</span></div>
+                <div>Both valid: <span className="font-semibold">{report.summary.both_valid}</span></div>
+                <div>Neither valid: <span className="font-semibold">{report.summary.neither_valid}</span></div>
+              </div>
+            </div>
+
+            {(report.details || []).length > 0 && (
+              <div className="overflow-auto border rounded-lg bg-white">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="p-2 text-left">Publication</th>
+                      <th className="p-2 text-left">Base URL</th>
+                      <th className="p-2 text-left">Sitemap URL</th>
+                      <th className="p-2 text-left">Sitemap Valid</th>
+                      <th className="p-2 text-left">Sitemap Reason</th>
+                      <th className="p-2 text-left">RSS URL</th>
+                      <th className="p-2 text-left">RSS Valid</th>
+                      <th className="p-2 text-left">RSS Reason</th>
+                      <th className="p-2 text-left">Active After</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.details.map((r, idx) => (
+                      <tr key={`${r.publication || "pub"}-${idx}`} className="border-t">
+                        <td className="p-2">{r.publication || "-"}</td>
+                        <td className="p-2">{r.base_url || "-"}</td>
+                        <td className="p-2">{r.sitemap_url || "-"}</td>
+                        <td className="p-2">{String(r.sitemap_valid || "-")}</td>
+                        <td className="p-2">{r.sitemap_reason || "-"}</td>
+                        <td className="p-2">{r.rss_url || "-"}</td>
+                        <td className="p-2">{String(r.rss_valid || "-")}</td>
+                        <td className="p-2">{r.rss_reason || "-"}</td>
+                        <td className="p-2">{r.active_after || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
   );
 }
-
