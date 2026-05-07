@@ -43,6 +43,10 @@ def _parse_topic() -> str:
     return raw if raw in {"finance", "luxury"} else "finance"
 
 
+def _parse_source_list_name() -> str:
+    return os.getenv("SOURCE_LIST_NAME", "").strip()
+
+
 class PipelineRunner:
     """
     Main pipeline orchestrator
@@ -59,8 +63,11 @@ class PipelineRunner:
         # Initialize your agents
         print("🤖 Initializing Article Collector...")
         self.topic = _parse_topic()
+        self.source_list_name = _parse_source_list_name()
         print(f"Using topic: {self.topic}")
-        self.collector = CustomArticleCollector(topic=self.topic)
+        if self.source_list_name:
+            print(f"Using source list: {self.source_list_name}")
+        self.collector = CustomArticleCollector(topic=self.topic, source_list_name=self.source_list_name or None)
 
         
         override_keywords = _parse_keywords_override()

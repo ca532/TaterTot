@@ -351,6 +351,61 @@ class PipelineService {
     }
   }
 
+  async getSourceLists() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/lists`, { method: "GET" });
+      if (!res.ok) return { success: false, lists: [] };
+      const data = await res.json();
+      return { success: true, lists: data.lists || [] };
+    } catch (err) {
+      return { success: false, error: err.message, lists: [] };
+    }
+  }
+
+  async createSourceList(payload) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/lists`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async runSourceMetadata(listName) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/metadata/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ list_name: listName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, result: data.result };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getSourceMetadataReport(listName, runId = "") {
+    try {
+      const query = runId
+        ? `?list_name=${encodeURIComponent(listName)}&run_id=${encodeURIComponent(runId)}`
+        : `?list_name=${encodeURIComponent(listName)}`;
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/metadata/report${query}`, { method: "GET" });
+      if (!res.ok) return { success: false, summary: null, details: [] };
+      const data = await res.json();
+      return { success: true, summary: data.summary, details: data.details || [] };
+    } catch (err) {
+      return { success: false, error: err.message, summary: null, details: [] };
+    }
+  }
+
   // Backward compatibility if anything else still calls this
   async getWorkflowRuns() {
     return [];

@@ -72,7 +72,7 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     pollRef.current = setInterval(pollStatus, 10000);
   };
 
-  const triggerRun = async ({ canRun, reason }) => {
+  const triggerRun = async ({ canRun, reason, listName }) => {
     if (!canRun) {
       setErrorMessage(reason || "Pipeline cannot run right now.");
       return { success: false, error: reason || "Rate limit active" };
@@ -86,7 +86,15 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     }
     setErrorMessage(null);
 
-    const payload = keywords.length > 0 ? { keywords, topic } : { topic };
+    if (!listName || !String(listName).trim()) {
+      const msg = "Please select a publication list.";
+      setErrorMessage(msg);
+      return { success: false, error: msg };
+    }
+
+    const payload = keywords.length > 0
+      ? { keywords, topic, list_name: listName }
+      : { topic, list_name: listName };
     const result = await githubAPI.triggerPipeline(payload);
     if (!result.success) {
       setRunStatus("idle");

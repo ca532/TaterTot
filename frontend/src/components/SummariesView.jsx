@@ -21,6 +21,13 @@ function SummariesView() {
   const [lastRunTime, setLastRunTime] = useState(null);
   const [pdfLink, setPdfLink] = useState(null);
   const [rateLimitInfo, setRateLimitInfo] = useState(null);
+  const [sourceLists, setSourceLists] = useState([]);
+  const [selectedListName, setSelectedListName] = useState("");
+  const [newListName, setNewListName] = useState("");
+  const [sourceRowsText, setSourceRowsText] = useState("");
+  const [sourceReportSummary, setSourceReportSummary] = useState(null);
+  const [sourceReportDetails, setSourceReportDetails] = useState([]);
+  const [isRunningSourceMetadata, setIsRunningSourceMetadata] = useState(false);
 
   const updateRateLimitInfo = () => {
     const info = rateLimitService.canRunPipeline();
@@ -72,6 +79,81 @@ function SummariesView() {
   };
 
   const articleIdFromUrl = (url) => githubAPI.normalizeUrlForId(url);
+
+  const loadSourceLists = async () => {
+    const res = await githubAPI.getSourceLists();
+    if (!res.success) return;
+    setSourceLists(res.lists || []);
+    if (!selectedListName && (res.lists || []).length > 0) {
+      setSelectedListName(res.lists[0].list_name);
+    }
+  };
+
+  const parseSourceRows = (text) => {
+    const lines = (text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+      const firstComma = line.indexOf(",");
+      if (firstComma === -1) {
+        out.push({ base_url: line.trim(), rss_url: "" });
+      } else {
+        out.push({
+          base_url: line.slice(0, firstComma).trim(),
+          rss_url: line.slice(firstComma + 1).trim(),
+        });
+      }
+    }
+    return out;
+  };
+
+  const handleCreateSourceList = async () => {
+    const listName = (newListName || "").trim();
+    if (!listName) {
+      alert("Enter list name.");
+      return;
+    }
+    const sources = parseSourceRows(sourceRowsText);
+    if (!sources.length) {
+      alert("Enter at least one source row: base_url, rss_url");
+      return;
+    }
+
+    const res = await githubAPI.createSourceList({ list_name: listName, sources });
+    if (!res.success) {
+      alert(`Create list failed: ${res.error || "unknown error"}`);
+      return;
+    }
+
+    alert(`Added ${res.inserted} rows to ${res.list_name}`);
+    setNewListName("");
+    setSourceRowsText("");
+    await loadSourceLists();
+    setSelectedListName(listName);
+  };
+
+  const handleRunSourceMetadata = async () => {
+    if (!selectedListName) {
+      alert("Select a list first.");
+      return;
+    }
+    setIsRunningSourceMetadata(true);
+    try {
+      const run = await githubAPI.runSourceMetadata(selectedListName);
+      if (!run.success) {
+        alert(`Metadata run failed: ${run.error || "unknown error"}`);
+        return;
+      }
+      const report = await githubAPI.getSourceMetadataReport(selectedListName, run.result?.run_id || "");
+      if (!report.success) {
+        alert("Run finished, but report fetch failed.");
+        return;
+      }
+      setSourceReportSummary(report.summary);
+      setSourceReportDetails(report.details || []);
+    } finally {
+      setIsRunningSourceMetadata(false);
+    }
+  };
 
   const loadCurrentWeekStars = async () => {
     const res = await githubAPI.getCurrentWeekStars();
@@ -190,6 +272,7 @@ function SummariesView() {
     checkForPDF();
     loadLastRunDate();
     syncRateLimitFromBackend();
+    loadSourceLists();
   }, []);
 
   useEffect(() => {
@@ -214,6 +297,7 @@ const handleRunPipeline = async () => {
   const result = await triggerRun({
     canRun: rateLimitCheck.canRun,
     reason: rateLimitCheck.reason,
+    listName: selectedListName,
   });
 
   if (!result.success) {
@@ -318,6 +402,60 @@ const handleRunPipeline = async () => {
           Click the button below to collect and summarize the latest articles from your publications.
         </p>
 
+        <div className="w-full max-w-3xl mx-auto mb-6 p-4 border-2 border-[#b8860b] rounded-lg bg-[#faf8f3] text-left">
+          <h3 className="text-base font-bold mb-3">Publication Source Lists</h3>
+
+          <label className="block text-sm font-semibold mb-1">New List Name</label>
+          <input
+            value={newListName}
+            onChange={(e) => setNewListName(e.target.value)}
+            className="w-full p-2 border border-gray-300 rounded mb-2"
+            placeholder="e.g. finance_may"
+          />
+
+          <label className="block text-sm font-semibold mb-1">Sources (one per line: base_url, rss_url)</label>
+          <textarea
+            value={sourceRowsText}
+            onChange={(e) => setSourceRowsText(e.target.value)}
+            rows={4}
+            className="w-full p-2 border border-gray-300 rounded mb-2"
+            placeholder={"https://site1.com, https://site1.com/feed\nhttps://site2.com,"}
+          />
+
+          <button
+            type="button"
+            onClick={handleCreateSourceList}
+            className="px-4 py-2 bg-[#b8860b] text-black font-semibold rounded"
+          >
+            Save Source List
+          </button>
+
+          <hr className="my-4" />
+
+          <label className="block text-sm font-semibold mb-1">Select Existing List</label>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select
+              value={selectedListName}
+              onChange={(e) => setSelectedListName(e.target.value)}
+              className="w-full sm:flex-1 p-2 border border-gray-300 rounded"
+            >
+              {sourceLists.map((s) => (
+                <option key={s.list_name} value={s.list_name}>
+                  {s.list_name} ({s.active_rows}/{s.total_rows} active)
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleRunSourceMetadata}
+              disabled={!selectedListName || isRunningSourceMetadata}
+              className="px-4 py-2 bg-[#b8860b] text-black font-semibold rounded disabled:opacity-60"
+            >
+              {isRunningSourceMetadata ? "Checking..." : "Run Metadata Check"}
+            </button>
+          </div>
+        </div>
+
         <PipelineStatusCard runStatus={runStatus} errorMessage={errorMessage} topic={topic} />
 
         <RunActions
@@ -344,6 +482,46 @@ const handleRunPipeline = async () => {
       </div>
 
       <StatsCards lastRunTime={lastRunTime} />
+
+      {sourceReportSummary && (
+        <div className="mb-4 p-4 border rounded-lg bg-white">
+          <h3 className="font-bold mb-2">Source Validation Report</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-sm">
+            <div>Total: <span className="font-semibold">{sourceReportSummary.total}</span></div>
+            <div>Valid sitemap: <span className="font-semibold">{sourceReportSummary.valid_sitemap}</span></div>
+            <div>Valid RSS: <span className="font-semibold">{sourceReportSummary.valid_rss}</span></div>
+            <div>Both valid: <span className="font-semibold">{sourceReportSummary.both_valid}</span></div>
+            <div>Neither valid: <span className="font-semibold">{sourceReportSummary.neither_valid}</span></div>
+          </div>
+        </div>
+      )}
+
+      {sourceReportDetails.length > 0 && (
+        <div className="mb-8 overflow-auto border rounded-lg bg-white">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="p-2 text-left">Publication</th>
+                <th className="p-2 text-left">Sitemap</th>
+                <th className="p-2 text-left">Sitemap Valid</th>
+                <th className="p-2 text-left">RSS Valid</th>
+                <th className="p-2 text-left">Active After</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sourceReportDetails.map((r, idx) => (
+                <tr key={`${r.publication || "pub"}-${idx}`} className="border-t">
+                  <td className="p-2">{r.publication}</td>
+                  <td className="p-2">{r.sitemap_url}</td>
+                  <td className="p-2">{r.sitemap_valid}</td>
+                  <td className="p-2">{r.rss_valid}</td>
+                  <td className="p-2">{r.active_after}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="bg-gradient-to-br from-[#faf8f3] to-[#f5f1e6] rounded-lg p-4 sm:p-6 border-2 border-[#b8860b] shadow-lg">
         <h3 className="text-lg font-bold text-gray-900 mb-3">How it works</h3>

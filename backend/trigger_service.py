@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
+from publication_metadata_pipeline import run_publication_metadata_pipeline
 
 app = FastAPI()
 
@@ -67,6 +68,8 @@ GITHUB_API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS")
 STARRED_SHEET_NAME = os.environ.get("STARRED_SHEET_NAME", "Starred Summaries")
+SOURCE_CONFIG_SHEET = os.environ.get("SOURCE_CONFIG_SHEET", "Source Lists")
+SOURCE_REPORT_DETAIL_SHEET = os.environ.get("SOURCE_REPORT_DETAIL_SHEET", "Source Validation Details")
 STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
 DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
 GITHUB_TERMINAL_POLL_SECONDS = int(os.environ.get("GITHUB_TERMINAL_POLL_SECONDS", "60"))
@@ -96,6 +99,7 @@ GH_TERMINAL_CACHE = {
 class TriggerRequest(BaseModel):
     keywords: Optional[List[str]] = None
     topic: Literal["finance", "luxury"] = "finance"
+    list_name: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -121,6 +125,20 @@ class StarDeleteRequest(BaseModel):
     article_id: str
     week_key: Optional[str] = None
     user: Optional[str] = "default"
+
+
+class SourceRowInput(BaseModel):
+    base_url: str
+    rss_url: Optional[str] = ""
+
+
+class SourceListCreateRequest(BaseModel):
+    list_name: str
+    sources: List[SourceRowInput]
+
+
+class SourceMetadataRunRequest(BaseModel):
+    list_name: str
 
 
 class TrendTriggerRequest(BaseModel):
@@ -356,6 +374,44 @@ def _metadata_get(key: str) -> Optional[str]:
     except Exception:
         return None
     return None
+
+
+def _ensure_ws_headers(ws, headers: list[str]) -> None:
+    vals = ws.get_all_values()
+    if not vals:
+        ws.append_row(headers)
+        return
+    if vals[0] != headers:
+        ws.update("A1", [headers])
+
+
+def _is_valid_url(u: str) -> bool:
+    try:
+        p = urlparse((u or "").strip())
+        return p.scheme in {"http", "https"} and bool(p.netloc)
+    except Exception:
+        return False
+
+
+def _title_from_base_url(base_url: str) -> str:
+    host = urlparse((base_url or "").strip()).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    root = host.split(".")[0] if host else "Publication"
+    return root.replace("-", " ").replace("_", " ").title() or "Publication"
+
+
+def _has_active_source_rows(list_name: str) -> bool:
+    ln = (list_name or "").strip()
+    if not ln:
+        return False
+    ss = _load_main_spreadsheet()
+    ws = ss.worksheet(SOURCE_CONFIG_SHEET)
+    rows = ws.get_all_records()
+    for r in rows:
+        if str(r.get("list_name", "")).strip() == ln and str(r.get("active", "TRUE")).upper() == "TRUE":
+            return True
+    return False
 
 
 @app.post("/auth/login")
@@ -837,12 +893,16 @@ def trigger_pipeline(req: TriggerRequest, response: Response, authorization: str
         url = f"{GITHUB_API_BASE}/actions/workflows/{GITHUB_WORKFLOW}/dispatches"
         topic = _normalize_topic(req.topic)
         keywords = _normalize_keywords(req.keywords)
+        list_name = (req.list_name or "").strip()
+        if list_name and not _has_active_source_rows(list_name):
+            raise HTTPException(status_code=400, detail=f"list_name '{list_name}' not found or has no active rows")
         body = {
             "ref": GITHUB_REF,
             "inputs": {
                 "test_mode": "false",
                 "keywords": ",".join(keywords),
                 "topic": topic,
+                "list_name": list_name,
             },
         }
 
@@ -1163,3 +1223,127 @@ def get_latest_trends(authorization: str = Header(default="")):
     if not rid:
         return {"trend_run_id": None, "count": 0, "trends": []}
     return get_trends_by_run(run_id=rid, authorization=authorization)
+
+
+@app.post("/sources/lists")
+def create_source_list(req: SourceListCreateRequest, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    list_name = (req.list_name or "").strip()
+    if not list_name:
+        raise HTTPException(status_code=400, detail="list_name is required")
+    if not req.sources:
+        raise HTTPException(status_code=400, detail="sources is required")
+
+    ss = _load_main_spreadsheet()
+    ws = ss.worksheet(SOURCE_CONFIG_SHEET)
+    _ensure_ws_headers(ws, ["list_name", "publication", "base_url", "sitemap_url", "rss_url", "active", "date_added"])
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rows = []
+    for s in req.sources:
+        base_url = (s.base_url or "").strip()
+        rss_url = (s.rss_url or "").strip()
+        if not _is_valid_url(base_url):
+            raise HTTPException(status_code=400, detail=f"Invalid base_url: {base_url}")
+        if rss_url and not _is_valid_url(rss_url):
+            raise HTTPException(status_code=400, detail=f"Invalid rss_url: {rss_url}")
+
+        rows.append([
+            list_name,
+            _title_from_base_url(base_url),
+            base_url,
+            "",
+            rss_url,
+            "TRUE",
+            today
+        ])
+
+    ws.append_rows(rows, value_input_option="USER_ENTERED")
+    return {"ok": True, "list_name": list_name, "inserted": len(rows)}
+
+
+@app.get("/sources/lists")
+def get_source_lists(authorization: str = Header(default="")):
+    _check_auth(authorization)
+    ss = _load_main_spreadsheet()
+    ws = ss.worksheet(SOURCE_CONFIG_SHEET)
+    rows = ws.get_all_records()
+
+    agg = {}
+    for r in rows:
+        ln = str(r.get("list_name", "")).strip()
+        if not ln:
+            continue
+        active = str(r.get("active", "TRUE")).upper() == "TRUE"
+        if ln not in agg:
+            agg[ln] = {"list_name": ln, "total_rows": 0, "active_rows": 0}
+        agg[ln]["total_rows"] += 1
+        if active:
+            agg[ln]["active_rows"] += 1
+
+    return {"ok": True, "lists": sorted(agg.values(), key=lambda x: x["list_name"].lower())}
+
+
+@app.post("/sources/metadata/run")
+def run_sources_metadata(req: SourceMetadataRunRequest, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    list_name = (req.list_name or "").strip()
+    if not list_name:
+        raise HTTPException(status_code=400, detail="list_name is required")
+    try:
+        result = run_publication_metadata_pipeline(list_name)
+        return {"ok": True, "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"source metadata run failed: {e}")
+
+
+@app.get("/sources/metadata/report")
+def get_sources_metadata_report(list_name: str, run_id: Optional[str] = None, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    ln = (list_name or "").strip()
+    if not ln:
+        raise HTTPException(status_code=400, detail="list_name is required")
+
+    ss = _load_main_spreadsheet()
+    ws = ss.worksheet(SOURCE_REPORT_DETAIL_SHEET)
+    rows = ws.get_all_records()
+
+    scoped = [r for r in rows if str(r.get("list_name", "")).strip() == ln]
+    if run_id:
+        rid = run_id.strip()
+        scoped = [r for r in scoped if str(r.get("run_id", "")).strip() == rid]
+    elif scoped:
+        latest = str(scoped[-1].get("run_id", "")).strip()
+        scoped = [r for r in scoped if str(r.get("run_id", "")).strip() == latest]
+
+    total = len(scoped)
+    valid_sitemap = sum(1 for r in scoped if str(r.get("sitemap_valid", "")).lower() == "true")
+    valid_rss = sum(1 for r in scoped if str(r.get("rss_valid", "")).lower() == "true")
+    both_valid = sum(
+        1
+        for r in scoped
+        if str(r.get("sitemap_valid", "")).lower() == "true" and str(r.get("rss_valid", "")).lower() == "true"
+    )
+    neither_valid = sum(
+        1
+        for r in scoped
+        if str(r.get("sitemap_valid", "")).lower() != "true" and str(r.get("rss_valid", "")).lower() != "true"
+    )
+
+    summary_text = (
+        f"Total: {total} | Valid sitemap: {valid_sitemap} | Valid RSS: {valid_rss} | "
+        f"Both valid: {both_valid} | Neither valid: {neither_valid}"
+    )
+
+    return {
+        "ok": True,
+        "summary": {
+            "total": total,
+            "valid_sitemap": valid_sitemap,
+            "valid_rss": valid_rss,
+            "both_valid": both_valid,
+            "neither_valid": neither_valid,
+            "summary_text": summary_text,
+        },
+        "details": scoped,
+    }

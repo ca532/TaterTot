@@ -20,6 +20,11 @@ on:
         default: "finance"
         type: choice
         options: ["finance", "luxury"]
+      list_name:
+        description: "Source list name from Source Lists sheet (optional)"
+        required: false
+        default: ""
+        type: string
 
 
 concurrency:
@@ -97,6 +102,7 @@ jobs:
           TEST_MODE: ${{ github.event.inputs.test_mode }}
           KEYWORDS_OVERRIDE: ${{ github.event.inputs.keywords }}
           TOPIC: ${{ github.event.inputs.topic }}
+          SOURCE_LIST_NAME: ${{ github.event.inputs.list_name }}
           SUMMARIZER_MODEL: google/flan-t5-base
 
 

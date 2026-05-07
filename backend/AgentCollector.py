@@ -8,6 +8,9 @@ import re
 from urllib.parse import urlparse, urljoin
 import time
 import json
+import os
+import gspread
+from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 import random
@@ -51,9 +54,10 @@ class ArticleCandidate:
     candidate_source: str = "unknown"
 
 class CustomArticleCollector:
-    def __init__(self, topic: str = "finance"):
+    def __init__(self, topic: str = "finance", source_list_name: str = None):
         """Initialize collector with your specific sources and keywords"""
         self.topic = (topic or "finance").strip().lower()
+        self.source_list_name = (source_list_name or "").strip()
         if self.topic not in {"finance", "luxury"}:
             self.topic = "finance"
         
@@ -585,6 +589,11 @@ class CustomArticleCollector:
             self.keyword_weight_map = self.finance_keyword_weight_map
             self.keyword_combo_bonuses = self.finance_combo_bonuses
 
+        sheet_sources = self._load_sources_from_sheet()
+        if sheet_sources:
+            self.target_sources = sheet_sources
+            print(f"✅ Loaded {len(self.target_sources)} active sources from list '{self.source_list_name}'")
+
         # Cap behavior: keep dynamic caps for finance, fixed cap for luxury.
         self.use_dynamic_caps = (self.topic != "luxury")
         # Evaluate a few extra candidates past cap, then trim by full-content score.
@@ -635,6 +644,51 @@ class CustomArticleCollector:
         self.max_delay_between_requests = 5.0
         self.requests_per_source = 0
         self.max_requests_per_minute = 20
+
+    def _load_sources_from_sheet(self):
+        if not self.source_list_name:
+            return None
+        sheet_id = os.getenv("GOOGLE_SHEET_ID")
+        creds_json = os.getenv("GOOGLE_CREDENTIALS")
+        if not sheet_id or not creds_json:
+            print("⚠️ Missing GOOGLE_SHEET_ID/GOOGLE_CREDENTIALS for source list load; using defaults")
+            return None
+
+        try:
+            scope = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive",
+            ]
+            creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scope)
+            client = gspread.authorize(creds)
+            ss = client.open_by_key(sheet_id)
+            ws = ss.worksheet(os.getenv("SOURCE_CONFIG_SHEET", "Source Lists"))
+            rows = ws.get_all_records()
+        except Exception as e:
+            print(f"⚠️ Could not load source list '{self.source_list_name}': {e}")
+            return None
+
+        scoped = [
+            r for r in rows
+            if str(r.get("list_name", "")).strip() == self.source_list_name
+            and str(r.get("active", "TRUE")).upper() == "TRUE"
+        ]
+        if not scoped:
+            print(f"⚠️ No active rows for source list '{self.source_list_name}', using defaults")
+            return None
+
+        out = {}
+        for r in scoped:
+            publication = str(r.get("publication", "")).strip() or "Unknown"
+            base_url = str(r.get("base_url", "")).strip()
+            sitemap_url = str(r.get("sitemap_url", "")).strip() or None
+            rss_url = str(r.get("rss_url", "")).strip()
+            out[publication] = {
+                "base_url": base_url,
+                "rss_feeds": [rss_url] if rss_url else [],
+                "sitemap_url": sitemap_url,
+            }
+        return out
 
     def _build_luxury_keyword_weight_map(self) -> Dict[str, float]:
         return {
