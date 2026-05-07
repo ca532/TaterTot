@@ -5,7 +5,7 @@ import feedparser
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
-from google_storage import GoogleSheetsDB
+from backend.google_storage import GoogleSheetsDB
 
 SOURCE_SHEET = os.getenv("SOURCE_CONFIG_SHEET", "Source Lists")
 DETAIL_SHEET = os.getenv("SOURCE_REPORT_DETAIL_SHEET", "Source Validation Details")
