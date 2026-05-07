@@ -146,10 +146,8 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
                       <th className="p-2 text-left">Base URL</th>
                       <th className="p-2 text-left">Sitemap URL</th>
                       <th className="p-2 text-left">Sitemap Valid</th>
-                      <th className="p-2 text-left">Sitemap Reason</th>
                       <th className="p-2 text-left">RSS URL</th>
                       <th className="p-2 text-left">RSS Valid</th>
-                      <th className="p-2 text-left">RSS Reason</th>
                       <th className="p-2 text-left">Active After</th>
                     </tr>
                   </thead>
@@ -160,10 +158,8 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
                         <td className="p-2">{r.base_url || "-"}</td>
                         <td className="p-2">{r.sitemap_url || "-"}</td>
                         <td className="p-2">{String(r.sitemap_valid || "-")}</td>
-                        <td className="p-2">{r.sitemap_reason || "-"}</td>
                         <td className="p-2">{r.rss_url || "-"}</td>
                         <td className="p-2">{String(r.rss_valid || "-")}</td>
-                        <td className="p-2">{r.rss_reason || "-"}</td>
                         <td className="p-2">{r.active_after || "-"}</td>
                       </tr>
                     ))}
