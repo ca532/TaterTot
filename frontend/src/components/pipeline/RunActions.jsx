@@ -1,8 +1,6 @@
 import { Play, FileText, Download } from "lucide-react";
 
 export default function RunActions({
-  topic,
-  setTopic,
   keywordsInput,
   setKeywordsInput,
   onRunPipeline,
@@ -13,7 +11,6 @@ export default function RunActions({
   runDisabledReason,
   viewResultsDisabled = false,
   viewResultsLabel = "View Results",
-  showTopicSelector = true,
 }) {
   const keywordCount = keywordsInput
     .split(",")
@@ -38,26 +35,6 @@ export default function RunActions({
 
   return (
     <>
-      {showTopicSelector && <div className="w-full max-w-3xl mx-auto mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Topic</label>
-        <div className="inline-flex w-full sm:w-auto rounded-lg border border-gray-300 overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setTopic("finance")}
-            className={`px-4 py-2 text-sm font-semibold ${topic === "finance" ? "bg-[#b8860b] text-black" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-          >
-            Finance
-          </button>
-          <button
-            type="button"
-            onClick={() => setTopic("luxury")}
-            className={`px-4 py-2 text-sm font-semibold border-l border-gray-300 ${topic === "luxury" ? "bg-[#b8860b] text-black" : "bg-white text-gray-700 hover:bg-gray-50"}`}
-          >
-            Luxury
-          </button>
-        </div>
-      </div>}
-
       <div className="w-full max-w-3xl mx-auto mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">Keywords (optional)</label>
         <textarea

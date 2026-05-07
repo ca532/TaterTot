@@ -184,8 +184,6 @@ function SummariesView() {
     errorMessage,
     keywordsInput,
     setKeywordsInput,
-    topic,
-    setTopic,
     triggerRun,
   } = usePipelineRunner({
     onSuccess: async () => {
@@ -372,18 +370,19 @@ const handleRunPipeline = async () => {
           </select>
         </div>
 
-        <PipelineStatusCard runStatus={runStatus} errorMessage={errorMessage} topic={topic} />
+        <PipelineStatusCard
+          runStatus={runStatus}
+          errorMessage={errorMessage}
+          selectedListName={selectedListName}
+        />
 
         <RunActions
-          topic={topic}
-          setTopic={setTopic}
           keywordsInput={keywordsInput}
           setKeywordsInput={setKeywordsInput}
           onRunPipeline={handleRunPipeline}
           onViewResults={handleViewResults}
           onDownloadPDF={handleDownloadPDF}
           hasPDF={!!pdfLink}
-          showTopicSelector={false}
           runDisabled={rateLimitInfo && !rateLimitInfo.canRun}
           runDisabledReason={rateLimitInfo?.reason}
           viewResultsDisabled={isViewingResults}

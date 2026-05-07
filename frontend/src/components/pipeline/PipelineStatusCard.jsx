@@ -8,10 +8,13 @@ const LABELS = {
   failed: "Failed",
 };
 
-export default function PipelineStatusCard({ runStatus, errorMessage, topic = "finance" }) {
+export default function PipelineStatusCard({
+  runStatus,
+  errorMessage,
+  selectedListName = "",
+}) {
   const isActive = runStatus === "queued" || runStatus === "running";
   const isFailed = runStatus === "failed";
-  const topicLabel = topic === "luxury" ? "Luxury" : "Finance";
 
   return (
     <div className="mb-4 flex flex-col items-center gap-2">
@@ -22,9 +25,11 @@ export default function PipelineStatusCard({ runStatus, errorMessage, topic = "f
           }`}
         />
         <span className="text-xs font-semibold text-gray-700">{LABELS[runStatus] || "Ready"}</span>
-        <span className="text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-[#f5f1e6] text-[#6b4e06] border border-[#e5d8b5]">
-          {topicLabel}
-        </span>
+        {selectedListName && (
+          <span className="text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-[#f5f1e6] text-[#6b4e06] border border-[#e5d8b5]">
+            {selectedListName}
+          </span>
+        )}
       </div>
 
       {errorMessage && (
