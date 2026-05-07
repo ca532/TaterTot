@@ -386,7 +386,21 @@ class PipelineService {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
-      return { success: true, result: data.result };
+      return { success: true, job_id: data.job_id };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getSourceMetadataProgress(jobId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/sources/metadata/progress?job_id=${encodeURIComponent(jobId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
     } catch (err) {
       return { success: false, error: err.message };
     }

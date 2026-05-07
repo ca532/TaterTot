@@ -5,6 +5,7 @@ import time
 import asyncio
 import hashlib
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Optional, Literal
@@ -94,6 +95,9 @@ GH_TERMINAL_CACHE = {
     "conclusion": None,
     "run_id": None,
 }
+META_JOBS = {}
+META_JOBS_LOCK = threading.Lock()
+META_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
 class TriggerRequest(BaseModel):
@@ -139,6 +143,18 @@ class SourceListCreateRequest(BaseModel):
 
 class SourceMetadataRunRequest(BaseModel):
     list_name: str
+
+
+def _meta_job_set(job_id: str, **fields):
+    with META_JOBS_LOCK:
+        if job_id not in META_JOBS:
+            META_JOBS[job_id] = {}
+        META_JOBS[job_id].update(fields)
+
+
+def _meta_job_get(job_id: str):
+    with META_JOBS_LOCK:
+        return dict(META_JOBS.get(job_id, {}))
 
 
 class TrendTriggerRequest(BaseModel):
@@ -1290,11 +1306,64 @@ def run_sources_metadata(req: SourceMetadataRunRequest, authorization: str = Hea
     list_name = (req.list_name or "").strip()
     if not list_name:
         raise HTTPException(status_code=400, detail="list_name is required")
-    try:
-        result = run_publication_metadata_pipeline(list_name)
-        return {"ok": True, "result": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"source metadata run failed: {e}")
+
+    job_id = uuid.uuid4().hex
+    _meta_job_set(
+        job_id,
+        status="running",
+        phase="initializing",
+        current=0,
+        total=0,
+        message=f"Starting metadata check for '{list_name}'",
+        list_name=list_name,
+        report=None,
+        error=None,
+    )
+
+    def _runner():
+        try:
+            def _progress_cb(phase: str, current: int, total: int, message: str):
+                _meta_job_set(
+                    job_id,
+                    status="running",
+                    phase=phase or "running",
+                    current=int(current or 0),
+                    total=int(total or 0),
+                    message=message or "",
+                )
+
+            result = run_publication_metadata_pipeline(list_name, progress_callback=_progress_cb)
+            _meta_job_set(
+                job_id,
+                status="complete",
+                phase="complete",
+                current=int(result.get("total", 0)),
+                total=int(result.get("total", 0)),
+                message="Metadata check complete",
+                report=result,
+            )
+        except Exception as e:
+            _meta_job_set(
+                job_id,
+                status="failed",
+                phase="failed",
+                message=f"Metadata check failed: {str(e)}",
+                error=str(e),
+            )
+
+    META_EXECUTOR.submit(_runner)
+    return {"ok": True, "job_id": job_id}
+
+
+@app.get("/sources/metadata/progress")
+def get_sources_metadata_progress(job_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    if not job_id:
+        raise HTTPException(status_code=400, detail="job_id is required")
+    job = _meta_job_get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"ok": True, **job}
 
 
 @app.get("/sources/metadata/report")

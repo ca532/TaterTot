@@ -112,7 +112,14 @@ def ensure_headers(ws, headers):
         ws.update("A1", [headers])
 
 
-def run_publication_metadata_pipeline(list_name: str):
+def run_publication_metadata_pipeline(list_name: str, progress_callback=None):
+    def emit(phase: str, current: int, total_count: int, message: str):
+        if progress_callback:
+            try:
+                progress_callback(phase, current, total_count, message)
+            except Exception:
+                pass
+
     db = GoogleSheetsDB()
     ss = db.spreadsheet
 
@@ -133,21 +140,25 @@ def run_publication_metadata_pipeline(list_name: str):
     run_id = f"meta-{int(time.time())}"
 
     total = valid_sitemap = valid_rss = both_valid = neither_valid = 0
-
+    scoped_rows = []
     for row_num in range(2, len(all_vals) + 1):
         row = all_vals[row_num - 1]
         rec = {h: (row[idx[h]] if idx[h] < len(row) else "") for h in idx}
-
         if str(rec.get("list_name", "")).strip() != list_name:
             continue
         if str(rec.get("active", "TRUE")).upper() != "TRUE":
             continue
+        scoped_rows.append((row_num, rec))
 
+    emit("initializing", 0, len(scoped_rows), f"Loaded {len(scoped_rows)} active sources")
+
+    for i, (row_num, rec) in enumerate(scoped_rows, start=1):
         total += 1
         pub = str(rec.get("publication", "")).strip()
         base_url = str(rec.get("base_url", "")).strip()
         rss_url = str(rec.get("rss_url", "")).strip()
         bhost = host_of(base_url)
+        emit("validating", i, len(scoped_rows), f"Validating {pub or base_url}")
 
         sm_best = pick_best_sitemap(discover_sitemap_candidates(base_url), bhost)
         rss_ok, rss_reason, rss_final = validate_rss(rss_url, bhost)
@@ -177,6 +188,7 @@ def run_publication_metadata_pipeline(list_name: str):
             active_after, now_utc()
         ])
 
+    emit("complete", len(scoped_rows), len(scoped_rows), "Metadata validation complete")
     return {
         "run_id": run_id,
         "list_name": list_name,

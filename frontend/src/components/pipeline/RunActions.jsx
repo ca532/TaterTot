@@ -13,6 +13,7 @@ export default function RunActions({
   runDisabledReason,
   viewResultsDisabled = false,
   viewResultsLabel = "View Results",
+  showTopicSelector = true,
 }) {
   const keywordCount = keywordsInput
     .split(",")
@@ -37,7 +38,7 @@ export default function RunActions({
 
   return (
     <>
-      <div className="w-full max-w-3xl mx-auto mb-4">
+      {showTopicSelector && <div className="w-full max-w-3xl mx-auto mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">Topic</label>
         <div className="inline-flex w-full sm:w-auto rounded-lg border border-gray-300 overflow-hidden">
           <button
@@ -55,7 +56,7 @@ export default function RunActions({
             Luxury
           </button>
         </div>
-      </div>
+      </div>}
 
       <div className="w-full max-w-3xl mx-auto mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">Keywords (optional)</label>
