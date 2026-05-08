@@ -13,7 +13,7 @@ on:
       topic:
         description: "Topic for trend stopword profile"
         required: false
-        default: "luxury"
+        default: ""
       window_start_date:
         description: "Optional start date YYYY-MM-DD"
         required: false
@@ -34,6 +34,10 @@ on:
         description: "current_week | current_month | custom"
         required: false
         default: "current_month"
+      list_name:
+        description: "Source list name (optional)"
+        required: false
+        default: ""
 
 jobs:
   trend-analysis:
@@ -81,6 +85,7 @@ jobs:
           BASELINE_WEEKS: ${{ github.event.inputs.baseline_weeks }}
           TREND_RUN_ID: ${{ github.event.inputs.trend_run_id }}
           WINDOW_MODE: ${{ github.event.inputs.window_mode }}
+          LIST_NAME: ${{ github.event.inputs.list_name }}
           TREND_MIN_MENTIONS: "2"
           TREND_MIN_LIFT: "1.2"
           TREND_MIN_PUBLICATIONS: "1"
