@@ -66,12 +66,12 @@ class GoogleSheetsDB:
         if not sheet_id:
             raise ValueError("No Sheet ID provided. Set GOOGLE_SHEET_ID env variable or pass sheet_id parameter")
         
-                try:
+        try:
             last_err = None
             for i in range(5):
                 try:
                     self.spreadsheet = self.client.open_by_key(sheet_id)
-                    print(f"? Connected to Google Sheet: {self.spreadsheet.title}")
+                    print(f"✅ Connected to Google Sheet: {self.spreadsheet.title}")
                     break
                 except Exception as e:
                     last_err = e
