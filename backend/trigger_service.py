@@ -95,6 +95,7 @@ GH_TERMINAL_CACHE = {
     "conclusion": None,
     "run_id": None,
 }
+_META_CACHE = {"ts": 0.0, "data": {}}
 META_JOBS = {}
 META_JOBS_LOCK = threading.Lock()
 META_EXECUTOR = ThreadPoolExecutor(max_workers=2)
@@ -381,13 +382,20 @@ def _stars_rows(ws):
 
 
 def _metadata_get(key: str) -> Optional[str]:
+    now = time.time()
+    if now - _META_CACHE["ts"] < 10 and key in _META_CACHE["data"]:
+        return _META_CACHE["data"].get(key)
     try:
         spreadsheet = _load_main_spreadsheet()
         ws = spreadsheet.worksheet("Metadata")
         values = ws.get_all_values()
+        data = {}
         for row in values[1:]:
-            if row and len(row) >= 2 and str(row[0]).strip() == key:
-                return str(row[1]).strip()
+            if row and len(row) >= 2:
+                data[str(row[0]).strip()] = str(row[1]).strip()
+        _META_CACHE["ts"] = now
+        _META_CACHE["data"] = data
+        return data.get(key)
     except Exception:
         return None
     return None

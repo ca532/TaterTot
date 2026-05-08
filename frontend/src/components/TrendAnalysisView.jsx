@@ -139,9 +139,19 @@ export default function TrendAnalysisView() {
     console.log("[TREND_UI_TRIGGER_RESULT]", res);
 
     if (!res.success) {
-      setError(res.error || "Failed to trigger trend analysis workflow.");
+      const msg = String(res.error || "Failed to trigger trend analysis workflow.");
+      const isQuota = /429|quota|resource_exhausted|rate[_ -]?limit/i.test(msg);
+      if (isQuota) {
+        setError("Google Sheets is rate-limited right now. Please wait 1-2 minutes and retry.");
+      } else {
+        setError(msg);
+      }
       setTrendRunState("failed");
-      setTrendRunMessage(res.error || "Failed to trigger trend analysis workflow.");
+      setTrendRunMessage(
+        isQuota
+          ? "Temporarily rate-limited by Google Sheets. Retry shortly."
+          : msg
+      );
       return;
     }
     setLastWindowMode(windowMode);
@@ -164,8 +174,8 @@ export default function TrendAnalysisView() {
   const startTrendRunPolling = (runId) => {
     stopTrendPolling();
     let attempts = 0;
-    const maxAttempts = 36;
-    const intervalMs = 5000;
+    const maxAttempts = 180;
+    const intervalMs = 10000;
 
     setTrendRunState("running");
     setTrendRunMessage("Trend analysis is running...");
@@ -223,13 +233,22 @@ export default function TrendAnalysisView() {
         }
 
         if (attempts >= maxAttempts) {
-          setTrendRunState("empty");
-          setTrendRunMessage("Run timed out waiting for final status.");
-          stopTrendPolling();
+          setTrendRunState("running");
+          setTrendRunMessage("Still running. This is taking longer than usual; you can leave this page and check back.");
+          attempts = 0;
         }
       } catch (e) {
-        setTrendRunState("failed");
-        setTrendRunMessage(`Trend status check failed: ${e?.message || "unknown error"}`);
+        const msg = String(e?.message || "unknown error");
+        const isQuota = /429|quota|resource_exhausted|rate[_ -]?limit/i.test(msg);
+        setTrendRunState(isQuota ? "running" : "failed");
+        setTrendRunMessage(
+          isQuota
+            ? "Rate-limited while checking status. Auto-retrying..."
+            : `Trend status check failed: ${msg}`
+        );
+        if (isQuota) {
+          return;
+        }
         stopTrendPolling();
       }
     }, intervalMs);

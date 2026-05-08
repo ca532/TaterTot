@@ -8,6 +8,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import json
 import os
+import time
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -65,9 +66,22 @@ class GoogleSheetsDB:
         if not sheet_id:
             raise ValueError("No Sheet ID provided. Set GOOGLE_SHEET_ID env variable or pass sheet_id parameter")
         
-        try:
-            self.spreadsheet = self.client.open_by_key(sheet_id)
-            print(f"✅ Connected to Google Sheet: {self.spreadsheet.title}")
+                try:
+            last_err = None
+            for i in range(5):
+                try:
+                    self.spreadsheet = self.client.open_by_key(sheet_id)
+                    print(f"? Connected to Google Sheet: {self.spreadsheet.title}")
+                    break
+                except Exception as e:
+                    last_err = e
+                    msg = str(e)
+                    if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                        time.sleep(min(2 ** i, 20))
+                        continue
+                    raise
+            else:
+                raise last_err
         except Exception as e:
             raise ValueError(f"Failed to open spreadsheet with ID {sheet_id}: {str(e)}")
         
@@ -546,3 +560,5 @@ def test_connection():
 if __name__ == "__main__":
     # Run test when executed directly
     test_connection()
+
+
