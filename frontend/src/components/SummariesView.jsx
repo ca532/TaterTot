@@ -37,6 +37,9 @@ function SummariesView() {
       const status = await githubAPI.getLatestRunStatus();
       if (status) {
         rateLimitService.syncFromBackendStatus(status);
+        if (["success", "failed", "idle"].includes(String(status.status || "").toLowerCase())) {
+          rateLimitService.syncFromBackendStatus(status);
+        }
       }
     } catch (error) {
       console.error("Error syncing cooldown from backend:", error);
