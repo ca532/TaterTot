@@ -807,7 +807,7 @@ async def _broadcast_status(payload: dict) -> None:
                 WS_CLIENTS.discard(ws)
 
 
-async def _refresh_status_once() -> dict:
+async def _refresh_status_once(force_github: bool = False) -> dict:
     metadata = _read_metadata_map()
 
     pinned_run_id_raw = (metadata.get("current_pipeline_run_id") or "").strip()
@@ -835,6 +835,11 @@ async def _refresh_status_once() -> dict:
     except Exception:
         total = 0
 
+    gh_latest_run = None
+    gh_latest_status = None
+    gh_latest_conclusion = None
+    gh_latest_run_id = None
+
     if pinned_run_id is not None:
         status = pinned_status
         normalized_phase = (
@@ -849,21 +854,46 @@ async def _refresh_status_once() -> dict:
         if not message and status == "failed":
             message = f"Pipeline {pinned_conclusion or 'failed'}"
     else:
-        if phase in {"complete", "completed", "success", "done"}:
-            status = "success"
-            normalized_phase = "complete"
-        elif phase in {"failed", "error"}:
-            status = "failed"
-            normalized_phase = "failed"
-        elif phase in {"initializing", "collecting", "summarizing", "saving"}:
-            status = "running"
-            normalized_phase = phase
-        elif phase:
-            status = "running"
-            normalized_phase = phase
+        # Fallback to GitHub latest run when no pinned run id is available
+        try:
+            if force_github or True:
+                gh_latest_run = _get_latest_run()
+                gh_latest_status, gh_latest_conclusion = _normalize_status(gh_latest_run)
+                gh_latest_run_id = gh_latest_run.get("id") if gh_latest_run else None
+        except Exception as e:
+            if DEBUG_PROGRESS:
+                print(f"[WS_STATUS] github latest fallback error: {e}")
+
+        if gh_latest_status:
+            status = gh_latest_status
+            normalized_phase = (
+                "complete" if gh_latest_status == "success"
+                else "failed" if gh_latest_status == "failed"
+                else "collecting" if gh_latest_status in {"running", "in_progress"}
+                else "initializing" if gh_latest_status == "queued"
+                else "idle"
+            )
+            if not message and status == "success":
+                message = "Pipeline completed"
+            if not message and status == "failed":
+                message = f"Pipeline {gh_latest_conclusion or 'failed'}"
         else:
-            status = "idle"
-            normalized_phase = "idle"
+            # Last-resort metadata mapping
+            if phase in {"complete", "completed", "success", "done"}:
+                status = "success"
+                normalized_phase = "complete"
+            elif phase in {"failed", "error"}:
+                status = "failed"
+                normalized_phase = "failed"
+            elif phase in {"initializing", "collecting", "summarizing", "saving"}:
+                status = "running"
+                normalized_phase = phase
+            elif phase:
+                status = "running"
+                normalized_phase = phase
+            else:
+                status = "idle"
+                normalized_phase = "idle"
 
     meta_run_id = (metadata.get("latest_pipeline_run_id") or "").strip()
     if pinned_run_id is not None and meta_run_id and meta_run_id != str(pinned_run_id):
@@ -877,7 +907,11 @@ async def _refresh_status_once() -> dict:
         state["status"] = status
         if pinned_run_id is not None:
             state["last_run_id"] = pinned_run_id
+        elif gh_latest_run_id is not None:
+            state["last_run_id"] = gh_latest_run_id
         state["last_conclusion"] = pinned_conclusion
+        if pinned_run_id is None and gh_latest_conclusion is not None:
+            state["last_conclusion"] = gh_latest_conclusion
         _write_state(state)
         updated_at = state.get("last_updated_at")
 
@@ -887,8 +921,17 @@ async def _refresh_status_once() -> dict:
         "current": current,
         "total": total,
         "message": message,
-        "runId": pinned_run_id if pinned_run_id is not None else state.get("last_run_id"),
-        "conclusion": pinned_conclusion,
+        "runId": (
+            pinned_run_id
+            if pinned_run_id is not None
+            else gh_latest_run_id if gh_latest_run_id is not None
+            else state.get("last_run_id")
+        ),
+        "conclusion": (
+            pinned_conclusion
+            if pinned_conclusion is not None
+            else gh_latest_conclusion
+        ),
         "updatedAt": updated_at,
     }
     if DEBUG_PROGRESS:
@@ -1016,10 +1059,15 @@ async def pipeline_status(authorization: str = Header(default="")):
     async with STATUS_CACHE_LOCK:
         cached = dict(STATUS_CACHE)
     if not cached.get("updatedAt"):
-        cached = await _refresh_status_once()
+        cached = await _refresh_status_once(force_github=True)
+
+    # Heal stale cache: running without run id is invalid
+    if cached.get("status") in {"running", "queued", "in_progress"} and not cached.get("runId"):
+        cached = await _refresh_status_once(force_github=True)
 
     if cached.get("status") in {"success", "failed"}:
         _metadata_upsert("latest_pipeline_status", cached.get("status") or "")
+        _metadata_upsert("current_pipeline_run_id", "")
 
     with STATE_LOCK:
         state = _read_state()
