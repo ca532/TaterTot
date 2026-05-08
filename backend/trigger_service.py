@@ -393,6 +393,31 @@ def _metadata_get(key: str) -> Optional[str]:
     return None
 
 
+def _metadata_upsert(key: str, value: str) -> None:
+    try:
+        spreadsheet = _load_main_spreadsheet()
+        try:
+            ws = spreadsheet.worksheet("Metadata")
+        except Exception:
+            ws = spreadsheet.add_worksheet(title="Metadata", rows=100, cols=3)
+            ws.update(range_name="A1:C1", values=[["Key", "Value", "Updated"]])
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        values = ws.get_all_values()
+        row_idx = None
+        for i, row in enumerate(values[1:], start=2):
+            if row and len(row) >= 1 and str(row[0]).strip() == key:
+                row_idx = i
+                break
+
+        if row_idx:
+            ws.update(range_name=f"B{row_idx}:C{row_idx}", values=[[str(value), ts]])
+        else:
+            ws.append_row([key, str(value), ts], value_input_option="USER_ENTERED")
+    except Exception as e:
+        print(f"[TREND_METADATA_TRIGGER_WARN] key={key} err={e}")
+
+
 def _ensure_ws_headers(ws, headers: list[str]) -> None:
     vals = ws.get_all_values()
     if not vals:
@@ -1165,6 +1190,14 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
         f"week_key={week_key or '-'} start={window_start_date or '-'} end={window_end_date or '-'} "
         f"baseline_weeks={baseline_weeks} ref={GITHUB_REF}"
     )
+    _metadata_upsert("latest_trend_run_id", trend_run_id)
+    _metadata_upsert("latest_trend_status", "running")
+    _metadata_upsert("latest_trend_rows_written", "0")
+    _metadata_upsert("latest_trend_week_key", week_key or "")
+    _metadata_upsert("latest_trend_window_mode", window_mode)
+    _metadata_upsert("latest_trend_window_start", window_start_date or "")
+    _metadata_upsert("latest_trend_window_end", window_end_date or "")
+    _metadata_upsert("latest_trend_topic", topic)
 
     body = {
         "ref": GITHUB_REF,
@@ -1188,6 +1221,7 @@ def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authori
     )
     print(f"[TREND_TRIGGER_ACK] run_id={trend_run_id} status_code={r.status_code}")
     if r.status_code != 204:
+        _metadata_upsert("latest_trend_status", "failed")
         raise HTTPException(status_code=502, detail=f"GitHub trend dispatch failed: {r.status_code} {r.text}")
 
     response.status_code = 202

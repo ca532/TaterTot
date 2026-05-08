@@ -127,16 +127,42 @@ def compute_trends(
     baseline_weeks = max(1, int(baseline_weeks or 4))
 
     parsed_rows = []
+    parse_fail_count = 0
+    parse_fail_samples = []
+    parse_ok_samples = []
     by_week: Dict[str, List[Dict]] = defaultdict(list)
     for a in articles:
-        dt = parse_dt(str(a.get("collectedDate", "") or a.get("collected_date", "")))
+        raw_date = str(a.get("collectedDate", "") or a.get("collected_date", ""))
+        dt = parse_dt(raw_date)
         if not dt:
+            parse_fail_count += 1
+            if len(parse_fail_samples) < 12:
+                parse_fail_samples.append({
+                    "raw_collectedDate": raw_date,
+                    "title": (a.get("title") or "")[:100],
+                    "publication": (a.get("publication") or "")[:60],
+                })
             continue
         wk = iso_week_key(dt)
         by_week[wk].append(a)
         parsed_rows.append((a, dt, wk))
+        if len(parse_ok_samples) < 8:
+            parse_ok_samples.append({
+                "raw_collectedDate": raw_date,
+                "parsed_date": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "week_key": wk,
+            })
 
+    _tlog(
+        "DATE_PARSE",
+        total_articles=len(articles),
+        parsed_ok=len(parsed_rows),
+        parsed_fail=parse_fail_count,
+        ok_samples=parse_ok_samples,
+        fail_samples=parse_fail_samples,
+    )
     if not parsed_rows:
+        _tlog("EARLY_EXIT", reason="no_rows_after_date_parse")
         return []
 
     start_dt = _parse_yyyy_mm_dd(window_start_date)
@@ -165,6 +191,12 @@ def compute_trends(
         window_end_exclusive=str(end_dt.date()),
     )
     if not current_rows:
+        _tlog(
+            "EARLY_EXIT",
+            reason="no_rows_in_window",
+            window_start=str(start_dt.date()),
+            window_end_exclusive=str(end_dt.date()),
+        )
         return []
 
     sample_docs = []
