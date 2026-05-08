@@ -20,23 +20,24 @@ TOP_N = int(os.getenv("TREND_TOP_N", "25"))
 
 
 def ensure_trend_sheet(db: GoogleSheetsDB):
+    headers = [
+        "trend_run_id",
+        "week_key",
+        "keyword",
+        "count_current",
+        "baseline_4wk",
+        "pct_change",
+        "trend_score",
+        "publication_count",
+        "supporting_urls",
+        "status",
+        "window_mode",
+    ]
     try:
         ws = db.spreadsheet.worksheet(TREND_SHEET_NAME)
     except Exception:
         ws = db.spreadsheet.add_worksheet(title=TREND_SHEET_NAME, rows=2000, cols=12)
-        ws.update("A1:K1", [[
-            "trend_run_id",
-            "week_key",
-            "keyword",
-            "count_current",
-            "baseline_4wk",
-            "pct_change",
-            "trend_score",
-            "publication_count",
-            "supporting_urls",
-            "status",
-            "window_mode",
-        ]])
+    ws.update(range_name="A1:K1", values=[headers])
     return ws
 
 
@@ -57,7 +58,7 @@ def load_articles(db: GoogleSheetsDB):
 
 
 def upsert_run_rows(ws, trend_run_id: str, rows, window_mode: str):
-    all_vals = ws.get_all_values()
+    all_vals = ws.get("A:K")
     if len(all_vals) > 1:
         to_delete = []
         headers = all_vals[0]
@@ -84,7 +85,13 @@ def upsert_run_rows(ws, trend_run_id: str, rows, window_mode: str):
     ] for r in rows]
 
     if payload:
-        ws.append_rows(payload, value_input_option="USER_ENTERED")
+        table_vals = ws.get("A:K")
+        next_row = max(2, len(table_vals) + 1)
+        end_row = next_row + len(payload) - 1
+        ws.update(
+            range_name=f"A{next_row}:K{end_row}",
+            values=payload
+        )
 
 
 def upsert_metadata_key(db: GoogleSheetsDB, key: str, value: str):
@@ -119,6 +126,9 @@ def main():
         f"end={WINDOW_END_DATE or '-'} baseline_weeks={BASELINE_WEEKS}"
     )
     db = GoogleSheetsDB()
+    upsert_metadata_key(db, "latest_trend_run_id", TREND_RUN_ID)
+    upsert_metadata_key(db, "latest_trend_status", "running")
+    upsert_metadata_key(db, "latest_trend_rows_written", "0")
     ws = ensure_trend_sheet(db)
     articles = load_articles(db)
     print(f"[TREND_ARTICLES] total_articles_loaded={len(articles)}")
@@ -177,6 +187,8 @@ def main():
     upsert_metadata_key(db, "latest_trend_window_start", WINDOW_START_DATE or "")
     upsert_metadata_key(db, "latest_trend_window_end", WINDOW_END_DATE or "")
     upsert_metadata_key(db, "latest_trend_topic", TOPIC)
+    upsert_metadata_key(db, "latest_trend_rows_written", str(len(rows)))
+    upsert_metadata_key(db, "latest_trend_status", "complete")
     print(
         "[TREND_METADATA_WRITE] "
         f"latest_trend_run_id={TREND_RUN_ID} latest_trend_week_key={week_key} "

@@ -265,6 +265,20 @@ class PipelineService {
     }
   }
 
+  async getTrendRunStatus(runId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/trends/run-status?run_id=${encodeURIComponent(runId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   async downloadLatestArtifactZip() {
     const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
       method: "GET"

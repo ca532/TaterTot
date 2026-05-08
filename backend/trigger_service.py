@@ -358,7 +358,7 @@ def _read_metadata_map() -> dict:
 
 
 def _stars_rows(ws):
-    values = ws.get_all_values()
+    values = ws.get("A:K")
     if not values:
         return []
 
@@ -561,7 +561,7 @@ def delete_star(star_id: str, authorization: str = Header(default="")):
     _check_auth(authorization)
     ws = _load_stars_sheet()
 
-    values = ws.get_all_values()
+    values = ws.get("A:K")
     if not values:
         return {"ok": True, "deleted": False}
 
@@ -1248,6 +1248,38 @@ def get_latest_trends(authorization: str = Header(default="")):
     if not rid:
         return {"trend_run_id": None, "count": 0, "trends": []}
     return get_trends_by_run(run_id=rid, authorization=authorization)
+
+
+@app.get("/trends/run-status")
+def get_trend_run_status(run_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    rid = (run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    latest_rid = (_metadata_get("latest_trend_run_id") or "").strip()
+    latest_status = (_metadata_get("latest_trend_status") or "").strip().lower()
+    rows_written_raw = (_metadata_get("latest_trend_rows_written") or "0").strip()
+    try:
+        rows_written = int(rows_written_raw)
+    except Exception:
+        rows_written = 0
+
+    if latest_rid and rid != latest_rid:
+        return {
+            "run_id": rid,
+            "status": "stale",
+            "rows_written": 0,
+            "latest_run_id": latest_rid,
+        }
+
+    status = latest_status if latest_status in {"running", "complete", "failed"} else "running"
+    return {
+        "run_id": rid,
+        "status": status,
+        "rows_written": rows_written,
+        "latest_run_id": latest_rid or rid,
+    }
 
 
 @app.post("/sources/lists")

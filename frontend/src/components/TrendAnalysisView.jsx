@@ -162,7 +162,7 @@ export default function TrendAnalysisView() {
   const startTrendRunPolling = (runId) => {
     stopTrendPolling();
     let attempts = 0;
-    const maxAttempts = 60;
+    const maxAttempts = 36;
     const intervalMs = 5000;
 
     setTrendRunState("running");
@@ -172,26 +172,57 @@ export default function TrendAnalysisView() {
       attempts += 1;
       try {
         console.log("[TREND_UI_POLL]", { trendRunId: runId, attempt: attempts });
-        const data = await githubAPI.getTrendsByRun(runId);
-        const list = Array.isArray(data?.trends) ? data.trends : [];
-        const hasSentinel = list.some((t) => t.keyword === "__NO_TRENDS__" || t.status === "no_trends");
-        console.log("[TREND_UI_POLL_RESULT]", { count: list.length, hasSentinel });
-
-        if (list.length > 0) {
-          if (hasSentinel) {
-            setTrendRunState("empty");
-            setTrendRunMessage("Run completed, but no trends passed thresholds for this window.");
-          } else {
-            setTrendRunState("completed");
-            setTrendRunMessage(`Run completed with ${list.length} trend result(s).`);
+        const statusRes = await githubAPI.getTrendRunStatus(runId);
+        console.log("[TREND_UI_POLL_STATUS]", statusRes);
+        if (!statusRes?.success) {
+          const data = await githubAPI.getTrendsByRun(runId);
+          const list = Array.isArray(data?.trends) ? data.trends : [];
+          const hasSentinel = list.some((t) => t.keyword === "__NO_TRENDS__" || t.status === "no_trends");
+          if (list.length > 0 || hasSentinel) {
+            if (hasSentinel) {
+              setTrendRunState("empty");
+              setTrendRunMessage("Run completed, but no trends passed thresholds for this window.");
+            } else {
+              setTrendRunState("completed");
+              setTrendRunMessage(`Run completed with ${list.length} trend result(s).`);
+            }
+            stopTrendPolling();
+            return;
           }
-          stopTrendPolling();
-          return;
+        } else {
+          if (statusRes.status === "complete") {
+            const data = await githubAPI.getTrendsByRun(runId);
+            const list = Array.isArray(data?.trends) ? data.trends : [];
+            const hasSentinel = list.some((t) => t.keyword === "__NO_TRENDS__" || t.status === "no_trends");
+            if (hasSentinel || statusRes.rows_written === 0) {
+              setTrendRunState("empty");
+              setTrendRunMessage("Run completed, but no trends passed thresholds for this window.");
+            } else {
+              setTrendRunState("completed");
+              setTrendRunMessage(`Run completed with ${list.length} trend result(s).`);
+            }
+            stopTrendPolling();
+            return;
+          }
+
+          if (statusRes.status === "failed") {
+            setTrendRunState("failed");
+            setTrendRunMessage("Trend run failed. Check GitHub workflow logs.");
+            stopTrendPolling();
+            return;
+          }
+
+          if (statusRes.status === "stale") {
+            setTrendRunState("empty");
+            setTrendRunMessage("This run is no longer the latest tracked run.");
+            stopTrendPolling();
+            return;
+          }
         }
 
         if (attempts >= maxAttempts) {
-          setTrendRunState("failed");
-          setTrendRunMessage("Timed out waiting for trend results. Please check workflow logs.");
+          setTrendRunState("empty");
+          setTrendRunMessage("Run timed out waiting for final status.");
           stopTrendPolling();
         }
       } catch (e) {
