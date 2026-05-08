@@ -1,16 +1,30 @@
 import { ExternalLink, ArrowLeft, Calendar, Hash } from "lucide-react";
 
 function splitUrls(raw) {
-  return String(raw || "")
+  const arr = String(raw || "")
     .split("|")
     .map((x) => x.trim())
     .filter(Boolean);
+  return [...new Set(arr)];
 }
 
 function formatDdMmYyyy(yyyyMmDd) {
   if (!yyyyMmDd || !/^\d{4}-\d{2}-\d{2}$/.test(yyyyMmDd)) return yyyyMmDd || "";
   const [y, m, d] = yyyyMmDd.split("-");
   return `${d}/${m}/${y}`;
+}
+
+function formatWindowLabel({ windowMode, windowStartDate, windowEndDate, weekKey }) {
+  if (windowMode === "custom" && windowStartDate && windowEndDate) {
+    return `${formatDdMmYyyy(windowStartDate)} - ${formatDdMmYyyy(windowEndDate)}`;
+  }
+  if (windowMode === "current_month" && windowStartDate && windowEndDate) {
+    return `${formatDdMmYyyy(windowStartDate)} - ${formatDdMmYyyy(windowEndDate)}`;
+  }
+  if (windowMode === "current_week" && windowStartDate && windowEndDate) {
+    return `${formatDdMmYyyy(windowStartDate)} - ${formatDdMmYyyy(windowEndDate)}`;
+  }
+  return weekKey || "";
 }
 
 export default function TrendResultsList({
@@ -22,14 +36,7 @@ export default function TrendResultsList({
   windowEndDate = "",
   onRunAgain,
 }) {
-  const rangeLabel =
-    windowMode === "custom" && windowStartDate && windowEndDate
-      ? `${formatDdMmYyyy(windowStartDate)} to ${formatDdMmYyyy(windowEndDate)}`
-      : windowMode === "current_month"
-      ? "current month"
-      : weekKey
-      ? weekKey
-      : "current window";
+  const rangeLabel = formatWindowLabel({ windowMode, windowStartDate, windowEndDate, weekKey }) || "current window";
   return (
     <div className="w-full h-full flex flex-col px-4 sm:px-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
@@ -55,7 +62,10 @@ export default function TrendResultsList({
       <div className="mb-8 p-4 sm:p-5 bg-[#faf8f3] border-2 border-[#b8860b] rounded-lg">
         <p className="font-bold text-lg text-gray-900">Trend analysis completed</p>
         <p className="text-base text-gray-700">
-          Showing highest-signal trend keywords with baseline and supporting coverage.
+          Showing highest-signal trend keywords with historical average and supporting coverage.
+        </p>
+        <p className="text-xs text-gray-500 mt-2">
+          Historical Avg (4 prior windows) = average mentions across prior comparable windows.
         </p>
       </div>
 
@@ -81,16 +91,12 @@ export default function TrendResultsList({
 
                 <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
                   <div className="bg-gray-50 rounded p-2">
-                    <p className="text-gray-500">Current</p>
+                    <p className="text-gray-500">Articles</p>
                     <p className="font-semibold text-gray-900">{t.count_current}</p>
                   </div>
                   <div className="bg-gray-50 rounded p-2">
-                    <p className="text-gray-500">Baseline (4wk)</p>
+                    <p className="text-gray-500">Historical Avg (4 prior windows)</p>
                     <p className="font-semibold text-gray-900">{t.baseline_4wk}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded p-2">
-                    <p className="text-gray-500">Change</p>
-                    <p className="font-semibold text-gray-900">{t.pct_change}%</p>
                   </div>
                   <div className="bg-gray-50 rounded p-2">
                     <p className="text-gray-500">Trend Score</p>
@@ -101,7 +107,12 @@ export default function TrendResultsList({
                 <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600 mb-3">
                   <span className="inline-flex items-center gap-1">
                     <Calendar className="w-4 h-4" />
-                    {t.week_key || weekKey}
+                    {formatWindowLabel({
+                      windowMode,
+                      windowStartDate,
+                      windowEndDate,
+                      weekKey: t.week_key || weekKey,
+                    }) || (t.week_key || weekKey)}
                   </span>
                   <span className="inline-flex items-center gap-1">
                     <Hash className="w-4 h-4" />

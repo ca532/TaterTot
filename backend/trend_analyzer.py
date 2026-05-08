@@ -322,8 +322,9 @@ def compute_trends(
             current_counts[sig] += 1
             if pub:
                 current_pubsets[sig].add(pub)
-            if url and len(current_urls[sig]) < 3:
-                current_urls[sig].append(url)
+            if url:
+                if url not in current_urls[sig] and len(current_urls[sig]) < 3:
+                    current_urls[sig].append(url)
         else:
             for i, (hs, he) in enumerate(history_slices):
                 if hs <= dt < he:
