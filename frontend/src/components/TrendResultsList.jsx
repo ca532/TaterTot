@@ -24,6 +24,22 @@ function formatWindowLabel({ windowMode, windowStartDate, windowEndDate, weekKey
   if (windowMode === "current_week" && windowStartDate && windowEndDate) {
     return `${formatDdMmYyyy(windowStartDate)} - ${formatDdMmYyyy(windowEndDate)}`;
   }
+  // fallback for week key like 2026-W19 -> show Monday of ISO week as DD/MM/YYYY
+  if (/^\d{4}-W\d{2}$/.test(weekKey || "")) {
+    const [y, w] = (weekKey || "").split("-W");
+    const year = Number(y);
+    const week = Number(w);
+    const jan4 = new Date(Date.UTC(year, 0, 4));
+    const jan4Day = jan4.getUTCDay() || 7;
+    const isoWeek1Monday = new Date(jan4);
+    isoWeek1Monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
+    const targetMonday = new Date(isoWeek1Monday);
+    targetMonday.setUTCDate(isoWeek1Monday.getUTCDate() + (week - 1) * 7);
+    const yy = targetMonday.getUTCFullYear();
+    const mm = String(targetMonday.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(targetMonday.getUTCDate()).padStart(2, "0");
+    return `${dd}/${mm}/${yy}`;
+  }
   return weekKey || "";
 }
 
@@ -65,7 +81,7 @@ export default function TrendResultsList({
           Showing highest-signal trend keywords with historical average and supporting coverage.
         </p>
         <p className="text-xs text-gray-500 mt-2">
-          Historical Avg (4 prior windows) = average mentions across prior comparable windows.
+          Historical Avg (4 prior windows) is the average number of articles containing the trend keywords across prior comparable windows.
         </p>
       </div>
 
