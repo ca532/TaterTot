@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from urllib.parse import urlparse
 
 from google_storage import GoogleSheetsDB
 from trend_analyzer import compute_trends, iso_week_key
@@ -58,7 +59,24 @@ def load_articles(db: GoogleSheetsDB):
     return out
 
 
-def _load_list_source_set(db: GoogleSheetsDB, list_name: str):
+def _normalize_host(u: str) -> str:
+    if not u:
+        return ""
+    raw = u.strip()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "https://" + raw
+    try:
+        host = (urlparse(raw).netloc or "").strip().lower()
+    except Exception:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _load_list_base_hosts(db: GoogleSheetsDB, list_name: str):
     if not list_name:
         return set()
     try:
@@ -66,15 +84,16 @@ def _load_list_source_set(db: GoogleSheetsDB, list_name: str):
         rows = ws.get_all_records()
     except Exception:
         return set()
-    allowed = set()
+    allowed_hosts = set()
     for r in rows:
         ln = str(r.get("list_name", "")).strip()
         active = str(r.get("active", "TRUE")).upper() == "TRUE"
         if ln == list_name and active:
-            pub = str(r.get("publication", "")).strip()
-            if pub:
-                allowed.add(pub.lower())
-    return allowed
+            base_url = str(r.get("base_url", "")).strip()
+            host = _normalize_host(base_url)
+            if host:
+                allowed_hosts.add(host)
+    return allowed_hosts
 
 
 def upsert_run_rows(ws, trend_run_id: str, rows, window_mode: str):
@@ -151,11 +170,22 @@ def main():
     upsert_metadata_key(db, "latest_trend_rows_written", "0")
     ws = ensure_trend_sheet(db)
     articles = load_articles(db)
-    allowed_pubs = _load_list_source_set(db, LIST_NAME)
-    if allowed_pubs:
+    allowed_hosts = _load_list_base_hosts(db, LIST_NAME)
+    if allowed_hosts:
         before = len(articles)
-        articles = [a for a in articles if str(a.get("publication", "")).strip().lower() in allowed_pubs]
-        print(f"[TREND_LIST_FILTER] list_name={LIST_NAME} before={before} after={len(articles)}")
+        kept = []
+        for a in articles:
+            url_host = _normalize_host(str(a.get("url", "")).strip())
+            if url_host and url_host in allowed_hosts:
+                kept.append(a)
+        articles = kept
+        print(
+            f"[TREND_LIST_FILTER] list_name={LIST_NAME} mode=base_url_host "
+            f"hosts={len(allowed_hosts)} before={before} after={len(articles)}"
+        )
+    else:
+        print(f"[TREND_LIST_FILTER] list_name={LIST_NAME} mode=base_url_host hosts=0 before={len(articles)} after=0")
+        articles = []
     print(f"[TREND_ARTICLES] total_articles_loaded={len(articles)}")
     print(
         "[TREND_THRESHOLDS] "
