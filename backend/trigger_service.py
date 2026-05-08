@@ -738,6 +738,23 @@ def _get_run_by_id(run_id: int) -> Optional[dict]:
     return r.json()
 
 
+def _resolve_dispatched_run_id(previous_run_id: Optional[int], dispatch_ts: int) -> Optional[int]:
+    # GitHub may take a few seconds to materialize the new run after dispatch.
+    for _ in range(10):  # ~20s max
+        run = _get_latest_run()
+        if run:
+            rid = run.get("id")
+            created_at = run.get("created_at") or ""
+            try:
+                created_epoch = int(datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp())
+            except Exception:
+                created_epoch = 0
+            if rid and rid != previous_run_id and created_epoch >= dispatch_ts - 5:
+                return rid
+        time.sleep(2)
+    return None
+
+
 def _normalize_status(run: Optional[dict]) -> tuple[str, Optional[str]]:
     if not run:
         return "idle", None
@@ -980,6 +997,7 @@ def trigger_pipeline(req: TriggerRequest, response: Response, authorization: str
         state = _read_state()
         latest_run = _get_latest_run()
         normalized_status, conclusion = _normalize_status(latest_run)
+        prev_run_id = latest_run.get("id") if latest_run else None
         now = int(time.time())
 
         # Sync persisted state with GitHub state first
@@ -1042,12 +1060,13 @@ def trigger_pipeline(req: TriggerRequest, response: Response, authorization: str
         state["last_triggered_at"] = now
         state["last_error"] = None
         state["queued_requests"] = 0
-        new_run = _get_latest_run()
-        new_run_id = new_run.get("id") if new_run else None
+        new_run_id = _resolve_dispatched_run_id(prev_run_id, now)
         if new_run_id:
             state["last_run_id"] = new_run_id
             _metadata_upsert("current_pipeline_run_id", str(new_run_id))
             _metadata_upsert("latest_pipeline_status", "queued")
+        else:
+            print("[PIPELINE_TRIGGER_WARN] Could not resolve new run id after dispatch window")
         _write_state(state)
 
     return {"ok": True, "state": "queued", "message": "Pipeline triggered", "runId": new_run_id}
