@@ -8,6 +8,7 @@ from trend_analyzer import compute_trends, iso_week_key
 TREND_SHEET_NAME = os.getenv("TREND_SHEET_NAME", "Trend Signals")
 TARGET_WEEK_KEY = os.getenv("TARGET_WEEK_KEY", "").strip()
 TOPIC = os.getenv("TOPIC", "luxury").strip().lower()
+LIST_NAME = os.getenv("LIST_NAME", "").strip()
 WINDOW_START_DATE = os.getenv("WINDOW_START_DATE", "").strip()
 WINDOW_END_DATE = os.getenv("WINDOW_END_DATE", "").strip()
 BASELINE_WEEKS = int(os.getenv("BASELINE_WEEKS", "4"))
@@ -55,6 +56,25 @@ def load_articles(db: GoogleSheetsDB):
             "collectedDate": r.get("Collected Date") or r.get("collectedDate") or r.get("collected_date"),
         })
     return out
+
+
+def _load_list_source_set(db: GoogleSheetsDB, list_name: str):
+    if not list_name:
+        return set()
+    try:
+        ws = db.spreadsheet.worksheet(os.getenv("SOURCE_CONFIG_SHEET", "Source Lists"))
+        rows = ws.get_all_records()
+    except Exception:
+        return set()
+    allowed = set()
+    for r in rows:
+        ln = str(r.get("list_name", "")).strip()
+        active = str(r.get("active", "TRUE")).upper() == "TRUE"
+        if ln == list_name and active:
+            pub = str(r.get("publication", "")).strip()
+            if pub:
+                allowed.add(pub.lower())
+    return allowed
 
 
 def upsert_run_rows(ws, trend_run_id: str, rows, window_mode: str):
@@ -131,6 +151,11 @@ def main():
     upsert_metadata_key(db, "latest_trend_rows_written", "0")
     ws = ensure_trend_sheet(db)
     articles = load_articles(db)
+    allowed_pubs = _load_list_source_set(db, LIST_NAME)
+    if allowed_pubs:
+        before = len(articles)
+        articles = [a for a in articles if str(a.get("publication", "")).strip().lower() in allowed_pubs]
+        print(f"[TREND_LIST_FILTER] list_name={LIST_NAME} before={before} after={len(articles)}")
     print(f"[TREND_ARTICLES] total_articles_loaded={len(articles)}")
     print(
         "[TREND_THRESHOLDS] "
@@ -199,6 +224,7 @@ def main():
         f"run_id={TREND_RUN_ID} week_key={week_key} topic={TOPIC} window_mode={WINDOW_MODE} "
         f"start={WINDOW_START_DATE or '-'} end={WINDOW_END_DATE or '-'} baseline_weeks={BASELINE_WEEKS} rows_written={len(rows)}"
     )
+    print("[TREND_AUDIT_HINT] check logs: PARSE_WINDOW, WINDOW_SAMPLE_DOCS, MODEL_OUT, GATES, REJECT_REASONS")
     print(f"Window: start={WINDOW_START_DATE or 'current-month-start'} end={WINDOW_END_DATE or 'current-month-end'} baseline_weeks={BASELINE_WEEKS}")
     print(f"Trend analysis complete for {week_key}: {len(rows)} rows written to '{TREND_SHEET_NAME}' (run_id={TREND_RUN_ID})")
 

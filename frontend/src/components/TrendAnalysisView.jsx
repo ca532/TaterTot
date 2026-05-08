@@ -126,8 +126,10 @@ export default function TrendAnalysisView() {
       windowStartDate: payloadStart,
       windowEndDate: payloadEnd,
     });
+    const inferredTopic = /finance/i.test(topic) ? "finance" : "luxury";
     const res = await githubAPI.triggerTrendAnalysis({
-      topic,
+      topic: inferredTopic,
+      list_name: topic,
       target_week_key: targetWeekKey,
       window_start_date: payloadStart,
       window_end_date: payloadEnd,

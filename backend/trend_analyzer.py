@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import CountVectorizer
 
 
 BASE_STOPWORDS = {
@@ -166,11 +167,32 @@ def compute_trends(
     if not current_rows:
         return []
 
+    sample_docs = []
+    for a, dt, wk in current_rows[:8]:
+        sample_docs.append({
+            "wk": wk,
+            "date": dt.strftime("%Y-%m-%d"),
+            "publication": (a.get("publication") or "")[:80],
+            "title": (a.get("title") or "")[:120],
+            "summary_len": len((a.get("summary") or "").strip()),
+        })
+    _tlog("WINDOW_SAMPLE_DOCS", sample=sample_docs)
+
     label_week_key = target_week_key or iso_week_key(max(dt for _, dt, _ in current_rows))
-    hist_weeks = set(week_sequence_desc(label_week_key, baseline_weeks))
+    window_days = max(1, (end_dt - start_dt).days)
+    history_slices = []
+    for i in range(1, baseline_weeks + 1):
+        h_end = start_dt - timedelta(days=window_days * (i - 1))
+        h_start = start_dt - timedelta(days=window_days * i)
+        history_slices.append((h_start, h_end))
 
     current_set = {(id(a), dt, wk) for a, dt, wk in current_rows}
-    relevant_rows = [(a, dt, wk) for a, dt, wk in parsed_rows if (id(a), dt, wk) in current_set or wk in hist_weeks]
+    relevant_rows = []
+    for a, dt, wk in parsed_rows:
+        in_current = (id(a), dt, wk) in current_set
+        in_hist = any(hs <= dt < he for hs, he in history_slices)
+        if in_current or in_hist:
+            relevant_rows.append((a, dt, wk))
     docs = [make_doc_text(a) for a, _, _ in relevant_rows]
     stopwords = get_stopwords_for_topic(topic)
 
@@ -180,15 +202,19 @@ def compute_trends(
         docs=len(docs),
         min_topic_size=min_topic_size_cfg,
         model="all-MiniLM-L6-v2",
-        hist_weeks_count=len(hist_weeks),
+        baseline_slices=len(history_slices),
+        window_days=window_days,
     )
 
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    vectorizer = CountVectorizer(ngram_range=(1, 2), min_df=2, stop_words="english")
     topic_model = BERTopic(
         embedding_model=embedding_model,
         language="english",
         calculate_probabilities=False,
         min_topic_size=min_topic_size_cfg,
+        vectorizer_model=vectorizer,
+        top_n_words=8,
         verbose=False,
     )
 
@@ -206,16 +232,44 @@ def compute_trends(
         }
     outlier_docs = sum(1 for t in topics if t == -1)
     unique_topics = len(set(t for t in topics if t != -1))
+    topic_sizes = Counter(topics)
+    top_topic_sizes = topic_sizes.most_common(10)
     _tlog(
         "MODEL_OUT",
         total_docs=len(topics),
         outlier_docs=outlier_docs,
         unique_topics=unique_topics,
         kept_topics=len(topic_info),
+        top_topic_sizes=top_topic_sizes,
     )
+    outlier_ratio = (outlier_docs / len(topics)) if topics else 1.0
+    if outlier_ratio > 0.75 and len(docs) >= 20:
+        _tlog("OUTLIER_MITIGATION", action="retry_with_smaller_min_topic_size", outlier_ratio=round(outlier_ratio, 4))
+        topic_model = BERTopic(
+            embedding_model=embedding_model,
+            language="english",
+            calculate_probabilities=False,
+            min_topic_size=2,
+            vectorizer_model=vectorizer,
+            top_n_words=8,
+            verbose=False,
+        )
+        topics, _ = topic_model.fit_transform(docs)
+        topic_info = {}
+        for tid in set(topics):
+            if tid == -1:
+                continue
+            words = topic_model.get_topic(tid) or []
+            words = [(w, s) for w, s in words if w not in stopwords]
+            topic_info[tid] = {
+                "signature": _topic_signature(words),
+                "label": _topic_label(words),
+            }
+        outlier_docs = sum(1 for t in topics if t == -1)
+        unique_topics = len(set(t for t in topics if t != -1))
 
     current_counts = Counter()
-    hist_counts_by_week = {wk: Counter() for wk in hist_weeks}
+    hist_counts_by_slice = [Counter() for _ in history_slices]
     current_pubsets = defaultdict(set)
     current_urls = defaultdict(list)
 
@@ -233,28 +287,46 @@ def compute_trends(
                 current_pubsets[sig].add(pub)
             if url and len(current_urls[sig]) < 3:
                 current_urls[sig].append(url)
-        elif wk in hist_weeks:
-            hist_counts_by_week[wk][sig] += 1
+        else:
+            for i, (hs, he) in enumerate(history_slices):
+                if hs <= dt < he:
+                    hist_counts_by_slice[i][sig] += 1
+                    break
 
     rows: List[TrendRow] = []
     gate = {"seen": 0, "pass_mentions": 0, "pass_publications": 0, "pass_lift": 0}
+    reject_reasons = Counter()
+    reject_examples = {"mentions": [], "publications": [], "lift": []}
+    effective_min_mentions = min_mentions
+    if len(current_counts) > 0 and outlier_docs / max(1, len(topics)) > 0.75:
+        effective_min_mentions = max(1, min_mentions - 1)
+        _tlog("THRESHOLD_ADAPT", min_mentions=min_mentions, effective_min_mentions=effective_min_mentions)
 
     for sig, c in current_counts.items():
         gate["seen"] += 1
-        if c < min_mentions:
+        if c < effective_min_mentions:
+            reject_reasons["mentions"] += 1
+            if len(reject_examples["mentions"]) < 5:
+                reject_examples["mentions"].append({"sig": sig, "count_current": c, "min_mentions": effective_min_mentions})
             continue
         gate["pass_mentions"] += 1
 
         pub_count = len(current_pubsets[sig])
         if pub_count < min_publications:
+            reject_reasons["publications"] += 1
+            if len(reject_examples["publications"]) < 5:
+                reject_examples["publications"].append({"sig": sig, "publication_count": pub_count, "min_publications": min_publications})
             continue
         gate["pass_publications"] += 1
 
-        hist_vals = [hist_counts_by_week[wk].get(sig, 0) for wk in hist_weeks]
+        hist_vals = [c.get(sig, 0) for c in hist_counts_by_slice]
         baseline = sum(hist_vals) / max(1, len(hist_vals))
 
         lift = (c + 1.0) / (baseline + 1.0)
         if lift < min_lift:
+            reject_reasons["lift"] += 1
+            if len(reject_examples["lift"]) < 5:
+                reject_examples["lift"].append({"sig": sig, "count_current": c, "baseline": round(baseline, 4), "lift": round(lift, 4), "min_lift": min_lift})
             continue
         gate["pass_lift"] += 1
 
@@ -290,6 +362,8 @@ def compute_trends(
         pass_lift=gate["pass_lift"],
         final_rows=min(len(rows), top_n),
     )
+    _tlog("REJECT_REASONS", counts=dict(reject_reasons))
+    _tlog("REJECT_EXAMPLES", examples=reject_examples)
     preview = [
         {
             "keyword": r.keyword,
