@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 import TrendResultsList from "./TrendResultsList";
@@ -41,8 +41,15 @@ export default function TrendAnalysisView() {
   const [lastWindowMode, setLastWindowMode] = useState("");
   const [lastWindowStartDate, setLastWindowStartDate] = useState("");
   const [lastWindowEndDate, setLastWindowEndDate] = useState("");
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const pollTimerRef = useRef(null);
+
+  const stopTrendPolling = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
 
   const now = useMemo(() => new Date(), []);
   const currentWeekDate = useMemo(() => {
@@ -77,9 +84,13 @@ export default function TrendAnalysisView() {
     loadSourceLists();
   }, [topic]);
 
+  useEffect(() => {
+    return () => stopTrendPolling();
+  }, []);
+
   const onRun = async () => {
     setError("");
-    setMessage("");
+    stopTrendPolling();
     if (windowMode === "custom" && !rangeValid) {
       setError("End date must be on or after start date.");
       return;
@@ -141,7 +152,6 @@ export default function TrendAnalysisView() {
       suffix = ` for custom range ${formatDdMmYyyy(windowStartDate)} to ${formatDdMmYyyy(windowEndDate)}`;
     }
     const queuedMsg = `Trend analysis workflow queued successfully${suffix}.`;
-    setMessage(queuedMsg);
     setTrendRunState("queued");
     setTrendRunMessage(queuedMsg);
     if (res.trend_run_id) {
@@ -150,6 +160,7 @@ export default function TrendAnalysisView() {
   };
 
   const startTrendRunPolling = (runId) => {
+    stopTrendPolling();
     let attempts = 0;
     const maxAttempts = 60;
     const intervalMs = 5000;
@@ -157,7 +168,7 @@ export default function TrendAnalysisView() {
     setTrendRunState("running");
     setTrendRunMessage("Trend analysis is running...");
 
-    const timer = setInterval(async () => {
+    pollTimerRef.current = setInterval(async () => {
       attempts += 1;
       try {
         console.log("[TREND_UI_POLL]", { trendRunId: runId, attempt: attempts });
@@ -174,26 +185,25 @@ export default function TrendAnalysisView() {
             setTrendRunState("completed");
             setTrendRunMessage(`Run completed with ${list.length} trend result(s).`);
           }
-          clearInterval(timer);
+          stopTrendPolling();
           return;
         }
 
         if (attempts >= maxAttempts) {
           setTrendRunState("failed");
           setTrendRunMessage("Timed out waiting for trend results. Please check workflow logs.");
-          clearInterval(timer);
+          stopTrendPolling();
         }
       } catch (e) {
         setTrendRunState("failed");
         setTrendRunMessage(`Trend status check failed: ${e?.message || "unknown error"}`);
-        clearInterval(timer);
+        stopTrendPolling();
       }
     }, intervalMs);
   };
 
   const onViewResults = async () => {
     setError("");
-    setMessage("");
     setIsViewingResults(true);
     console.log("[TREND_UI_FETCH_RESULTS]", { trendRunId });
     const res = trendRunId
@@ -209,7 +219,18 @@ export default function TrendAnalysisView() {
       setError(res.error || "Failed to load trend results.");
       return;
     }
-    setTrends((res.trends || []).filter((t) => t.keyword !== "__NO_TRENDS__"));
+    stopTrendPolling();
+    const raw = res.trends || [];
+    const hasSentinel = raw.some((t) => t.keyword === "__NO_TRENDS__" || t.status === "no_trends");
+    if (hasSentinel) {
+      setTrendRunState("empty");
+      setTrendRunMessage("Run completed, but no trends passed thresholds for this window.");
+    } else {
+      const visible = raw.filter((t) => t.keyword !== "__NO_TRENDS__");
+      setTrendRunState("completed");
+      setTrendRunMessage(`Run completed with ${visible.length} trend result(s).`);
+    }
+    setTrends(raw.filter((t) => t.keyword !== "__NO_TRENDS__"));
     setWeekKey(res.week_key || "");
     setViewStatus("complete");
   };
@@ -224,6 +245,7 @@ export default function TrendAnalysisView() {
         windowStartDate={lastWindowStartDate}
         windowEndDate={lastWindowEndDate}
         onRunAgain={() => {
+          stopTrendPolling();
           setViewStatus("idle");
           setTrends([]);
           setWeekKey("");
@@ -232,7 +254,8 @@ export default function TrendAnalysisView() {
           setLastWindowStartDate("");
           setLastWindowEndDate("");
           setError("");
-          setMessage("");
+          setTrendRunState("idle");
+          setTrendRunMessage("");
         }}
       />
     );
@@ -307,7 +330,6 @@ export default function TrendAnalysisView() {
         )}
 
         {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</div>}
-        {message && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-3">{message}</div>}
         {trendRunState !== "idle" && (
           <div
             className={`text-sm rounded p-3 border ${
