@@ -35,6 +35,7 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
   const [errorMessage, setErrorMessage] = useState(null);
   const [keywordsInput, setKeywordsInput] = useState("");
   const [topic, setTopic] = useState("finance");
+  const [activeRunId, setActiveRunId] = useState(null);
   const pollRef = useRef(null);
 
   const stopPolling = () => {
@@ -48,6 +49,10 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     try {
       const data = await githubAPI.getLatestRunStatus();
       if (!data) return;
+
+      if (activeRunId && data.runId && String(data.runId) !== String(activeRunId)) {
+        return;
+      }
 
       const normalized = mapStatus(data.status, data.conclusion);
       setRunStatus(normalized);
@@ -102,6 +107,7 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
       return result;
     }
 
+    setActiveRunId(result.runId || null);
     setRunStatus(result.state === "already_running" ? "queued" : "queued");
     startPolling();
     return result;
@@ -120,5 +126,6 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     topic,
     setTopic,
     triggerRun,
+    activeRunId,
   };
 }

@@ -730,6 +730,14 @@ def _get_latest_run() -> Optional[dict]:
     return runs[0] if runs else None
 
 
+def _get_run_by_id(run_id: int) -> Optional[dict]:
+    url = f"{GITHUB_API_BASE}/actions/runs/{run_id}"
+    r = _gh_request("GET", url)
+    if r.status_code != 200:
+        return None
+    return r.json()
+
+
 def _normalize_status(run: Optional[dict]) -> tuple[str, Optional[str]]:
     if not run:
         return "idle", None
@@ -802,6 +810,17 @@ async def _broadcast_status(payload: dict) -> None:
 async def _refresh_status_once() -> dict:
     metadata = _read_metadata_map()
 
+    pinned_run_id_raw = (metadata.get("current_pipeline_run_id") or "").strip()
+    pinned_run = None
+    pinned_status = "idle"
+    pinned_conclusion = None
+    pinned_run_id = None
+
+    if pinned_run_id_raw.isdigit():
+        pinned_run_id = int(pinned_run_id_raw)
+        pinned_run = _get_run_by_id(pinned_run_id)
+        pinned_status, pinned_conclusion = _normalize_status(pinned_run)
+
     phase = (metadata.get("latest_pipeline_phase") or "").strip().lower()
     current_raw = metadata.get("latest_pipeline_current", "0")
     total_raw = metadata.get("latest_pipeline_total", "0")
@@ -816,38 +835,49 @@ async def _refresh_status_once() -> dict:
     except Exception:
         total = 0
 
-    if phase in {"complete", "completed", "success", "done"}:
-        status = "success"
-        normalized_phase = "complete"
-    elif phase in {"failed", "error"}:
-        status = "failed"
-        normalized_phase = "failed"
-    elif phase in {"initializing", "collecting", "summarizing", "saving"}:
-        status = "running"
-        normalized_phase = phase
-    elif phase:
-        status = "running"
-        normalized_phase = phase
+    if pinned_run_id is not None:
+        status = pinned_status
+        normalized_phase = (
+            "complete" if pinned_status == "success"
+            else "failed" if pinned_status == "failed"
+            else "collecting" if pinned_status in {"running", "in_progress"}
+            else "initializing" if pinned_status == "queued"
+            else "idle"
+        )
+        if not message and status == "success":
+            message = "Pipeline completed"
+        if not message and status == "failed":
+            message = f"Pipeline {pinned_conclusion or 'failed'}"
     else:
-        status = "idle"
-        normalized_phase = "idle"
+        if phase in {"complete", "completed", "success", "done"}:
+            status = "success"
+            normalized_phase = "complete"
+        elif phase in {"failed", "error"}:
+            status = "failed"
+            normalized_phase = "failed"
+        elif phase in {"initializing", "collecting", "summarizing", "saving"}:
+            status = "running"
+            normalized_phase = phase
+        elif phase:
+            status = "running"
+            normalized_phase = phase
+        else:
+            status = "idle"
+            normalized_phase = "idle"
 
-    gh_run_id = None
-    if status == "running":
-        gh_status, gh_conclusion, gh_run_id = _maybe_get_terminal_from_github()
-        if gh_status in {"success", "failed"}:
-            status = gh_status
-            normalized_phase = "complete" if gh_status == "success" else "failed"
-            if not message:
-                message = (
-                    "Pipeline completed"
-                    if gh_status == "success"
-                    else f"Pipeline {gh_conclusion or 'failed'}"
-                )
+    meta_run_id = (metadata.get("latest_pipeline_run_id") or "").strip()
+    if pinned_run_id is not None and meta_run_id and meta_run_id != str(pinned_run_id):
+        current = 0
+        total = 0
+        if status in {"running", "queued", "in_progress"}:
+            message = "Pipeline is running (progress sync pending)..."
 
     with STATE_LOCK:
         state = _read_state()
         state["status"] = status
+        if pinned_run_id is not None:
+            state["last_run_id"] = pinned_run_id
+        state["last_conclusion"] = pinned_conclusion
         _write_state(state)
         updated_at = state.get("last_updated_at")
 
@@ -857,8 +887,8 @@ async def _refresh_status_once() -> dict:
         "current": current,
         "total": total,
         "message": message,
-        "runId": gh_run_id,
-        "conclusion": "success" if status == "success" else ("failed" if status == "failed" else None),
+        "runId": pinned_run_id if pinned_run_id is not None else state.get("last_run_id"),
+        "conclusion": pinned_conclusion,
         "updatedAt": updated_at,
     }
     if DEBUG_PROGRESS:
@@ -870,6 +900,7 @@ async def _refresh_status_once() -> dict:
                 "current": payload.get("current"),
                 "total": payload.get("total"),
                 "message": payload.get("message"),
+                "runId": payload.get("runId"),
             }
         )
 
@@ -968,9 +999,15 @@ def trigger_pipeline(req: TriggerRequest, response: Response, authorization: str
         state["last_triggered_at"] = now
         state["last_error"] = None
         state["queued_requests"] = 0
+        new_run = _get_latest_run()
+        new_run_id = new_run.get("id") if new_run else None
+        if new_run_id:
+            state["last_run_id"] = new_run_id
+            _metadata_upsert("current_pipeline_run_id", str(new_run_id))
+            _metadata_upsert("latest_pipeline_status", "queued")
         _write_state(state)
 
-    return {"ok": True, "state": "queued", "message": "Pipeline triggered"}
+    return {"ok": True, "state": "queued", "message": "Pipeline triggered", "runId": new_run_id}
 
 
 @app.get("/pipeline/status")
@@ -980,6 +1017,9 @@ async def pipeline_status(authorization: str = Header(default="")):
         cached = dict(STATUS_CACHE)
     if not cached.get("updatedAt"):
         cached = await _refresh_status_once()
+
+    if cached.get("status") in {"success", "failed"}:
+        _metadata_upsert("latest_pipeline_status", cached.get("status") or "")
 
     with STATE_LOCK:
         state = _read_state()
