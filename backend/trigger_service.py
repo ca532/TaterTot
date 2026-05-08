@@ -1163,6 +1163,12 @@ def get_trends_current_week(authorization: str = Header(default="")):
 @app.post("/trends/trigger")
 def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authorization: str = Header(default="")):
     _check_auth(authorization)
+    phase = (_metadata_get("latest_pipeline_phase") or "").strip().lower()
+    if phase in {"initializing", "collecting", "summarizing", "running", "in_progress", "queued"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Collect/summarize pipeline is still running. Run trend analysis after pipeline completion."
+        )
     workflow = "trend-analysis.yml"
     url = f"{GITHUB_API_BASE}/actions/workflows/{workflow}/dispatches"
 
