@@ -132,7 +132,12 @@ def compute_trends(
     parse_ok_samples = []
     by_week: Dict[str, List[Dict]] = defaultdict(list)
     for a in articles:
-        raw_date = str(a.get("collectedDate", "") or a.get("collected_date", ""))
+        raw_date = str(
+            a.get("collectedDate", "")
+            or a.get("collected_date", "")
+            or a.get("articleDate", "")
+            or a.get("published_date", "")
+        )
         dt = parse_dt(raw_date)
         if not dt:
             parse_fail_count += 1

@@ -47,14 +47,28 @@ def load_articles(db: GoogleSheetsDB):
     records = db.articles_sheet.get_all_records()
     out = []
     for r in records:
+        idv = r.get("ID") or r.get("id")
+        title = r.get("TITLE") or r.get("Title") or r.get("title")
+        url = r.get("URL") or r.get("url")
+        publication = r.get("PUBLICATION") or r.get("Publication") or r.get("publication")
+        journalist = r.get("JOURNALIST") or r.get("Journalist") or r.get("journalist")
+        summary = r.get("SUMMARY") or r.get("Summary") or r.get("summary")
+        collected = (
+            r.get("COLLECTED DATE")
+            or r.get("Collected Date")
+            or r.get("collectedDate")
+            or r.get("collected_date")
+        )
+        article_date = r.get("ARTICLE DATE") or r.get("Article Date") or r.get("Date") or r.get("Published Date")
         out.append({
-            "id": r.get("ID") or r.get("id"),
-            "title": r.get("Title") or r.get("title"),
-            "url": r.get("URL") or r.get("url"),
-            "publication": r.get("Publication") or r.get("publication"),
-            "journalist": r.get("Journalist") or r.get("journalist"),
-            "summary": r.get("Summary") or r.get("summary"),
-            "collectedDate": r.get("Collected Date") or r.get("collectedDate") or r.get("collected_date"),
+            "id": idv,
+            "title": title,
+            "url": url,
+            "publication": publication,
+            "journalist": journalist,
+            "summary": summary,
+            "collectedDate": collected,
+            "articleDate": article_date,
         })
     return out
 
