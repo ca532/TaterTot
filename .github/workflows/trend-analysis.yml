@@ -1,9 +1,6 @@
 name: Trend Analysis (Phase 4A)
 
 on:
-  workflow_run:
-    workflows: ["Collect & Summarize Articles"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_week_key:
@@ -41,7 +38,6 @@ on:
 
 jobs:
   trend-analysis:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

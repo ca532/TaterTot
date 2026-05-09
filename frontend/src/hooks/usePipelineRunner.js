@@ -37,6 +37,7 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
   const [topic, setTopic] = useState("finance");
   const [activeRunId, setActiveRunId] = useState(null);
   const pollRef = useRef(null);
+  const failedStreakRef = useRef(0);
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -60,12 +61,20 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
       }
 
       const normalized = mapStatus(data.status, data.conclusion);
+      if (normalized === "failed") {
+        failedStreakRef.current += 1;
+      } else {
+        failedStreakRef.current = 0;
+      }
       setRunStatus(normalized);
 
       if (normalized === "success") {
         stopPolling();
         await onSuccess?.();
       } else if (normalized === "failed") {
+        if (failedStreakRef.current < 2) {
+          return;
+        }
         stopPolling();
         const msg = "Pipeline failed. Check logs and try again.";
         setErrorMessage(msg);
@@ -112,6 +121,8 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
       return result;
     }
 
+    failedStreakRef.current = 0;
+    setErrorMessage(null);
     setActiveRunId(result.runId || null);
     setRunStatus(result.state === "already_running" ? "queued" : "queued");
     startPolling();
