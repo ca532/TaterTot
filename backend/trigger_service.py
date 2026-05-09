@@ -74,6 +74,7 @@ SOURCE_REPORT_DETAIL_SHEET = os.environ.get("SOURCE_REPORT_DETAIL_SHEET", "Sourc
 STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
 DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
 GITHUB_TERMINAL_POLL_SECONDS = int(os.environ.get("GITHUB_TERMINAL_POLL_SECONDS", "60"))
+ALLOW_AUTO_TREND_TRIGGER = os.environ.get("ALLOW_AUTO_TREND_TRIGGER", "false").lower() == "true"
 
 STATE_LOCK = threading.Lock()
 _STARS_SHEET = None
@@ -449,6 +450,11 @@ def _title_from_base_url(base_url: str) -> str:
         host = host[4:]
     root = host.split(".")[0] if host else "Publication"
     return root.replace("-", " ").replace("_", " ").title() or "Publication"
+
+
+def _is_explicit_trend_request(request: Request) -> bool:
+    v = (request.headers.get("X-Explicit-Trend-Run", "") or "").strip().lower()
+    return v in {"1", "true", "yes"}
 
 
 def _has_active_source_rows(list_name: str) -> bool:
@@ -1281,8 +1287,13 @@ def get_trends_current_week(authorization: str = Header(default="")):
 
 
 @app.post("/trends/trigger")
-def trigger_trend_analysis(req: TrendTriggerRequest, response: Response, authorization: str = Header(default="")):
+def trigger_trend_analysis(req: TrendTriggerRequest, request: Request, response: Response, authorization: str = Header(default="")):
     _check_auth(authorization)
+    if not ALLOW_AUTO_TREND_TRIGGER and not _is_explicit_trend_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="Trend dispatch blocked unless explicitly requested (missing X-Explicit-Trend-Run header)."
+        )
     phase = (_metadata_get("latest_pipeline_phase") or "").strip().lower()
     if phase in {"initializing", "collecting", "summarizing", "running", "in_progress", "queued"}:
         raise HTTPException(

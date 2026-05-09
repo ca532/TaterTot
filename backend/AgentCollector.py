@@ -650,8 +650,9 @@ class CustomArticleCollector:
             return None
         sheet_id = os.getenv("GOOGLE_SHEET_ID")
         creds_json = os.getenv("GOOGLE_CREDENTIALS")
-        if not sheet_id or not creds_json:
-            print("⚠️ Missing GOOGLE_SHEET_ID/GOOGLE_CREDENTIALS for source list load; using defaults")
+
+        if not sheet_id:
+            print("⚠️ Missing GOOGLE_SHEET_ID for source list load; using defaults")
             return None
 
         try:
@@ -659,7 +660,16 @@ class CustomArticleCollector:
                 "https://www.googleapis.com/auth/spreadsheets",
                 "https://www.googleapis.com/auth/drive",
             ]
-            creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scope)
+
+            if creds_json:
+                creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scope)
+            else:
+                creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
+                if not os.path.exists(creds_path):
+                    print("⚠️ Missing GOOGLE_CREDENTIALS and credentials.json for source list load; using defaults")
+                    return None
+                creds = Credentials.from_service_account_file(creds_path, scopes=scope)
+
             client = gspread.authorize(creds)
             ss = client.open_by_key(sheet_id)
             ws = ss.worksheet(os.getenv("SOURCE_CONFIG_SHEET", "Source Lists"))

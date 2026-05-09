@@ -210,7 +210,8 @@ class PipelineService {
       const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/trends/trigger`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "X-Explicit-Trend-Run": "true"
         },
         body: JSON.stringify(payload)
       });
