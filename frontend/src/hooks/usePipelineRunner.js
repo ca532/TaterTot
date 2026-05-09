@@ -50,8 +50,13 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
       const data = await githubAPI.getLatestRunStatus();
       if (!data) return;
 
+      // If backend corrected runId after dispatch race, adopt it while still active.
       if (activeRunId && data.runId && String(data.runId) !== String(activeRunId)) {
-        return;
+        if (["queued", "running", "in_progress"].includes(String(data.status || "").toLowerCase())) {
+          setActiveRunId(data.runId);
+        } else {
+          return;
+        }
       }
 
       const normalized = mapStatus(data.status, data.conclusion);

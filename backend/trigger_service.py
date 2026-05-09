@@ -740,11 +740,16 @@ def _get_run_by_id(run_id: int) -> Optional[dict]:
 
 def _resolve_dispatched_run_id(previous_run_id: Optional[int], dispatch_ts: int) -> Optional[int]:
     # GitHub may take a few seconds to materialize the new run after dispatch.
-    for _ in range(10):  # ~20s max
+    for i in range(20):  # ~40s max
         run = _get_latest_run()
         if run:
             rid = run.get("id")
             created_at = run.get("created_at") or ""
+            if DEBUG_PROGRESS:
+                print(
+                    "[PIPELINE_RUNID_RESOLVE] "
+                    f"attempt={i+1}/20 prev={previous_run_id} seen={rid} created_at={created_at}"
+                )
             try:
                 created_epoch = int(datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp())
             except Exception:
