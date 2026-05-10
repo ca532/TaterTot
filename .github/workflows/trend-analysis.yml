@@ -11,10 +11,28 @@ on:
         description: "Topic for trend stopword profile"
         required: false
         default: ""
-        type: choice
-        options: ["luxury", "finance"]
-      extra_stopwords:
-        description: "Optional comma-separated extra stopwords"
+      window_start_date:
+        description: "Optional start date YYYY-MM-DD"
+        required: false
+        default: ""
+      window_end_date:
+        description: "Optional end date YYYY-MM-DD"
+        required: false
+        default: ""
+      baseline_weeks:
+        description: "Historical baseline weeks"
+        required: false
+        default: "4"
+      trend_run_id:
+        description: "Unique trend run id"
+        required: false
+        default: ""
+      window_mode:
+        description: "current_week | current_month | custom"
+        required: false
+        default: "current_month"
+      list_name:
+        description: "Source list name (optional)"
         required: false
         default: ""
 
@@ -42,15 +60,43 @@ jobs:
         working-directory: ./backend
         run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > credentials.json
 
+      - name: Log run context
+        run: |
+          echo "TREND_RUN_ID=${{ github.event.inputs.trend_run_id }}"
+          echo "TOPIC=${{ github.event.inputs.topic }}"
+          echo "WINDOW_MODE=${{ github.event.inputs.window_mode }}"
+          echo "WINDOW_START_DATE=${{ github.event.inputs.window_start_date }}"
+          echo "WINDOW_END_DATE=${{ github.event.inputs.window_end_date }}"
+          echo "BASELINE_WEEKS=${{ github.event.inputs.baseline_weeks }}"
+
       - name: Run trend analysis
-        working-directory: ./backend
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           TARGET_WEEK_KEY: ${{ github.event.inputs.target_week_key }}
           TREND_SHEET_NAME: Trend Signals
           TOPIC: ${{ github.event.inputs.topic }}
-          EXTRA_STOPWORDS: ${{ github.event.inputs.extra_stopwords }}
-        run: python -u run_trend_analysis.py
+          WINDOW_START_DATE: ${{ github.event.inputs.window_start_date }}
+          WINDOW_END_DATE: ${{ github.event.inputs.window_end_date }}
+          BASELINE_WEEKS: ${{ github.event.inputs.baseline_weeks }}
+          TREND_RUN_ID: ${{ github.event.inputs.trend_run_id }}
+          WINDOW_MODE: ${{ github.event.inputs.window_mode }}
+          LIST_NAME: ${{ github.event.inputs.list_name }}
+          TREND_MIN_MENTIONS: "2"
+          TREND_MIN_LIFT: "1.2"
+          TREND_MIN_PUBLICATIONS: "1"
+          TREND_TOP_N: "25"
+        run: |
+          if [ -f backend/run_trend_analysis.py ]; then
+            cd backend
+          elif [ -f App-revamp/backend/run_trend_analysis.py ]; then
+            cd App-revamp/backend
+          else
+            echo "run_trend_analysis.py not found" >&2
+            pwd; ls -la
+            exit 2
+          fi
+          python -u run_trend_analysis.py
 
       - name: Cleanup credentials
         if: always()
