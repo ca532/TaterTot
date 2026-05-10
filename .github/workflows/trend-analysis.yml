@@ -1,9 +1,6 @@
-name: Trend Analysis (Phase 4A)
+name: Trend Analysis
 
 on:
-  workflow_run:
-    workflows: ["Collect & Summarize Articles"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_week_key:
@@ -13,7 +10,7 @@ on:
       topic:
         description: "Topic for trend stopword profile"
         required: false
-        default: "luxury"
+        default: ""
         type: choice
         options: ["luxury", "finance"]
       extra_stopwords:
@@ -36,7 +33,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install deps
         working-directory: ./backend
