@@ -172,7 +172,7 @@ def test_summarizer():
     """Test function to demonstrate usage"""
     
     # You'll need to add your OpenAI API key here
-    API_KEY = "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"
+    API_KEY = "Enter your key here"
     
     summarizer = ArticleSummarizer(API_KEY)
     

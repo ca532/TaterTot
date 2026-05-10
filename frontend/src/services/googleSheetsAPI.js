@@ -25,7 +25,7 @@ class GoogleSheetsService {
       return [];
     }
 
-    const range = 'Articles!A2:G1000'; // Skip header row, get all data
+    const range = 'Articles!A2:H'; // Skip header row, get all data (includes score)
     const url = `${this.baseURL}/values/${range}?key=${API_KEY}`;
     
     try {
@@ -50,7 +50,8 @@ class GoogleSheetsService {
         publication: row[3] || 'Unknown',
         journalist: row[4] || 'Unknown',
         summary: row[5] || 'No summary available',
-        collectedDate: row[6] || new Date().toISOString()
+        collectedDate: row[6] || new Date().toISOString(),
+        score: Number(row[7] || 0),
       }));
       
       console.log(`✅ Fetched ${articles.length} articles from Google Sheets`);
@@ -142,7 +143,6 @@ class GoogleSheetsService {
    * Get the latest workflow run info from GitHub API
    */
   async getLatestWorkflowRun() {
-    // You'll need to add VITE_GITHUB_TOKEN to access this
     // For now, return mock data
     return {
       status: 'completed',

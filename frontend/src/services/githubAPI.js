@@ -1,193 +1,444 @@
 /**
- * GitHub API Service
- * Triggers workflows and fetches artifacts
+ * Pipeline API Service (backend-only, no direct GitHub calls from frontend)
  */
 
-const GITHUB_OWNER = import.meta.env.VITE_GITHUB_OWNER;
-const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO;
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
+const PIPELINE_API_BASE = import.meta.env.VITE_PIPELINE_API_BASE || "http://localhost:8000";
+const TOKEN_KEY = "access_token";
 
-class GitHubService {
-  constructor() {
-    this.baseURL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
-    
-    if (!GITHUB_OWNER || !GITHUB_REPO) {
-      console.warn('⚠️ GitHub credentials not configured');
-    }
-  }
-
-  /**
- * Trigger the article collection workflow
- */
-async triggerPipeline() {
-  if (!GITHUB_TOKEN) {
-    console.error('GitHub token not configured');
-    return { success: false, error: 'No GitHub token configured' };
-  }
-
-  if (!GITHUB_OWNER || !GITHUB_REPO) {
-    console.error('GitHub owner/repo not configured');
-    return { success: false, error: 'GitHub owner/repo not configured' };
-  }
-
-  // Use workflow ID instead of filename (more reliable)
-  const url = `${this.baseURL}/actions/workflows/collect-articles.yml/dispatches`;
-  
-  console.log('Triggering workflow:', url);
-  
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${GITHUB_TOKEN}`,
-        'Content-Type': 'application/json',
-        'X-GitHub-Api-Version': '2022-11-28'
-      },
-      body: JSON.stringify({
-        ref: 'master',  // Your default branch
-        inputs: {
-          test_mode: 'false'
-        }
-      })
-    });
-    
-    console.log('Response status:', response.status);
-    
-    if (response.status === 204) {
-      console.log('✅ Workflow triggered successfully');
-      return { success: true };
-    } else {
-      const errorText = await response.text();
-      console.error('GitHub API Error:', response.status, errorText);
-      
-      let errorMessage = `HTTP ${response.status}`;
-      
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.message || errorMessage;
-      } catch (e) {
-        // Not JSON
-      }
-      
-      return { success: false, error: errorMessage };
-    }
-    
-  } catch (error) {
-    console.error('Error triggering workflow:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-  /**
-   * Get latest workflow runs
-   */
-  async getWorkflowRuns(limit = 5) {
-    const url = `${this.baseURL}/actions/runs?per_page=${limit}`;
-    
-    const headers = {
-      'Accept': 'application/vnd.github+json',
-    };
-    
-    if (GITHUB_TOKEN) {
-      headers['Authorization'] = `Bearer ${GITHUB_TOKEN}`;
-    }
-    
+class PipelineService {
+  normalizeUrlForId(url) {
     try {
-      const response = await fetch(url, { headers });
-      const data = await response.json();
-      
-      return data.workflow_runs || [];
-    } catch (error) {
-      console.error('Error fetching workflow runs:', error);
-      return [];
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+      const path = u.pathname.replace(/\/+$/, "") || "/";
+      const params = new URLSearchParams(u.search);
+      const kept = [];
+      for (const [k, v] of params.entries()) {
+        const lk = k.toLowerCase();
+        if (lk.startsWith("utm_") || ["gclid", "fbclid", "mc_cid", "mc_eid"].includes(lk)) continue;
+        kept.push([k, v]);
+      }
+      const qs = kept.length ? "?" + new URLSearchParams(kept).toString() : "";
+      return `${u.protocol.toLowerCase()}//${host}${path}${qs}`;
+    } catch {
+      return (url || "").trim();
     }
   }
 
-  /**
-   * Check if a workflow is currently running
-   */
-  async isWorkflowRunning() {
-    const runs = await this.getWorkflowRuns(1);
-    
-    if (runs.length > 0) {
-      const latestRun = runs[0];
-      return latestRun.status === 'in_progress' || latestRun.status === 'queued';
-    }
-    
-    return false;
+  getToken() {
+    return sessionStorage.getItem(TOKEN_KEY);
   }
 
-  /**
-   * Get the status of the latest workflow run
-   */
+  setToken(token) {
+    sessionStorage.setItem(TOKEN_KEY, token);
+  }
+
+  clearToken() {
+    sessionStorage.removeItem(TOKEN_KEY);
+  }
+
+  getHeaders() {
+    const headers = {
+      "Accept": "application/json"
+    };
+
+    const token = this.getToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    return headers;
+  }
+
+  async login(password) {
+    try {
+      const res = await fetch(`${PIPELINE_API_BASE}/auth/login`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({ password })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.detail || `HTTP ${res.status}` };
+      }
+
+      this.setToken(data.access_token);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async refreshAccessToken() {
+    try {
+      const res = await fetch(`${PIPELINE_API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({})
+      });
+
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => ({}));
+      if (!data?.access_token) return false;
+
+      this.setToken(data.access_token);
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  async fetchWithAuthRetry(url, init = {}) {
+    const first = await fetch(url, {
+      ...init,
+      credentials: "include",
+      headers: {
+        ...(init.headers || {}),
+        ...this.getHeaders()
+      }
+    });
+
+    if (first.status !== 401) return first;
+
+    const refreshed = await this.refreshAccessToken();
+    if (!refreshed) {
+      this.handleUnauthorized();
+      return first;
+    }
+
+    const second = await fetch(url, {
+      ...init,
+      credentials: "include",
+      headers: {
+        ...(init.headers || {}),
+        ...this.getHeaders()
+      }
+    });
+
+    if (second.status === 401) {
+      this.handleUnauthorized();
+    }
+    return second;
+  }
+
+  handleUnauthorized() {
+    this.clearToken();
+    window.dispatchEvent(new Event("auth:expired"));
+  }
+
+  async logout() {
+    try {
+      await fetch(`${PIPELINE_API_BASE}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+        headers: this.getHeaders()
+      });
+    } finally {
+      this.clearToken();
+    }
+  }
+
+  async triggerPipeline(payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/trigger`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.detail || data.error || `HTTP ${res.status}` };
+      }
+
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   async getLatestRunStatus() {
-    const runs = await this.getWorkflowRuns(1);
-    
-    if (runs.length > 0) {
-      const latestRun = runs[0];
-      return {
-        status: latestRun.status,        // queued, in_progress, completed
-        conclusion: latestRun.conclusion, // success, failure, cancelled
-        createdAt: latestRun.created_at,
-        updatedAt: latestRun.updated_at
-      };
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/status`, {
+        method: "GET"
+      });
+
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (error) {
+      console.error("Error fetching latest run status:", error);
+      return null;
     }
-    
-    return null;
   }
-    /**
-   * Get direct download link for latest artifact
-   */
+
+  async isWorkflowRunning() {
+    const status = await this.getLatestRunStatus();
+    if (!status) return false;
+    return status.status === "queued" || status.status === "in_progress" || status.status === "running";
+  }
+
   async getLatestArtifactDownloadURL() {
     try {
-      const runs = await this.getWorkflowRuns(5);
-      
-      // Find latest successful run
-      const successfulRun = runs.find(run => 
-        run.conclusion === 'success' &&
-        run.name === 'Collect & Summarize Articles'
-      );
-      
-      if (!successfulRun) {
-        console.log('No successful runs found');
-        return null;
-      }
-      
-      // Get artifacts for this run
-      const artifactsURL = `${this.baseURL}/actions/runs/${successfulRun.id}/artifacts`;
-      
-      const headers = {
-        'Accept': 'application/vnd.github+json',
-      };
-      
-      if (GITHUB_TOKEN) {
-        headers['Authorization'] = `Bearer ${GITHUB_TOKEN}`;
-      }
-      
-      const response = await fetch(artifactsURL, { headers });
-      const data = await response.json();
-      
-      // Find the Reading Roundup artifact
-      const artifact = data.artifacts?.find(a => a.name.startsWith('Reading-Roundup-'));
-      
-      if (artifact) {
-        return {
-          downloadURL: artifact.archive_download_url,
-          name: artifact.name,
-          runNumber: successfulRun.run_number,
-          createdAt: artifact.created_at
-        };
-      }
-      
-      return null;
-      
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/latest-artifact`, {
+        method: "GET"
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json();
+
+      if (!data || !data.downloadURL) return null;
+      return data;
     } catch (error) {
-      console.error('Error getting artifact:', error);
+      console.error("Error fetching latest artifact URL:", error);
       return null;
     }
   }
 
+  async triggerTrendAnalysis(payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/trends/trigger`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Explicit-Trend-Run": "true"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.detail || data.error || `HTTP ${res.status}` };
+      }
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getCurrentWeekTrends() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/trends/current-week`, {
+        method: "GET"
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.detail || `HTTP ${res.status}`, trends: [] };
+      }
+      return { success: true, week_key: data.week_key, count: data.count || 0, trends: data.trends || [] };
+    } catch (err) {
+      return { success: false, error: err.message, trends: [] };
+    }
+  }
+
+  async getTrendsByRun(runId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/trends/by-run?run_id=${encodeURIComponent(runId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, trends: [] };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message, trends: [] };
+    }
+  }
+
+  async getLatestTrends() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/trends/latest`, { method: "GET" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, trends: [] };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message, trends: [] };
+    }
+  }
+
+  async getTrendRunStatus(runId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/trends/run-status?run_id=${encodeURIComponent(runId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async downloadLatestArtifactZip() {
+    const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
+      method: "GET"
+    });
+
+    if (res.status === 404) {
+      return { success: false, error: "No PDF available yet. Run the pipeline first to generate a PDF." };
+    }
+
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try {
+        const data = await res.json();
+        message = data.detail || message;
+      } catch (_e) {
+        // no-op
+      }
+      return { success: false, error: message };
+    }
+
+    const blob = await res.blob();
+    const contentDisposition = res.headers.get("content-disposition") || "";
+    const match = contentDisposition.match(/filename="([^"]+)"/i);
+    const filename = match?.[1] || "latest-artifact.zip";
+    return { success: true, blob, filename };
+  }
+
+  async getCurrentWeekStars() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars/current-week`, { method: "GET" });
+      if (!res.ok) return { success: false, stars: [] };
+      const data = await res.json();
+      return { success: true, stars: data.stars || [] };
+    } catch (err) {
+      return { success: false, error: err.message, stars: [] };
+    }
+  }
+
+  async addStar(article) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: article.title,
+          url: article.url,
+          publication: article.publication,
+          summary: article.summary,
+          author: article.journalist || "Unknown",
+          score: Number(article.score || 0),
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async removeStarById(starId) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars/${encodeURIComponent(starId)}`, {
+        method: "DELETE"
+      });
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async removeStarByArticleId(articleId) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/stars`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ article_id: articleId })
+      });
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getSourceLists() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/lists`, { method: "GET" });
+      if (!res.ok) return { success: false, lists: [] };
+      const data = await res.json();
+      return { success: true, lists: data.lists || [] };
+    } catch (err) {
+      return { success: false, error: err.message, lists: [] };
+    }
+  }
+
+  async createSourceList(payload) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/lists`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async runSourceMetadata(listName) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/metadata/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ list_name: listName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, job_id: data.job_id };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getSourceMetadataProgress(jobId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/sources/metadata/progress?job_id=${encodeURIComponent(jobId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getSourceMetadataReport(listName, runId = "") {
+    try {
+      const query = runId
+        ? `?list_name=${encodeURIComponent(listName)}&run_id=${encodeURIComponent(runId)}`
+        : `?list_name=${encodeURIComponent(listName)}`;
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/sources/metadata/report${query}`, { method: "GET" });
+      if (!res.ok) return { success: false, summary: null, details: [] };
+      const data = await res.json();
+      return { success: true, summary: data.summary, details: data.details || [] };
+    } catch (err) {
+      return { success: false, error: err.message, summary: null, details: [] };
+    }
+  }
+
+  // Backward compatibility if anything else still calls this
+  async getWorkflowRuns() {
+    return [];
+  }
 }
 
-export default new GitHubService();
+export default new PipelineService();

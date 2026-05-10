@@ -1,9 +1,22 @@
-import { RefreshCw, ExternalLink, User, Calendar, Download } from 'lucide-react';
+import { RefreshCw, ExternalLink, User, Calendar, Download, Star } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
-function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF }) {
+function ArticlesList({
+  articles,
+  onRunAgain,
+  lastRunTime,
+  onDownloadPDF,
+  hasPDF,
+  starredByArticleId = {},
+  weekStars = [],
+  articleIdFromUrl = (u) => u,
+  onToggleStar = () => {},
+  showStarredOnly = false,
+  onShowAll = () => {},
+  onShowStarredOnly = () => {},
+}) {
   // Filter articles from the last run only
-  const recentArticles = articles.filter(article => {
+  const filtered = articles.filter(article => {
     if (!lastRunTime) return true; // If no lastRunTime, show all articles
     
     const articleDate = new Date(article.collectedDate);
@@ -15,6 +28,26 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
     return articleDate >= new Date(runDate.getTime() - bufferTime);
   });
 
+  filtered.sort((a, b) => {
+    const scoreA = Number(a.score || 0);
+    const scoreB = Number(b.score || 0);
+    if (scoreB !== scoreA) return scoreB - scoreA; // higher score first
+    return new Date(b.collectedDate) - new Date(a.collectedDate); // tie-breaker: newer first
+  });
+
+  const recentArticles = filtered;
+  const starredWeekArticles = (weekStars || []).map((s, i) => ({
+    id: s.star_id || `star-${i}`,
+    title: s.title || "Untitled",
+    url: s.url || "#",
+    publication: s.publication || "Unknown",
+    journalist: s.author || "Unknown",
+    summary: s.summary || "No summary available",
+    collectedDate: s.starred_at || "",
+    score: Number(s.score || 0),
+  }));
+  const displayedArticles = showStarredOnly ? starredWeekArticles : recentArticles;
+
   // Also calculate one week ago for additional context
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
@@ -25,7 +58,7 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
   });
 
   return (
-    <div className="w-full h-full flex flex-col">
+    <div className="w-full h-full flex flex-col px-4 sm:px-6">
       {/* Header with Home button */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
         <div>
@@ -42,20 +75,34 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
           )}
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           {hasPDF && (
             <button
               onClick={onDownloadPDF}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-white text-[#b8860b] font-semibold rounded-lg border-2 border-[#b8860b] hover:bg-[#faf8f3] transition-all shadow-md hover:shadow-lg"
+              className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 bg-white text-[#b8860b] font-semibold rounded-lg border-2 border-[#b8860b] hover:bg-[#faf8f3] transition-all shadow-md hover:shadow-lg"
             >
               <Download className="w-5 h-5" />
               Download PDF
             </button>
           )}
+
+          <button
+            onClick={onShowAll}
+            className={`inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg border ${!showStarredOnly ? "bg-[#b8860b] text-black border-[#b8860b]" : "bg-white text-gray-700 border-gray-300"}`}
+          >
+            All This Run
+          </button>
+
+          <button
+            onClick={onShowStarredOnly}
+            className={`inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 rounded-lg border ${showStarredOnly ? "bg-[#b8860b] text-black border-[#b8860b]" : "bg-white text-gray-700 border-gray-300"}`}
+          >
+            Starred This Week ({starredWeekArticles.length})
+          </button>
           
           <button
             onClick={onRunAgain}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-[#b8860b] text-black font-semibold rounded-lg hover:bg-[#8b6914] transition-colors shadow-md hover:shadow-lg"
+            className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 bg-[#b8860b] text-black font-semibold rounded-lg hover:bg-[#8b6914] transition-colors shadow-md hover:shadow-lg"
           >
             <RefreshCw className="w-5 h-5" />
             Home
@@ -64,7 +111,7 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
       </div>
 
       {/* Success Banner */}
-      <div className="mb-8 p-5 bg-[#faf8f3] border-2 border-[#b8860b] rounded-lg flex items-center gap-4">
+      <div className="mb-8 p-4 sm:p-5 bg-[#faf8f3] border-2 border-[#b8860b] rounded-lg flex items-start sm:items-center gap-3 sm:gap-4">
         <div className="flex-shrink-0">
           <div className="w-10 h-10 rounded-full bg-[#b8860b] flex items-center justify-center">
             <span className="text-white text-xl font-bold">✓</span>
@@ -79,27 +126,50 @@ function ArticlesList({ articles, onRunAgain, lastRunTime, onDownloadPDF, hasPDF
       </div>
 
       {/* No articles message */}
-      {recentArticles.length === 0 && (
+      {displayedArticles.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-gray-600 text-lg">No articles found from the latest run.</p>
-          <p className="text-gray-500 mt-2">Try running the pipeline to collect new articles.</p>
+          <p className="text-gray-600 text-lg">
+            {showStarredOnly ? "No starred summaries for this week yet." : "No articles found from the latest run."}
+          </p>
+          <p className="text-gray-500 mt-2">
+            {showStarredOnly ? "Star summaries to pin them for the week." : "Try running the pipeline to collect new articles."}
+          </p>
         </div>
       )}
 
       {/* Articles Grid */}
-      {recentArticles.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
-          {recentArticles.map(article => (
+      {displayedArticles.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+          {displayedArticles.map(article => (
             <div 
               key={article.id}
-              className="bg-white rounded-lg shadow-lg border border-gray-200 p-6 hover:shadow-xl hover:border-[#b8860b] transition-all flex flex-col h-full"
+              className="bg-white rounded-lg shadow-lg border border-gray-200 p-4 sm:p-6 hover:shadow-xl hover:border-[#b8860b] transition-all flex flex-col h-full"
             >
               {/* Article Header */}
               <div className="mb-4">
                 {/* Full title - no truncation */}
-                <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                  {article.title}
-                </h3>
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                    {article.title}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => onToggleStar(article)}
+                    className="shrink-0 p-1 rounded hover:bg-gray-100"
+                    aria-label="Toggle star"
+                    title="Star this summary"
+                  >
+                    {(() => {
+                      const aid = articleIdFromUrl(article.url);
+                      const isStarred = !!starredByArticleId[aid];
+                      return (
+                        <Star
+                          className={`w-5 h-5 ${isStarred ? "fill-[#b8860b] text-[#b8860b]" : "text-gray-400"}`}
+                        />
+                      );
+                    })()}
+                  </button>
+                </div>
                 
                 {/* Meta info */}
                 <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">

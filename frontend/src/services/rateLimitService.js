@@ -7,6 +7,31 @@ class RateLimitService {
   constructor() {
     this.COOLDOWN_MINUTES = 30; // 30 minute cooldown between runs
     this.STORAGE_KEY = 'pipeline_rate_limit';
+    this.STATUS_HEAL_KEY = 'pipeline_status_heal';
+  }
+
+  getHealState() {
+    const raw = localStorage.getItem(this.STATUS_HEAL_KEY);
+    if (!raw) return { terminalStreak: 0, lastStatus: "" };
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        terminalStreak: Number(parsed.terminalStreak || 0),
+        lastStatus: String(parsed.lastStatus || ""),
+      };
+    } catch {
+      return { terminalStreak: 0, lastStatus: "" };
+    }
+  }
+
+  saveHealState(state) {
+    try {
+      localStorage.setItem(this.STATUS_HEAL_KEY, JSON.stringify(state));
+    } catch (_e) {}
+  }
+
+  clearHealState() {
+    localStorage.removeItem(this.STATUS_HEAL_KEY);
   }
 
   /**
@@ -136,6 +161,9 @@ class RateLimitService {
     }
 
     if (!check.timeRemainingMs) {
+      if (check.reason === 'Pipeline is currently running') {
+        return 'Running...';
+      }
       return 'Calculating...';
     }
 
@@ -160,7 +188,45 @@ class RateLimitService {
         isRunning: false,
         lastRunComplete: Date.now()
       });
+      this.clearHealState();
       console.log('Manually cleared running state');
+    }
+  }
+
+  /**
+   * Sync local rate-limit state from backend /pipeline/status response
+   */
+  syncFromBackendStatus(backendStatus) {
+    if (!backendStatus) return;
+
+    const status = backendStatus.status;
+    const lastTriggeredAtSec = backendStatus.lastTriggeredAt;
+    const lastTriggeredAtMs = lastTriggeredAtSec ? Number(lastTriggeredAtSec) * 1000 : null;
+    const current = this.getState() || {};
+
+    if (status === 'queued' || status === 'running' || status === 'in_progress') {
+      this.clearHealState();
+      this.saveState({
+        lastRunStart: lastTriggeredAtMs || current.lastRunStart || Date.now(),
+        isRunning: true,
+        lastRunComplete: null
+      });
+      return;
+    }
+
+    // Auto-heal stale "running" only after 2 consecutive terminal polls.
+    const terminal = ['success', 'failed', 'idle'].includes(String(status || '').toLowerCase());
+    const heal = this.getHealState();
+    const sameAsLast = heal.lastStatus === status;
+    const nextStreak = terminal ? (sameAsLast ? heal.terminalStreak + 1 : 1) : 0;
+    this.saveHealState({ terminalStreak: nextStreak, lastStatus: status || "" });
+
+    if (terminal && nextStreak >= 2) {
+      this.saveState({
+        lastRunStart: lastTriggeredAtMs || current.lastRunStart || null,
+        isRunning: false,
+        lastRunComplete: lastTriggeredAtMs || current.lastRunComplete || current.lastRunStart || Date.now()
+      });
     }
   }
 
@@ -169,6 +235,7 @@ class RateLimitService {
    */
   clearAll() {
     localStorage.removeItem(this.STORAGE_KEY);
+    localStorage.removeItem(this.STATUS_HEAL_KEY);
     console.log('Rate limit data cleared');
   }
 

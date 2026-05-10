@@ -8,6 +8,8 @@ import sys
 from datetime import datetime
 from google_storage import GoogleSheetsDB
 
+DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
+
 # Import your existing agents
 try:
     from AgentCollector import CustomArticleCollector
@@ -29,6 +31,22 @@ except ImportError as e:
     sys.exit(1)
 
 
+def _parse_keywords_override() -> list[str]:
+    raw = os.getenv("KEYWORDS_OVERRIDE", "").strip()
+    if not raw:
+        return []
+    return [k.strip().lower() for k in raw.split(",") if k.strip()]
+
+
+def _parse_topic() -> str:
+    raw = os.getenv("TOPIC", "finance").strip().lower()
+    return raw if raw in {"finance", "luxury"} else "finance"
+
+
+def _parse_source_list_name() -> str:
+    return os.getenv("SOURCE_LIST_NAME", "").strip()
+
+
 class PipelineRunner:
     """
     Main pipeline orchestrator
@@ -44,7 +62,18 @@ class PipelineRunner:
         
         # Initialize your agents
         print("🤖 Initializing Article Collector...")
-        self.collector = CustomArticleCollector()
+        self.topic = _parse_topic()
+        self.source_list_name = _parse_source_list_name()
+        print(f"Using topic: {self.topic}")
+        if self.source_list_name:
+            print(f"Using source list: {self.source_list_name}")
+        self.collector = CustomArticleCollector(topic=self.topic, source_list_name=self.source_list_name or None)
+
+        
+        override_keywords = _parse_keywords_override()
+        if override_keywords:
+            self.collector.set_keywords_override(override_keywords)
+            print(f"Using keyword override ({len(override_keywords)} keywords)")
         
         print("🤖 Initializing Article Summarizer...")
         self.summarizer = ArticleSummarizer()
@@ -72,6 +101,7 @@ class PipelineRunner:
             articles_data = []
             for idx, article in enumerate(articles):
                 author = article.author if hasattr(article, 'author') and article.author else 'Unknown'
+                score = float(getattr(article, "relevance_score", 0.0) or 0.0)
 
                 article_dict = {
                     'id': f"article-{datetime.now().strftime('%Y%m%d')}-{idx+1}",
@@ -82,6 +112,7 @@ class PipelineRunner:
                     'journalist': 'Unknown',  # Placeholder
                     'author': author,      # Placeholder
                     'summary': '',            # Will be filled by summarizer
+                    'score': round(score, 2),
                 }
                 articles_data.append(article_dict)
             
@@ -230,21 +261,46 @@ class PipelineRunner:
         start_time = datetime.now()
         
         try:
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: initializing")
+            self.db.save_pipeline_progress("initializing", 0, 4, "Initializing pipeline")
+
             # Step 1: Collect articles (NO author extraction)
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: collecting")
+            self.db.save_pipeline_progress("collecting", 1, 4, "Collecting articles")
             articles_data = self.run_collection()
             
             # Step 2: Summarize and extract authors (AUTHOR EXTRACTION HERE)
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: summarizing")
+            self.db.save_pipeline_progress("summarizing", 2, 4, "Summarizing articles")
             summarized_articles = self.run_summarization(articles_data)
             
             # Step 3: Save to Google Sheets
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: final summarizing")
+            self.db.save_pipeline_progress("summarizing", 3, 3, "Finalizing output")
             print("\n💾 Saving to Google Sheets...")
             self.db.save_articles(summarized_articles)
             
             # Step 4: Generate PDF (renumber this)
             pdf_file = self.generate_pdf(summarized_articles)
+
+            # Step 4.5: Drive upload disabled (artifact ZIP is the active download path)
+            if pdf_file and os.path.exists(pdf_file):
+                print("\nℹ️  Skipping Google Drive upload (using GitHub artifact ZIP download path)")
+            else:
+                print("⚠️  No PDF file available")
             
             # Step 5: Save metadata
             self.save_run_metadata()
+
+            # Save pipeline stats for UI diagnostics (including zero-article runs)
+            self.db.save_pipeline_stats(len(summarized_articles))
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: complete")
+            self.db.save_pipeline_progress("complete", 4, 4, "Pipeline completed")
             
             # Summary
             end_time = datetime.now()
@@ -268,6 +324,9 @@ class PipelineRunner:
             }
             
         except Exception as e:
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] calling save_pipeline_progress: failed")
+            self.db.save_pipeline_progress("failed", 4, 4, f"Pipeline failed: {str(e)[:200]}")
             print("\n" + "="*60)
             print("❌ PIPELINE FAILED")
             print("="*60)

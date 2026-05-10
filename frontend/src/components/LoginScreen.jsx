@@ -13,12 +13,10 @@ function LoginScreen() {
     setError('');
     setIsLoading(true);
 
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const success = login(password);
+    const result = await login(password);
     
-    if (!success) {
-      setError('Incorrect password. Please try again.');
+    if (!result.success) {
+      setError(result.error || 'Incorrect password. Please try again.');
       setPassword('');
     }
     

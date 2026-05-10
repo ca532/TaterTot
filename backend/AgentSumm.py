@@ -3,6 +3,7 @@ from transformers import pipeline
 from dataclasses import dataclass
 from typing import List, Optional
 from urllib.parse import urlparse
+import os
 import re
 import json
 from bs4 import BeautifulSoup
@@ -26,10 +27,12 @@ class ArticleSummary:
     topics: List[str] = None
 
 class ArticleSummarizer:
-    def __init__(self, model: str = "facebook/bart-large-cnn"):
-        """Initialize the summarizer with BART CNN model"""
-        print(f"Loading model: {model} ... this may take a moment.")
-        self.summarizer = pipeline("summarization", model=model)
+    def __init__(self, model: str = None):
+        """Initialize summarizer model from env, defaulting to BART."""
+        resolved_model = model or os.getenv("SUMMARIZER_MODEL", "facebook/bart-large-cnn")
+        print(f"Loading model: {resolved_model} ... this may take a moment.")
+        self.summarizer = pipeline("summarization", model=resolved_model)
+        self.is_promptable = "t5" in resolved_model.lower() or "flan" in resolved_model.lower()
         
         # Setup CloudScraper if available
         if CLOUDSCRAPER_AVAILABLE:
@@ -67,22 +70,36 @@ class ArticleSummarizer:
     ) -> Optional[ArticleSummary]:
         """Summarize an article focusing on luxury brands, jewelry pieces, and celebrities"""
         try:
-            # BART-CNN doesn't use prompts - just give it the article content
-            # Adding a prompt causes hallucinations!
-            
-            # Just use the article content directly
-            input_text = article_content[:4000]  # Use more context
-            
-            summary_text = self.summarizer(
-                input_text,
-                max_length=300,      # Longer summaries for more detail
-                min_length=120,      # Ensure substantial detail
-                do_sample=False,     # Deterministic output
-                truncation=True,
-                num_beams=6,         # Higher beam search for quality
-                length_penalty=1.0,  # No penalty for length
-                early_stopping=True
-            )[0]["summary_text"]
+            input_text = article_content[:4000]
+
+            if self.is_promptable:
+                prompt = (
+                    "Summarize this finance article for PR/media monitoring. "
+                    "Focus on market impact, institutions/companies, regulation/policy, and key numbers. "
+                    "Write one concise paragraph.\n\n"
+                    f"Article:\n{input_text}"
+                )
+                summary_text = self.summarizer(
+                    prompt,
+                    max_length=260,
+                    min_length=100,
+                    do_sample=False,
+                    truncation=True,
+                    num_beams=4,
+                    length_penalty=1.0,
+                    early_stopping=True
+                )[0]["summary_text"]
+            else:
+                summary_text = self.summarizer(
+                    input_text,
+                    max_length=300,
+                    min_length=120,
+                    do_sample=False,
+                    truncation=True,
+                    num_beams=6,
+                    length_penalty=1.0,
+                    early_stopping=True
+                )[0]["summary_text"]
 
             return ArticleSummary(
                 title=title,
@@ -162,7 +179,7 @@ def main():
     print("=" * 50)
 
     # Initialize summarizer
-    summarizer = ArticleSummarizer("facebook/bart-large-cnn")
+    summarizer = ArticleSummarizer()
     
     url = input("\nEnter article URL: ").strip()
     if not url:

@@ -1,0 +1,25 @@
+
+--- page 2 ---
+Secondary  Objectives  (Future  Enhancement):  
+
+--- page 7 ---
+●  Google  Sheets  API  (read/write)  ●  Google  Drive  API  (for  future  PDF  uploads)  
+
+--- page 8 ---
+●  latest_run_number  -  GitHub  Actions  run  number  for  tracking  ●  latest_run_url  -  Direct  link  to  workflow  run  for  debugging  ●  latest_pdf  -  Future:  Direct  download  link  ●  latest_pdf_view  -  Future:  View-only  link  
+●  Save  articles  (batch  append  for  efficiency)  ●  Retrieve  recent  articles  (with  limit  parameter)  ●  Store  run  metadata  (for  frontend  display)  ●  Future:  Manage  drafts  and  pitching  menu  
+●  Fetch  all  articles  from  Articles  sheet  ●  Retrieve  latest  run  information  from  Metadata  sheet  ●  Future:  Access  pitching  menu  and  drafts  
+
+--- page 10 ---
+1.  Manual  dispatch  (via  GitHub  UI  or  API  call  from  dashboard)  2.  Future:  Scheduled  cron  for  automated  bi-weekly  runs  
+
+--- page 13 ---
+future
+
+--- page 17 ---
+1.  Articles  sheet  with  columns:  ID,  Title,  URL,  Publication,  Journalist,  Summary,  Collected  Date  2.  Metadata  sheet  with  columns:  Key,  Value,  Updated  3.  Outreach  Drafts  sheet  (for  future  use)  with  columns:  ID,  Journalist,  Email,  Subject,  Body,  
+ 4.  Pitching  Menu  sheet  (for  future  use)  with  columns:  ID,  Topic,  Description,  Keywords,  Active  
+●  Google  Sheets  API  ●  Google  Drive  API  (for  future  PDF  uploads)  
+
+--- page 21 ---
+Future  enhancement  will  provide  direct  PDF  download  without  the  ZIP  extraction  step.  

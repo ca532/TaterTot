@@ -8,9 +8,12 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import json
 import os
+import time
 
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+
+DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
 
 
 class GoogleSheetsDB:
@@ -64,8 +67,21 @@ class GoogleSheetsDB:
             raise ValueError("No Sheet ID provided. Set GOOGLE_SHEET_ID env variable or pass sheet_id parameter")
         
         try:
-            self.spreadsheet = self.client.open_by_key(sheet_id)
-            print(f"✅ Connected to Google Sheet: {self.spreadsheet.title}")
+            last_err = None
+            for i in range(5):
+                try:
+                    self.spreadsheet = self.client.open_by_key(sheet_id)
+                    print(f"✅ Connected to Google Sheet: {self.spreadsheet.title}")
+                    break
+                except Exception as e:
+                    last_err = e
+                    msg = str(e)
+                    if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                        time.sleep(min(2 ** i, 20))
+                        continue
+                    raise
+            else:
+                raise last_err
         except Exception as e:
             raise ValueError(f"Failed to open spreadsheet with ID {sheet_id}: {str(e)}")
         
@@ -98,7 +114,8 @@ class GoogleSheetsDB:
                 article.get('publication', ''),
                 article.get('journalist', 'Unknown'),
                 article.get('summary', ''),
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                article.get('score', 0.0),
             ])
         
         # Append to sheet (keeps history)
@@ -362,6 +379,117 @@ class GoogleSheetsDB:
             
         except Exception as e:
             print(f"⚠️  Error saving artifact info: {str(e)}")
+
+    def save_pdf_links(self, download_link, view_link):
+        """
+        Save latest PDF links to Metadata sheet:
+        - latest_pdf
+        - latest_pdf_view
+        """
+        if not download_link and not view_link:
+            print("⚠️  No PDF links to save")
+            return
+
+        try:
+            try:
+                metadata_sheet = self.spreadsheet.worksheet('Metadata')
+            except Exception:
+                metadata_sheet = self.spreadsheet.add_worksheet(
+                    title='Metadata',
+                    rows=20,
+                    cols=3
+                )
+                metadata_sheet.update('A1:C1', [['Key', 'Value', 'Updated']])
+
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            def upsert_key(key, value):
+                if not value:
+                    return
+                try:
+                    cell = metadata_sheet.find(key)
+                    row_num = cell.row
+                    metadata_sheet.update(f'B{row_num}:C{row_num}', [[value, timestamp]])
+                except Exception:
+                    metadata_sheet.append_row([key, value, timestamp])
+
+            upsert_key('latest_pdf', download_link)
+            upsert_key('latest_pdf_view', view_link)
+
+            print("✅ Saved latest_pdf/latest_pdf_view to Metadata sheet")
+        except Exception as e:
+            print(f"⚠️  Error saving PDF links metadata: {str(e)}")
+
+    def save_pipeline_stats(self, articles_collected: int):
+        """
+        Save pipeline stats to Metadata sheet.
+        """
+        try:
+            try:
+                metadata_sheet = self.spreadsheet.worksheet('Metadata')
+            except Exception:
+                metadata_sheet = self.spreadsheet.add_worksheet(
+                    title='Metadata',
+                    rows=20,
+                    cols=3
+                )
+                metadata_sheet.update('A1:C1', [['Key', 'Value', 'Updated']])
+
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            key = 'latest_articles_collected'
+            value = str(int(articles_collected))
+
+            try:
+                cell = metadata_sheet.find(key)
+                row_num = cell.row
+                metadata_sheet.update(f'B{row_num}:C{row_num}', [[value, timestamp]])
+            except Exception:
+                metadata_sheet.append_row([key, value, timestamp])
+
+            print(f"✅ Saved {key}={value} to Metadata sheet")
+        except Exception as e:
+            print(f"⚠️  Error saving pipeline stats: {str(e)}")
+
+    def save_pipeline_progress(self, phase: str, current: int = 0, total: int = 0, message: str = ""):
+        """
+        Save live pipeline progress for UI consumption.
+        Keys written to Metadata:
+        - latest_pipeline_phase
+        - latest_pipeline_current
+        - latest_pipeline_total
+        - latest_pipeline_message
+        """
+        try:
+            try:
+                metadata_sheet = self.spreadsheet.worksheet('Metadata')
+            except Exception:
+                metadata_sheet = self.spreadsheet.add_worksheet(title='Metadata', rows=30, cols=3)
+                metadata_sheet.update('A1:C1', [['Key', 'Value', 'Updated']])
+
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            def upsert(key, value):
+                try:
+                    cell = metadata_sheet.find(key)
+                    row_num = cell.row
+                    metadata_sheet.update(f'B{row_num}:C{row_num}', [[str(value), timestamp]])
+                except Exception:
+                    metadata_sheet.append_row([key, str(value), timestamp])
+
+            if DEBUG_PROGRESS:
+                print(
+                    f"[PIPELINE_PROGRESS] phase={phase!r} current={current} total={total} "
+                    f"message={message!r} sheet={self.spreadsheet.title!r}"
+                )
+
+            upsert('latest_pipeline_phase', (phase or "").strip().lower())
+            upsert('latest_pipeline_current', int(current))
+            upsert('latest_pipeline_total', int(total))
+            upsert('latest_pipeline_message', message or "")
+            if DEBUG_PROGRESS:
+                print("[PIPELINE_PROGRESS] upsert complete: latest_pipeline_*")
+        except Exception as e:
+            print(f"⚠️ Error saving pipeline progress: {str(e)}")
     
     def update_draft_status(self, draft_id, approved=True):
         """
@@ -432,3 +560,5 @@ def test_connection():
 if __name__ == "__main__":
     # Run test when executed directly
     test_connection()
+
+
