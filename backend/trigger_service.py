@@ -1096,7 +1096,19 @@ async def pipeline_status(authorization: str = Header(default="")):
         cached = await _refresh_status_once(force_github=True)
 
     if cached.get("status") in {"success", "failed"}:
-        _metadata_upsert("latest_pipeline_status", cached.get("status") or "")
+        terminal_status = cached.get("status") or ""
+        terminal_phase = "complete" if terminal_status == "success" else "failed"
+        terminal_message = (
+            "Pipeline completed"
+            if terminal_status == "success"
+            else f"Pipeline {cached.get('conclusion') or 'failed'}"
+        )
+
+        _metadata_upsert("latest_pipeline_status", terminal_status)
+        _metadata_upsert("latest_pipeline_phase", terminal_phase)
+        _metadata_upsert("latest_pipeline_message", terminal_message)
+        _metadata_upsert("latest_pipeline_current", "4")
+        _metadata_upsert("latest_pipeline_total", "4")
         _metadata_upsert("current_pipeline_run_id", "")
 
     with STATE_LOCK:
