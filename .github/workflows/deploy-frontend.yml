@@ -3,7 +3,7 @@ name: Deploy Frontend to GitHub Pages
 on:
   push:
     branches:
-      - App-revamp
+      - master
     paths:
       - 'frontend/**'
   workflow_dispatch:
