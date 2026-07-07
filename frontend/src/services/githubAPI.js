@@ -435,6 +435,34 @@ class PipelineService {
     }
   }
 
+  async getWeeklyEmailConfig() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/weekly-email-config`, {
+        method: "GET"
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, config: data.config || {} };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async updateWeeklyEmailConfig(payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/weekly-email-config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, config: data.config || {} };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   // Backward compatibility if anything else still calls this
   async getWorkflowRuns() {
     return [];

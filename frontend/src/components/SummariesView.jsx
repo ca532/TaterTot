@@ -11,6 +11,7 @@ import PipelineStatusCard from "./pipeline/PipelineStatusCard";
 import StatsCards from "./pipeline/StatsCards";
 import logo from "../assets/ca-circle.png";
 import ManageTopicsPage from "./ManageTopicsPage";
+import WeeklyEmailSettings from "./WeeklyEmailSettings";
 
 function SummariesView() {
   const [viewStatus, setViewStatus] = useState("idle"); // idle|running|complete
@@ -372,6 +373,8 @@ const handleRunPipeline = async () => {
             <option value={ADD_NEW_OPTION}>Add new category/topic</option>
           </select>
         </div>
+
+        <WeeklyEmailSettings sourceLists={sourceLists} />
 
         <PipelineStatusCard
           runStatus={runStatus}

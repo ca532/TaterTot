@@ -108,6 +108,12 @@ class TriggerRequest(BaseModel):
     list_name: Optional[str] = None
 
 
+class WeeklyEmailConfigRequest(BaseModel):
+    topic: Literal["finance", "luxury"] = "finance"
+    source_list_name: Optional[str] = ""
+    keywords: Optional[str] = ""
+
+
 class LoginRequest(BaseModel):
     password: str
 
@@ -457,6 +463,41 @@ def _is_explicit_trend_request(request: Request) -> bool:
     return v in {"1", "true", "yes"}
 
 
+def _normalize_weekly_keywords(raw: Optional[str]) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    cleaned = []
+    seen = set()
+    for p in parts:
+        v = p[:60]
+        key = v.lower()
+        if key not in seen:
+            seen.add(key)
+            cleaned.append(v)
+
+    if cleaned and len(cleaned) < 5:
+        raise HTTPException(status_code=400, detail="At least 5 keywords required when provided")
+    if len(cleaned) > 25:
+        raise HTTPException(status_code=400, detail="Maximum 25 keywords")
+
+    return ", ".join(cleaned)
+
+
+def _weekly_config_payload() -> dict:
+    topic = (_metadata_get("weekly_topic") or "finance").strip().lower()
+    if topic not in {"finance", "luxury"}:
+        topic = "finance"
+
+    return {
+        "topic": topic,
+        "source_list_name": (_metadata_get("weekly_source_list_name") or "").strip(),
+        "keywords": (_metadata_get("weekly_keywords") or "").strip(),
+    }
+
+
 def _has_active_source_rows(list_name: str) -> bool:
     ln = (list_name or "").strip()
     if not ln:
@@ -523,6 +564,33 @@ def auth_refresh(request: Request, req: RefreshRequest, response: Response):
 def auth_logout(response: Response):
     response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/")
     return {"ok": True}
+
+
+@app.get("/weekly-email-config")
+def get_weekly_email_config(authorization: str = Header(default="")):
+    _check_auth(authorization)
+    return {"ok": True, "config": _weekly_config_payload()}
+
+
+@app.put("/weekly-email-config")
+def update_weekly_email_config(req: WeeklyEmailConfigRequest, authorization: str = Header(default="")):
+    _check_auth(authorization)
+
+    topic = _normalize_topic(req.topic)
+    source_list_name = (req.source_list_name or "").strip()
+    keywords = _normalize_weekly_keywords(req.keywords)
+
+    if source_list_name and not _has_active_source_rows(source_list_name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"source_list_name '{source_list_name}' not found or has no active rows",
+        )
+
+    _metadata_upsert("weekly_topic", topic)
+    _metadata_upsert("weekly_source_list_name", source_list_name)
+    _metadata_upsert("weekly_keywords", keywords)
+
+    return {"ok": True, "config": _weekly_config_payload()}
 
 
 @app.get("/stars")
