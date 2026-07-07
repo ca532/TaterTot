@@ -2,13 +2,8 @@ import { useEffect, useState } from "react";
 import { Mail, Save } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 
-function inferPipelineTopic(sourceListName) {
-  const value = String(sourceListName || "").toLowerCase();
-  if (value.includes("luxury")) return "luxury";
-  return "finance";
-}
-
 export default function WeeklyEmailSettings({ sourceLists = [] }) {
+  const [topic, setTopic] = useState("finance");
   const [sourceListName, setSourceListName] = useState("");
   const [keywords, setKeywords] = useState("");
   const [status, setStatus] = useState("");
@@ -26,6 +21,7 @@ export default function WeeklyEmailSettings({ sourceLists = [] }) {
       const res = await githubAPI.getWeeklyEmailConfig();
       if (!mounted || !res.success) return;
 
+      setTopic(res.config.topic || "finance");
       setSourceListName(res.config.source_list_name || "");
       setKeywords(res.config.keywords || "");
     };
@@ -41,7 +37,7 @@ export default function WeeklyEmailSettings({ sourceLists = [] }) {
     setStatus("");
 
     const res = await githubAPI.updateWeeklyEmailConfig({
-      topic: inferPipelineTopic(sourceListName),
+      topic,
       source_list_name: sourceListName,
       keywords,
     });
@@ -63,20 +59,34 @@ export default function WeeklyEmailSettings({ sourceLists = [] }) {
         <h3 className="text-base font-bold text-gray-900">Weekly Email Settings</h3>
       </div>
 
-      <div className="mb-3">
-        <label className="block text-sm font-semibold mb-1">Pipeline Topic</label>
-        <select
-          value={sourceListName}
-          onChange={(e) => setSourceListName(e.target.value)}
-          className="w-full p-2 border border-gray-300 rounded"
-        >
-          <option value="">Use default topics</option>
-          {sourceLists.map((s) => (
-            <option key={s.list_name} value={s.list_name}>
-              {s.list_name} ({s.active_rows}/{s.total_rows} active)
-            </option>
-          ))}
-        </select>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className="block text-sm font-semibold mb-1">Pipeline Topic</label>
+          <select
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            className="w-full p-2 border border-gray-300 rounded"
+          >
+            <option value="finance">Finance</option>
+            <option value="luxury">Luxury</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold mb-1">Source List</label>
+          <select
+            value={sourceListName}
+            onChange={(e) => setSourceListName(e.target.value)}
+            className="w-full p-2 border border-gray-300 rounded"
+          >
+            <option value="">Use pipeline default sources</option>
+            {sourceLists.map((s) => (
+              <option key={s.list_name} value={s.list_name}>
+                {s.list_name} ({s.active_rows}/{s.total_rows} active)
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <label className="block text-sm font-semibold mb-1">Weekly Keywords</label>
