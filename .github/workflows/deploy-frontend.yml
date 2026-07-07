@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - App-revamp
     paths:
       - 'frontend/**'
   workflow_dispatch:
