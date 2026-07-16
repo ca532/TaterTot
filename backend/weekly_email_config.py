@@ -14,14 +14,10 @@ DEFAULTS = {
 TOPIC_DEFAULTS = {
     "finance": {
         "topic_name": "finance",
-        "pipeline_topic": "finance",
-        "source_list_name": "",
         "keywords": "",
     },
     "luxury": {
         "topic_name": "luxury",
-        "pipeline_topic": "luxury",
-        "source_list_name": "",
         "keywords": "",
     },
 }
@@ -72,8 +68,8 @@ def read_config() -> Dict[str, str]:
 
     topic = values["weekly_topic"].strip() or "finance"
     topic_cfg = read_topic_config(topic)
-    pipeline_topic = topic_cfg["pipeline_topic"]
-    source_list_name = values["weekly_source_list_name"].strip() or topic_cfg["source_list_name"]
+    pipeline_topic = infer_pipeline_topic(topic_cfg["topic_name"], topic_cfg["keywords"])
+    source_list_name = values["weekly_source_list_name"].strip() or topic_cfg["topic_name"]
     keywords = values["weekly_keywords"].strip() or topic_cfg["keywords"]
 
     return {
@@ -96,6 +92,16 @@ def _clean_keywords(raw: str) -> str:
     return ", ".join(out)
 
 
+def infer_pipeline_topic(topic_name: str, keywords: str = "") -> str:
+    text = " ".join([topic_name or "", keywords or ""]).lower()
+    luxury_terms = {
+        "luxury", "jewellery", "jewelry", "fashion", "watch", "watches", "horology",
+        "diamond", "diamonds", "cartier", "tiffany", "bulgari", "chanel", "dior",
+        "haute couture", "timepiece", "gem", "gems", "royal", "red carpet",
+    }
+    return "luxury" if any(term in text for term in luxury_terms) else "finance"
+
+
 def read_topic_config(topic_name: str) -> Dict[str, str]:
     wanted = (topic_name or "finance").strip().lower()
     ss = _spreadsheet()
@@ -113,13 +119,8 @@ def read_topic_config(topic_name: str) -> Dict[str, str]:
         active = str(row.get("active", "TRUE")).strip().upper() != "FALSE"
         if not active:
             break
-        pipeline_topic = str(row.get("pipeline_topic", "")).strip().lower()
-        if pipeline_topic not in {"finance", "luxury"}:
-            pipeline_topic = "finance"
         return {
             "topic_name": name,
-            "pipeline_topic": pipeline_topic,
-            "source_list_name": str(row.get("source_list_name", "")).strip(),
             "keywords": _clean_keywords(str(row.get("keywords", "")).strip()),
         }
 

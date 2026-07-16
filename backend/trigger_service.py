@@ -506,16 +506,12 @@ def _topic_configs() -> list[dict]:
     defaults = [
         {
             "topic_name": "finance",
-            "pipeline_topic": "finance",
-            "source_list_name": "",
             "keywords": "",
             "keyword_count": 0,
             "active": True,
         },
         {
             "topic_name": "luxury",
-            "pipeline_topic": "luxury",
-            "source_list_name": "",
             "keywords": "",
             "keyword_count": 0,
             "active": True,
@@ -527,10 +523,10 @@ def _topic_configs() -> list[dict]:
         try:
             ws = ss.worksheet(TOPIC_CONFIG_SHEET)
         except Exception:
-            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=6)
+            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=4)
             ws.update(
-                range_name="A1:F1",
-                values=[["topic_name", "pipeline_topic", "source_list_name", "keywords", "active", "updated"]],
+                range_name="A1:D1",
+                values=[["topic_name", "keywords", "active", "updated"]],
             )
             return defaults
 
@@ -547,14 +543,9 @@ def _topic_configs() -> list[dict]:
         active = str(row.get("active", "TRUE")).strip().upper() != "FALSE"
         if not active:
             continue
-        pipeline_topic = str(row.get("pipeline_topic", "")).strip().lower()
-        if pipeline_topic not in {"finance", "luxury"}:
-            pipeline_topic = "finance"
         keywords = ", ".join(_split_keywords(str(row.get("keywords", "")).strip()))
         configs.append({
             "topic_name": topic_name,
-            "pipeline_topic": pipeline_topic,
-            "source_list_name": str(row.get("source_list_name", "")).strip(),
             "keywords": keywords,
             "keyword_count": len(_split_keywords(keywords)),
             "active": True,
@@ -674,7 +665,7 @@ def update_weekly_email_config(req: WeeklyEmailConfigRequest, authorization: str
     if not topic_config:
         raise HTTPException(status_code=400, detail=f"topic '{topic}' not found in {TOPIC_CONFIG_SHEET}")
 
-    source_list_name = (req.source_list_name or "").strip() or topic_config.get("source_list_name", "").strip()
+    source_list_name = (req.source_list_name or "").strip() or topic
     keywords = _normalize_weekly_keywords(req.keywords)
 
     if source_list_name and not _has_active_source_rows(source_list_name):
