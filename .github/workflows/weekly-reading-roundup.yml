@@ -1,0 +1,172 @@
+name: Weekly Reading Roundup Email
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Runs at 08:00 and 09:00 UTC every Monday.
+    # The guard step allows only 09:00 Europe/London, covering GMT/BST.
+    - cron: "0 8 * * 1"
+    - cron: "0 9 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-reading-roundup-email
+  cancel-in-progress: false
+
+jobs:
+  weekly-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check UK schedule gate
+        id: uk-time
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LONDON_HOUR="$(TZ=Europe/London date +%H)"
+          if [ "$LONDON_HOUR" != "09" ]; then
+            echo "Skipping because London hour is $LONDON_HOUR, not 09."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: steps.uk-time.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python 3.10
+        if: steps.uk-time.outputs.should_run == 'true'
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Python dependencies
+        if: steps.uk-time.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd backend
+          for i in 1 2 3; do
+            pip install -r requirements.txt && break
+            echo "pip install failed (attempt $i). Retrying..."
+            sleep 10
+          done
+
+      - name: Setup Google Service Account
+        if: steps.uk-time.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd backend
+          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > credentials.json
+
+      - name: Load weekly email config
+        if: steps.uk-time.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -u backend/weekly_email_config.py export-env >> "$GITHUB_ENV"
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+      - name: Run Article Collection Pipeline
+        if: steps.uk-time.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd backend
+
+          for i in 1 2; do
+            echo "Starting weekly pipeline attempt $i..."
+            set +e
+            timeout 110m python -u pipeline_runner.py
+            exit_code=$?
+            set -e
+
+            if [ "$exit_code" -eq 0 ]; then
+              echo "Pipeline succeeded on attempt $i."
+              break
+            fi
+
+            if [ "$i" -lt 2 ]; then
+              echo "Retrying in 15s..."
+              sleep 15
+            else
+              echo "All attempts failed."
+              exit "$exit_code"
+            fi
+          done
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SUMMARIZER_MODEL: google/flan-t5-base
+
+      - name: Find PDF and Get Date
+        if: steps.uk-time.outputs.should_run == 'true'
+        id: find-pdf
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d "backend/output" ]; then
+            echo "has_pdf=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PDF_FILE=$(find backend/output -name "*.pdf" -type f | head -n 1)
+          if [ -z "${PDF_FILE:-}" ]; then
+            echo "has_pdf=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "has_pdf=true" >> "$GITHUB_OUTPUT"
+          echo "pdf_path=$PDF_FILE" >> "$GITHUB_OUTPUT"
+          echo "current_date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload PDF artifact
+        if: steps.uk-time.outputs.should_run == 'true' && success() && steps.find-pdf.outputs.has_pdf == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Weekly-Reading-Roundup-${{ steps.find-pdf.outputs.current_date }}.pdf
+          path: ${{ steps.find-pdf.outputs.pdf_path }}
+          retention-days: 90
+
+      - name: Email Reading Roundup PDF
+        if: steps.uk-time.outputs.should_run == 'true' && success() && steps.find-pdf.outputs.has_pdf == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          secure: false
+          from: ${{ secrets.MAIL_FROM }}
+          to: ${{ secrets.MAIL_TO }}
+          subject: Reading Roundup - ${{ steps.find-pdf.outputs.current_date }}
+          body: |
+            Attached is this week's Reading Roundup PDF.
+
+            Topic: ${{ env.TOPIC }}
+            Source list: ${{ env.SOURCE_LIST_NAME }}
+
+            Workflow run:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          attachments: ${{ steps.find-pdf.outputs.pdf_path }}
+
+      - name: Cleanup credentials
+        if: steps.uk-time.outputs.should_run == 'true' && always()
+        shell: bash
+        run: |
+          cd backend
+          rm -f credentials.json
