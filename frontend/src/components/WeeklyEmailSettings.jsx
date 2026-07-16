@@ -73,13 +73,13 @@ export default function WeeklyEmailSettings({ sourceLists = [] }) {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold mb-1">Source List</label>
+          <label className="block text-sm font-semibold mb-1">Publication Topic</label>
           <select
             value={sourceListName}
             onChange={(e) => setSourceListName(e.target.value)}
             className="w-full p-2 border border-gray-300 rounded"
           >
-            <option value="">Use pipeline default sources</option>
+            <option value="">Use default publication topics</option>
             {sourceLists.map((s) => (
               <option key={s.list_name} value={s.list_name}>
                 {s.list_name} ({s.active_rows}/{s.total_rows} active)
