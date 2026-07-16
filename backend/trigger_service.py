@@ -148,6 +148,7 @@ class SourceRowInput(BaseModel):
 class SourceListCreateRequest(BaseModel):
     list_name: str
     sources: List[SourceRowInput]
+    keywords: Optional[str] = ""
 
 
 class SourceMetadataRunRequest(BaseModel):
@@ -562,6 +563,34 @@ def _topic_config_for(topic_name: str) -> Optional[dict]:
         if cfg["topic_name"].strip().lower() == wanted:
             return cfg
     return None
+
+
+def _topic_config_upsert(topic_name: str, keywords: str) -> None:
+    topic = (topic_name or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="topic_name is required")
+
+    clean_keywords = _normalize_weekly_keywords(keywords)
+    ss = _load_main_spreadsheet()
+    try:
+        ws = ss.worksheet(TOPIC_CONFIG_SHEET)
+    except Exception:
+        ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=4)
+
+    headers = ["topic_name", "keywords", "active", "updated"]
+    _ensure_ws_headers(ws, headers)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    values = ws.get_all_values()
+    row_idx = None
+    for i, row in enumerate(values[1:], start=2):
+        if row and str(row[0]).strip().lower() == topic.lower():
+            row_idx = i
+            break
+
+    if row_idx:
+        ws.update(range_name=f"A{row_idx}:D{row_idx}", values=[[topic, clean_keywords, "TRUE", today]])
+    else:
+        ws.append_row([topic, clean_keywords, "TRUE", today], value_input_option="USER_ENTERED")
 
 
 def _weekly_config_payload() -> dict:
@@ -1658,6 +1687,7 @@ def create_source_list(req: SourceListCreateRequest, authorization: str = Header
         ])
 
     ws.append_rows(rows, value_input_option="USER_ENTERED")
+    _topic_config_upsert(list_name, req.keywords or "")
     return {"ok": True, "list_name": list_name, "inserted": len(rows)}
 
 

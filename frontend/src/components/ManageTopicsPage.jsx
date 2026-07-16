@@ -3,6 +3,7 @@ import githubAPI from "../services/githubAPI";
 
 export default function ManageTopicsPage({ onBack, onSaved }) {
   const [listName, setListName] = useState("");
+  const [keywords, setKeywords] = useState("");
   const [sourceInput, setSourceInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
@@ -14,6 +15,11 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
     if (!progress.total) return 0;
     return Math.min(100, Math.round((progress.current / progress.total) * 100));
   }, [progress]);
+
+  const keywordCount = keywords
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean).length;
 
   const parseSourceRows = (raw) =>
     raw
@@ -34,9 +40,11 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
     if (!ln) return alert("Enter topic/list name.");
     const sources = parseSourceRows(sourceInput);
     if (!sources.length) return alert("Add at least one source row.");
+    if (keywordCount > 0 && keywordCount < 5) return alert("Add at least 5 keywords, or leave keywords blank.");
+    if (keywordCount > 25) return alert("Add no more than 25 keywords.");
     setSaving(true);
     try {
-      const res = await githubAPI.createSourceList({ list_name: ln, sources });
+      const res = await githubAPI.createSourceList({ list_name: ln, sources, keywords });
       if (!res.success) return alert(`Save failed: ${res.error || "unknown error"}`);
       alert(`Added ${res.inserted} rows to ${res.list_name}`);
       onSaved?.(ln);
@@ -93,6 +101,19 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
           className="w-full p-2 border border-gray-300 rounded mb-2"
           placeholder="e.g. finance_may"
         />
+        <label className="block text-sm font-semibold mb-1">Keywords (comma-separated)</label>
+        <textarea
+          value={keywords}
+          onChange={(e) => setKeywords(e.target.value)}
+          rows={3}
+          className="w-full p-2 border border-gray-300 rounded mb-2"
+          placeholder="e.g. rolex, patek philippe, audemars piguet, horology, watchmaking"
+        />
+        <p className="text-xs text-gray-600 mb-2">
+          {keywordCount === 0
+            ? "Leave blank to create the topic without default keywords."
+            : `${keywordCount} keyword${keywordCount === 1 ? "" : "s"} selected.`}
+        </p>
         <label className="block text-sm font-semibold mb-1">Sources (one per line: base_url, rss_url)</label>
         <textarea
           value={sourceInput}
