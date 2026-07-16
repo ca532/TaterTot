@@ -92,7 +92,7 @@ class PipelineService {
 
       this.setToken(data.access_token);
       return true;
-    } catch (_err) {
+    } catch {
       return false;
     }
   }
@@ -294,7 +294,7 @@ class PipelineService {
       try {
         const data = await res.json();
         message = data.detail || message;
-      } catch (_e) {
+      } catch {
         // no-op
       }
       return { success: false, error: message };
@@ -445,6 +445,19 @@ class PipelineService {
       return { success: true, config: data.config || {} };
     } catch (err) {
       return { success: false, error: err.message };
+    }
+  }
+
+  async getTopicConfigs() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/topic-configs`, {
+        method: "GET"
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, topics: [] };
+      return { success: true, topics: data.topics || [] };
+    } catch (err) {
+      return { success: false, error: err.message, topics: [] };
     }
   }
 

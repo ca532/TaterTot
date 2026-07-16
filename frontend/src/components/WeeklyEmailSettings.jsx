@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { Mail, Save } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 
-export default function WeeklyEmailSettings({ sourceLists = [] }) {
+export default function WeeklyEmailSettings() {
   const [topic, setTopic] = useState("finance");
-  const [sourceListName, setSourceListName] = useState("");
+  const [topicConfigs, setTopicConfigs] = useState([]);
   const [keywords, setKeywords] = useState("");
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
@@ -18,12 +18,19 @@ export default function WeeklyEmailSettings({ sourceLists = [] }) {
     let mounted = true;
 
     const load = async () => {
-      const res = await githubAPI.getWeeklyEmailConfig();
-      if (!mounted || !res.success) return;
+      const [configRes, topicsRes] = await Promise.all([
+        githubAPI.getWeeklyEmailConfig(),
+        githubAPI.getTopicConfigs(),
+      ]);
+      if (!mounted) return;
 
-      setTopic(res.config.topic || "finance");
-      setSourceListName(res.config.source_list_name || "");
-      setKeywords(res.config.keywords || "");
+      if (topicsRes.success) {
+        setTopicConfigs(topicsRes.topics || []);
+      }
+      if (configRes.success) {
+        setTopic(configRes.config.topic || "finance");
+        setKeywords(configRes.config.keywords || "");
+      }
     };
 
     load();
@@ -38,7 +45,6 @@ export default function WeeklyEmailSettings({ sourceLists = [] }) {
 
     const res = await githubAPI.updateWeeklyEmailConfig({
       topic,
-      source_list_name: sourceListName,
       keywords,
     });
 
@@ -59,49 +65,35 @@ export default function WeeklyEmailSettings({ sourceLists = [] }) {
         <h3 className="text-base font-bold text-gray-900">Weekly Email Settings</h3>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-        <div>
-          <label className="block text-sm font-semibold mb-1">Pipeline Topic</label>
-          <select
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            className="w-full p-2 border border-gray-300 rounded"
-          >
-            <option value="finance">Finance</option>
-            <option value="luxury">Luxury</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold mb-1">Publication Topic</label>
-          <select
-            value={sourceListName}
-            onChange={(e) => setSourceListName(e.target.value)}
-            className="w-full p-2 border border-gray-300 rounded"
-          >
-            <option value="">Use default publication topics</option>
-            {sourceLists.map((s) => (
-              <option key={s.list_name} value={s.list_name}>
-                {s.list_name} ({s.active_rows}/{s.total_rows} active)
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="mb-3">
+        <label className="block text-sm font-semibold mb-1">Topic</label>
+        <select
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          className="w-full p-2 border border-gray-300 rounded"
+        >
+          {topicConfigs.map((t) => (
+            <option key={t.topic_name} value={t.topic_name}>
+              {t.topic_name}
+              {t.keyword_count ? ` (${t.keyword_count} keywords)` : ""}
+            </option>
+          ))}
+        </select>
       </div>
 
-      <label className="block text-sm font-semibold mb-1">Weekly Keywords</label>
+      <label className="block text-sm font-semibold mb-1">Weekly Keywords Override</label>
       <textarea
         value={keywords}
         onChange={(e) => setKeywords(e.target.value)}
         rows={3}
-        placeholder="Optional comma-separated keywords. Leave blank to use defaults."
+        placeholder="Optional comma-separated keywords. Leave blank to use this topic's configured keywords."
         className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8860b] focus:border-[#b8860b] text-sm"
       />
 
       <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <p className="text-xs text-gray-500">
           {keywordCount === 0
-            ? "Blank uses the pipeline defaults."
+            ? "Blank uses the selected topic's configured keywords."
             : `${keywordCount} keyword${keywordCount === 1 ? "" : "s"} selected.`}
         </p>
 

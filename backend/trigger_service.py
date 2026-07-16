@@ -70,6 +70,7 @@ GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID")
 GOOGLE_CREDENTIALS = os.environ.get("GOOGLE_CREDENTIALS")
 STARRED_SHEET_NAME = os.environ.get("STARRED_SHEET_NAME", "Starred Summaries")
 SOURCE_CONFIG_SHEET = os.environ.get("SOURCE_CONFIG_SHEET", "Source Lists")
+TOPIC_CONFIG_SHEET = os.environ.get("TOPIC_CONFIG_SHEET", "Topic Config")
 SOURCE_REPORT_DETAIL_SHEET = os.environ.get("SOURCE_REPORT_DETAIL_SHEET", "Source Validation Details")
 STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
 DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
@@ -109,7 +110,7 @@ class TriggerRequest(BaseModel):
 
 
 class WeeklyEmailConfigRequest(BaseModel):
-    topic: Literal["finance", "luxury"] = "finance"
+    topic: str = "finance"
     source_list_name: Optional[str] = ""
     keywords: Optional[str] = ""
 
@@ -486,9 +487,95 @@ def _normalize_weekly_keywords(raw: Optional[str]) -> str:
     return ", ".join(cleaned)
 
 
+def _split_keywords(raw: Optional[str]) -> list[str]:
+    text = (raw or "").replace("\r", " ").replace("\n", " ").strip()
+    if not text:
+        return []
+    cleaned = []
+    seen = set()
+    for part in text.split(","):
+        value = part.strip()[:60]
+        key = value.lower()
+        if value and key not in seen:
+            seen.add(key)
+            cleaned.append(value)
+    return cleaned
+
+
+def _topic_configs() -> list[dict]:
+    defaults = [
+        {
+            "topic_name": "finance",
+            "pipeline_topic": "finance",
+            "source_list_name": "",
+            "keywords": "",
+            "keyword_count": 0,
+            "active": True,
+        },
+        {
+            "topic_name": "luxury",
+            "pipeline_topic": "luxury",
+            "source_list_name": "",
+            "keywords": "",
+            "keyword_count": 0,
+            "active": True,
+        },
+    ]
+
+    try:
+        ss = _load_main_spreadsheet()
+        try:
+            ws = ss.worksheet(TOPIC_CONFIG_SHEET)
+        except Exception:
+            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=6)
+            ws.update(
+                range_name="A1:F1",
+                values=[["topic_name", "pipeline_topic", "source_list_name", "keywords", "active", "updated"]],
+            )
+            return defaults
+
+        rows = ws.get_all_records()
+    except Exception as e:
+        print(f"[TOPIC_CONFIG_WARN] could not load topic configs: {e}")
+        return defaults
+
+    configs = []
+    for row in rows:
+        topic_name = str(row.get("topic_name", "")).strip()
+        if not topic_name:
+            continue
+        active = str(row.get("active", "TRUE")).strip().upper() != "FALSE"
+        if not active:
+            continue
+        pipeline_topic = str(row.get("pipeline_topic", "")).strip().lower()
+        if pipeline_topic not in {"finance", "luxury"}:
+            pipeline_topic = "finance"
+        keywords = ", ".join(_split_keywords(str(row.get("keywords", "")).strip()))
+        configs.append({
+            "topic_name": topic_name,
+            "pipeline_topic": pipeline_topic,
+            "source_list_name": str(row.get("source_list_name", "")).strip(),
+            "keywords": keywords,
+            "keyword_count": len(_split_keywords(keywords)),
+            "active": True,
+        })
+
+    return sorted(configs or defaults, key=lambda x: x["topic_name"].lower())
+
+
+def _topic_config_for(topic_name: str) -> Optional[dict]:
+    wanted = (topic_name or "").strip().lower()
+    if not wanted:
+        return None
+    for cfg in _topic_configs():
+        if cfg["topic_name"].strip().lower() == wanted:
+            return cfg
+    return None
+
+
 def _weekly_config_payload() -> dict:
-    topic = (_metadata_get("weekly_topic") or "finance").strip().lower()
-    if topic not in {"finance", "luxury"}:
+    topic = (_metadata_get("weekly_topic") or "finance").strip()
+    if not _topic_config_for(topic):
         topic = "finance"
 
     return {
@@ -572,12 +659,22 @@ def get_weekly_email_config(authorization: str = Header(default="")):
     return {"ok": True, "config": _weekly_config_payload()}
 
 
+@app.get("/topic-configs")
+def get_topic_configs(authorization: str = Header(default="")):
+    _check_auth(authorization)
+    return {"ok": True, "topics": _topic_configs()}
+
+
 @app.put("/weekly-email-config")
 def update_weekly_email_config(req: WeeklyEmailConfigRequest, authorization: str = Header(default="")):
     _check_auth(authorization)
 
-    topic = _normalize_topic(req.topic)
-    source_list_name = (req.source_list_name or "").strip()
+    topic = (req.topic or "").strip()
+    topic_config = _topic_config_for(topic)
+    if not topic_config:
+        raise HTTPException(status_code=400, detail=f"topic '{topic}' not found in {TOPIC_CONFIG_SHEET}")
+
+    source_list_name = (req.source_list_name or "").strip() or topic_config.get("source_list_name", "").strip()
     keywords = _normalize_weekly_keywords(req.keywords)
 
     if source_list_name and not _has_active_source_rows(source_list_name):
