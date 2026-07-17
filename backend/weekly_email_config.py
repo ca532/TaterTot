@@ -12,11 +12,11 @@ DEFAULTS = {
     "weekly_keywords": "",
 }
 TOPIC_DEFAULTS = {
-    "finance": {
+    "Finance": {
         "topic_name": "Finance",
         "keywords": "",
     },
-    "luxury": {
+    "Luxury": {
         "topic_name": "Luxury",
         "keywords": "",
     },
