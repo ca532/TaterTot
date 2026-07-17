@@ -7,17 +7,17 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 DEFAULTS = {
-    "weekly_topic": "finance",
+    "weekly_topic": "Finance",
     "weekly_source_list_name": "",
     "weekly_keywords": "",
 }
 TOPIC_DEFAULTS = {
     "finance": {
-        "topic_name": "finance",
+        "topic_name": "Finance",
         "keywords": "",
     },
     "luxury": {
-        "topic_name": "luxury",
+        "topic_name": "Luxury",
         "keywords": "",
     },
 }
