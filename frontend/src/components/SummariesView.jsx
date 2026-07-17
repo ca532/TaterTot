@@ -351,7 +351,15 @@ const handleRunPipeline = async () => {
           Click the button below to collect and summarize the latest articles from your publications.
         </p>
 
-        <div className="w-full max-w-3xl mx-auto mb-6 p-4 border-2 border-[#b8860b] rounded-lg bg-[#faf8f3] text-left">
+        <WeeklyEmailSettings sourceLists={sourceLists} />
+
+        <PipelineStatusCard
+          runStatus={runStatus}
+          errorMessage={errorMessage}
+          selectedListName={selectedListName}
+        />
+
+        <div className="w-full max-w-3xl mx-auto mt-4 mb-4 text-left">
           <label className="block text-sm font-semibold mb-1">Topic</label>
           <select
             value={selectedListName || ""}
@@ -373,14 +381,6 @@ const handleRunPipeline = async () => {
             <option value={ADD_NEW_OPTION}>Add new category/topic</option>
           </select>
         </div>
-
-        <WeeklyEmailSettings sourceLists={sourceLists} />
-
-        <PipelineStatusCard
-          runStatus={runStatus}
-          errorMessage={errorMessage}
-          selectedListName={selectedListName}
-        />
 
         <RunActions
           keywordsInput={keywordsInput}
