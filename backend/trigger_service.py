@@ -694,7 +694,7 @@ def update_weekly_email_config(req: WeeklyEmailConfigRequest, authorization: str
     if not topic_config:
         raise HTTPException(status_code=400, detail=f"topic '{topic}' not found in {TOPIC_CONFIG_SHEET}")
 
-    source_list_name = (req.source_list_name or "").strip() or topic
+    source_list_name = (req.source_list_name or "").strip() or topic_config["topic_name"]
     keywords = _normalize_weekly_keywords(req.keywords)
 
     if source_list_name and not _has_active_source_rows(source_list_name):

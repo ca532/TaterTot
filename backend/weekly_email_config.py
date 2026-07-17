@@ -12,11 +12,11 @@ DEFAULTS = {
     "weekly_keywords": "",
 }
 TOPIC_DEFAULTS = {
-    "Finance": {
+    "finance": {
         "topic_name": "Finance",
         "keywords": "",
     },
-    "Luxury": {
+    "luxury": {
         "topic_name": "Luxury",
         "keywords": "",
     },
@@ -66,7 +66,7 @@ def read_config() -> Dict[str, str]:
         if key in values:
             values[key] = val
 
-    topic = values["weekly_topic"].strip() or "finance"
+    topic = values["weekly_topic"].strip() or "Finance"
     topic_cfg = read_topic_config(topic)
     pipeline_topic = infer_pipeline_topic(topic_cfg["topic_name"], topic_cfg["keywords"])
     source_list_name = values["weekly_source_list_name"].strip() or topic_cfg["topic_name"]
