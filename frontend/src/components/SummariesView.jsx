@@ -11,7 +11,6 @@ import PipelineStatusCard from "./pipeline/PipelineStatusCard";
 import StatsCards from "./pipeline/StatsCards";
 import logo from "../assets/ca-circle.png";
 import ManageTopicsPage from "./ManageTopicsPage";
-import WeeklyEmailSettings from "./WeeklyEmailSettings";
 
 function SummariesView() {
   const [viewStatus, setViewStatus] = useState("idle"); // idle|running|complete
@@ -350,8 +349,6 @@ const handleRunPipeline = async () => {
         <p className="text-base text-gray-600 mb-6">
           Click the button below to collect and summarize the latest articles from your publications.
         </p>
-
-        <WeeklyEmailSettings sourceLists={sourceLists} />
 
         <PipelineStatusCard
           runStatus={runStatus}

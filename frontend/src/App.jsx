@@ -4,6 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import SummariesView from './components/SummariesView';
 import TrendAnalysisView from './components/TrendAnalysisView';
+import WeeklyEmailSettingsView from './components/WeeklyEmailSettingsView';
 import './App.css';
 
 function AppContent() {
@@ -13,6 +14,7 @@ function AppContent() {
     <div className="min-h-screen w-full">
       <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
         {activeTab === 'summaries' && <SummariesView />}
+        {activeTab === 'weekly-email' && <WeeklyEmailSettingsView />}
         {activeTab === 'trends' && <TrendAnalysisView />}
       </Layout>
     </div>
