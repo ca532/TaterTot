@@ -4,6 +4,7 @@ import githubAPI from "../services/githubAPI";
 export default function ManageTopicsPage({ onBack, onSaved }) {
   const [listName, setListName] = useState("");
   const [keywords, setKeywords] = useState("");
+  const [summaryPrompt, setSummaryPrompt] = useState("");
   const [sourceInput, setSourceInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
@@ -44,7 +45,12 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
     if (keywordCount > 25) return alert("Add no more than 25 keywords.");
     setSaving(true);
     try {
-      const res = await githubAPI.createSourceList({ list_name: ln, sources, keywords });
+      const res = await githubAPI.createSourceList({
+        list_name: ln,
+        sources,
+        keywords,
+        summary_prompt: summaryPrompt,
+      });
       if (!res.success) return alert(`Save failed: ${res.error || "unknown error"}`);
       alert(`Added ${res.inserted} rows to ${res.list_name}`);
       onSaved?.(ln);
@@ -113,6 +119,17 @@ export default function ManageTopicsPage({ onBack, onSaved }) {
           {keywordCount === 0
             ? "Leave blank to create the topic without default keywords."
             : `${keywordCount} keyword${keywordCount === 1 ? "" : "s"} selected.`}
+        </p>
+        <label className="block text-sm font-semibold mb-1">Summary Prompt for Flan (optional)</label>
+        <textarea
+          value={summaryPrompt}
+          onChange={(e) => setSummaryPrompt(e.target.value)}
+          rows={5}
+          className="w-full p-2 border border-gray-300 rounded mb-2"
+          placeholder={"Summarize this luxury, jewellery, and culture article for PR/media monitoring. Focus on brands, people, market implications, and notable details. Write one concise paragraph.\n\nArticle:\n{article}"}
+        />
+        <p className="text-xs text-gray-600 mb-2">
+          Use {"{article}"} where the article text should be inserted. If omitted, the article is appended automatically.
         </p>
         <label className="block text-sm font-semibold mb-1">Sources (one per line: base_url, rss_url)</label>
         <textarea

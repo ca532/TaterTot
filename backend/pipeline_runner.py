@@ -5,7 +5,10 @@ Integrates AgentCollector, AgentSumm, Google Sheets storage, and PDF generation
 
 import os
 import sys
+import json
 from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 from google_storage import GoogleSheetsDB
 
 DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
@@ -47,6 +50,45 @@ def _parse_source_list_name() -> str:
     return os.getenv("SOURCE_LIST_NAME", "").strip()
 
 
+def _load_topic_summary_prompt(topic_name: str) -> str:
+    topic = (topic_name or "").strip()
+    if not topic:
+        return ""
+
+    sheet_id = os.getenv("GOOGLE_SHEET_ID")
+    creds_json = os.getenv("GOOGLE_CREDENTIALS")
+    if not sheet_id:
+        return ""
+
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        if creds_json:
+            creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
+        elif os.path.exists("credentials.json"):
+            creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+        elif os.path.exists("backend/credentials.json"):
+            creds = Credentials.from_service_account_file("backend/credentials.json", scopes=scopes)
+        else:
+            return ""
+
+        client = gspread.authorize(creds)
+        ss = client.open_by_key(sheet_id)
+        ws = ss.worksheet(os.getenv("TOPIC_CONFIG_SHEET", "Topic Config"))
+
+        for row in ws.get_all_records():
+            name = str(row.get("topic_name", "")).strip()
+            active = str(row.get("active", "TRUE")).strip().upper() != "FALSE"
+            if active and name.lower() == topic.lower():
+                return str(row.get("summary_prompt", "")).strip()
+    except Exception as e:
+        print(f"Could not load topic summary prompt for '{topic}': {e}")
+
+    return ""
+
+
 class PipelineRunner:
     """
     Main pipeline orchestrator
@@ -76,7 +118,10 @@ class PipelineRunner:
             print(f"Using keyword override ({len(override_keywords)} keywords)")
         
         print("🤖 Initializing Article Summarizer...")
-        self.summarizer = ArticleSummarizer()
+        summary_prompt = _load_topic_summary_prompt(self.source_list_name or self.topic)
+        if summary_prompt:
+            print(f"Using custom summary prompt for source list: {self.source_list_name or self.topic}")
+        self.summarizer = ArticleSummarizer(custom_prompt=summary_prompt)
         
         print("\n✅ Pipeline initialized successfully\n")
     

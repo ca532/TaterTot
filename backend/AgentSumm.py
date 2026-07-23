@@ -27,12 +27,13 @@ class ArticleSummary:
     topics: List[str] = None
 
 class ArticleSummarizer:
-    def __init__(self, model: str = None):
+    def __init__(self, model: str = None, custom_prompt: str = None):
         """Initialize summarizer model from env, defaulting to BART."""
         resolved_model = model or os.getenv("SUMMARIZER_MODEL", "facebook/bart-large-cnn")
         print(f"Loading model: {resolved_model} ... this may take a moment.")
         self.summarizer = pipeline("summarization", model=resolved_model)
         self.is_promptable = "t5" in resolved_model.lower() or "flan" in resolved_model.lower()
+        self.custom_prompt = (custom_prompt or os.getenv("SUMMARIZER_PROMPT", "")).strip()
         
         # Setup CloudScraper if available
         if CLOUDSCRAPER_AVAILABLE:
@@ -73,12 +74,20 @@ class ArticleSummarizer:
             input_text = article_content[:4000]
 
             if self.is_promptable:
-                prompt = (
-                    "Summarize this finance article for PR/media monitoring. "
-                    "Focus on market impact, institutions/companies, regulation/policy, and key numbers. "
-                    "Write one concise paragraph.\n\n"
-                    f"Article:\n{input_text}"
-                )
+                if self.custom_prompt:
+                    prompt = self.custom_prompt
+                    if "{article}" in prompt:
+                        prompt = prompt.replace("{article}", input_text)
+                    else:
+                        prompt = f"{prompt}\n\nArticle:\n{input_text}"
+                else:
+                    prompt = (
+                        "Summarize this luxury, jewellery, and culture article for PR/media monitoring. "
+                        "Focus on luxury brands, jewellery houses, designers, executives, celebrities, "
+                        "product launches, cultural relevance, craftsmanship, market implications, and notable details. "
+                        "Write one concise paragraph in a polished, editorial tone.\n\n"
+                        f"Article:\n{input_text}"
+                    )
                 summary_text = self.summarizer(
                     prompt,
                     max_length=260,

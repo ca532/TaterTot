@@ -149,6 +149,7 @@ class SourceListCreateRequest(BaseModel):
     list_name: str
     sources: List[SourceRowInput]
     keywords: Optional[str] = ""
+    summary_prompt: Optional[str] = ""
 
 
 class SourceMetadataRunRequest(BaseModel):
@@ -503,17 +504,54 @@ def _split_keywords(raw: Optional[str]) -> list[str]:
     return cleaned
 
 
+TOPIC_CONFIG_HEADERS = ["topic_name", "keywords", "summary_prompt", "active", "updated"]
+
+
+def _ensure_topic_config_headers(ws) -> None:
+    values = ws.get_all_values()
+    if not values:
+        ws.append_row(TOPIC_CONFIG_HEADERS)
+        return
+
+    headers = [str(h).strip() for h in values[0]]
+    if headers == TOPIC_CONFIG_HEADERS:
+        return
+
+    existing_rows = []
+    for row in values[1:]:
+        if not any(str(c).strip() for c in row):
+            continue
+        record = {}
+        for i, header in enumerate(headers):
+            if header:
+                record[header] = row[i] if i < len(row) else ""
+        existing_rows.append([
+            record.get("topic_name", ""),
+            record.get("keywords", ""),
+            record.get("summary_prompt", ""),
+            record.get("active", "TRUE"),
+            record.get("updated", ""),
+        ])
+
+    ws.clear()
+    ws.update(range_name="A1:E1", values=[TOPIC_CONFIG_HEADERS])
+    if existing_rows:
+        ws.append_rows(existing_rows, value_input_option="USER_ENTERED")
+
+
 def _topic_configs() -> list[dict]:
     defaults = [
         {
             "topic_name": "finance",
             "keywords": "",
+            "summary_prompt": "",
             "keyword_count": 0,
             "active": True,
         },
         {
             "topic_name": "luxury",
             "keywords": "",
+            "summary_prompt": "",
             "keyword_count": 0,
             "active": True,
         },
@@ -524,13 +562,11 @@ def _topic_configs() -> list[dict]:
         try:
             ws = ss.worksheet(TOPIC_CONFIG_SHEET)
         except Exception:
-            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=4)
-            ws.update(
-                range_name="A1:D1",
-                values=[["topic_name", "keywords", "active", "updated"]],
-            )
+            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=5)
+            ws.update(range_name="A1:E1", values=[TOPIC_CONFIG_HEADERS])
             return defaults
 
+        _ensure_topic_config_headers(ws)
         rows = ws.get_all_records()
     except Exception as e:
         print(f"[TOPIC_CONFIG_WARN] could not load topic configs: {e}")
@@ -548,6 +584,7 @@ def _topic_configs() -> list[dict]:
         configs.append({
             "topic_name": topic_name,
             "keywords": keywords,
+            "summary_prompt": str(row.get("summary_prompt", "")).strip(),
             "keyword_count": len(_split_keywords(keywords)),
             "active": True,
         })
@@ -565,20 +602,20 @@ def _topic_config_for(topic_name: str) -> Optional[dict]:
     return None
 
 
-def _topic_config_upsert(topic_name: str, keywords: str) -> None:
+def _topic_config_upsert(topic_name: str, keywords: str, summary_prompt: str = "") -> None:
     topic = (topic_name or "").strip()
     if not topic:
         raise HTTPException(status_code=400, detail="topic_name is required")
 
     clean_keywords = _normalize_weekly_keywords(keywords)
+    clean_prompt = (summary_prompt or "").strip()[:4000]
     ss = _load_main_spreadsheet()
     try:
         ws = ss.worksheet(TOPIC_CONFIG_SHEET)
     except Exception:
-        ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=4)
+        ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=5)
 
-    headers = ["topic_name", "keywords", "active", "updated"]
-    _ensure_ws_headers(ws, headers)
+    _ensure_topic_config_headers(ws)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     values = ws.get_all_values()
     row_idx = None
@@ -587,10 +624,11 @@ def _topic_config_upsert(topic_name: str, keywords: str) -> None:
             row_idx = i
             break
 
+    row_values = [topic, clean_keywords, clean_prompt, "TRUE", today]
     if row_idx:
-        ws.update(range_name=f"A{row_idx}:D{row_idx}", values=[[topic, clean_keywords, "TRUE", today]])
+        ws.update(range_name=f"A{row_idx}:E{row_idx}", values=[row_values])
     else:
-        ws.append_row([topic, clean_keywords, "TRUE", today], value_input_option="USER_ENTERED")
+        ws.append_row(row_values, value_input_option="USER_ENTERED")
 
 
 def _weekly_config_payload() -> dict:
@@ -1687,7 +1725,7 @@ def create_source_list(req: SourceListCreateRequest, authorization: str = Header
         ])
 
     ws.append_rows(rows, value_input_option="USER_ENTERED")
-    _topic_config_upsert(list_name, req.keywords or "")
+    _topic_config_upsert(list_name, req.keywords or "", req.summary_prompt or "")
     return {"ok": True, "list_name": list_name, "inserted": len(rows)}
 
 
