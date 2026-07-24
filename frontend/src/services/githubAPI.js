@@ -435,6 +435,86 @@ class PipelineService {
     }
   }
 
+  async getClients() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/clients`, { method: "GET" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, clients: [] };
+      return { success: true, clients: data.clients || [] };
+    } catch (err) {
+      return { success: false, error: err.message, clients: [] };
+    }
+  }
+
+  async upsertClient(payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/clients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async triggerClientPitches(payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/client-pitches/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getClientPitchRunStatus(pitchRunId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/client-pitches/run-status?pitch_run_id=${encodeURIComponent(pitchRunId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getClientPitchesByRun(pitchRunId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/client-pitches/by-run?pitch_run_id=${encodeURIComponent(pitchRunId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, pitches: [] };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message, pitches: [] };
+    }
+  }
+
+  async getLatestClientPitches() {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/client-pitches/latest`, { method: "GET" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, pitches: [] };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message, pitches: [] };
+    }
+  }
+
   async getWeeklyEmailConfig() {
     try {
       const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/weekly-email-config`, {

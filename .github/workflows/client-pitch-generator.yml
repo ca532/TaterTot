@@ -1,0 +1,78 @@
+name: Client Pitch Generator
+
+on:
+  workflow_dispatch:
+    inputs:
+      pitch_run_id:
+        description: "Unique pitch run id"
+        required: true
+        type: string
+      client_id:
+        description: "Client id from Clients sheet"
+        required: true
+        type: string
+      mode:
+        description: "auto | trend_signals | recent_coverage"
+        required: false
+        default: "auto"
+        type: choice
+        options: ["auto", "trend_signals", "recent_coverage"]
+      trend_run_id:
+        description: "Optional Trend Signals run id"
+        required: false
+        default: ""
+        type: string
+      max_pitches:
+        description: "Maximum pitch ideas"
+        required: false
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-pitch-generator
+  cancel-in-progress: false
+
+jobs:
+  client-pitches:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        working-directory: ./backend
+        run: pip install -r requirements.txt
+
+      - name: Setup Google credentials
+        working-directory: ./backend
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS }}' > credentials.json
+
+      - name: Run client pitch generator
+        working-directory: ./backend
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          PITCH_MODEL_NAME: Qwen/Qwen2.5-1.5B-Instruct
+          PITCH_RUN_ID: ${{ github.event.inputs.pitch_run_id }}
+          CLIENT_ID: ${{ github.event.inputs.client_id }}
+          PITCH_MODE: ${{ github.event.inputs.mode }}
+          TREND_RUN_ID: ${{ github.event.inputs.trend_run_id }}
+          MAX_PITCHES: ${{ github.event.inputs.max_pitches }}
+        run: python -u run_client_pitch_generator.py
+
+      - name: Cleanup credentials
+        if: always()
+        working-directory: ./backend
+        run: rm -f credentials.json

@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import SummariesView from './components/SummariesView';
 import TrendAnalysisView from './components/TrendAnalysisView';
 import WeeklyEmailSettingsView from './components/WeeklyEmailSettingsView';
+import ClientPitchGeneratorView from './components/ClientPitchGeneratorView';
 import './App.css';
 
 function AppContent() {
@@ -16,6 +17,7 @@ function AppContent() {
         {activeTab === 'summaries' && <SummariesView />}
         {activeTab === 'weekly-email' && <WeeklyEmailSettingsView />}
         {activeTab === 'trends' && <TrendAnalysisView />}
+        {activeTab === 'pitches' && <ClientPitchGeneratorView />}
       </Layout>
     </div>
   );

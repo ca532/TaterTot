@@ -72,6 +72,9 @@ STARRED_SHEET_NAME = os.environ.get("STARRED_SHEET_NAME", "Starred Summaries")
 SOURCE_CONFIG_SHEET = os.environ.get("SOURCE_CONFIG_SHEET", "Source Lists")
 TOPIC_CONFIG_SHEET = os.environ.get("TOPIC_CONFIG_SHEET", "Topic Config")
 SOURCE_REPORT_DETAIL_SHEET = os.environ.get("SOURCE_REPORT_DETAIL_SHEET", "Source Validation Details")
+CLIENT_CONFIG_SHEET = os.environ.get("CLIENT_CONFIG_SHEET", "Clients")
+CLIENT_PITCH_SHEET = os.environ.get("CLIENT_PITCH_SHEET", "Client Pitches")
+PITCH_MODEL_NAME = os.environ.get("PITCH_MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct")
 STARS_DEBUG_LOG = os.environ.get("STARS_DEBUG_LOG", "true").lower() == "true"
 DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
 GITHUB_TERMINAL_POLL_SECONDS = int(os.environ.get("GITHUB_TERMINAL_POLL_SECONDS", "60"))
@@ -176,6 +179,18 @@ class TrendTriggerRequest(BaseModel):
     window_end_date: Optional[str] = None
     baseline_weeks: Optional[int] = 4
     window_mode: Optional[Literal["current_week", "current_month", "custom"]] = "current_month"
+
+
+class ClientConfigRequest(BaseModel):
+    client_name: str
+    client_description: Optional[str] = ""
+
+
+class PitchTriggerRequest(BaseModel):
+    client_id: str
+    mode: Optional[Literal["auto", "trend_signals", "recent_coverage"]] = "auto"
+    trend_run_id: Optional[str] = ""
+    max_pitches: Optional[int] = 5
 
 
 def _issue_token(token_type: str, expires_in: int) -> str:
@@ -629,6 +644,139 @@ def _topic_config_upsert(topic_name: str, keywords: str, summary_prompt: str = "
         ws.update(range_name=f"A{row_idx}:E{row_idx}", values=[row_values])
     else:
         ws.append_row(row_values, value_input_option="USER_ENTERED")
+
+
+CLIENT_CONFIG_HEADERS = [
+    "client_id",
+    "client_name",
+    "client_description",
+    "active",
+    "updated",
+]
+
+CLIENT_PITCH_HEADERS = [
+    "pitch_run_id",
+    "generated_at",
+    "mode",
+    "client_name",
+    "pitch_angle",
+    "suggested_story",
+    "subject_line",
+    "supporting_evidence",
+    "supporting_urls",
+    "model_name",
+]
+
+
+def _slugify_client_id(name: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower())
+    value = value.strip("-")
+    return value[:80] or f"client-{int(time.time())}"
+
+
+def _range_for_headers(headers: list[str]) -> str:
+    return f"A1:{chr(64 + len(headers))}1"
+
+
+def _ensure_simple_headers(ws, headers: list[str]) -> None:
+    values = ws.get_all_values()
+    if not values:
+        ws.update(range_name=_range_for_headers(headers), values=[headers])
+        return
+
+    existing = [str(h).strip() for h in values[0]]
+    if existing == headers:
+        return
+
+    ws.update(range_name=_range_for_headers(headers), values=[headers])
+
+
+def _clients_ws():
+    ss = _load_main_spreadsheet()
+    try:
+        ws = ss.worksheet(CLIENT_CONFIG_SHEET)
+    except Exception:
+        ws = ss.add_worksheet(title=CLIENT_CONFIG_SHEET, rows=200, cols=len(CLIENT_CONFIG_HEADERS))
+    _ensure_simple_headers(ws, CLIENT_CONFIG_HEADERS)
+    return ws
+
+
+def _client_pitch_ws():
+    ss = _load_main_spreadsheet()
+    try:
+        ws = ss.worksheet(CLIENT_PITCH_SHEET)
+    except Exception:
+        ws = ss.add_worksheet(title=CLIENT_PITCH_SHEET, rows=1000, cols=len(CLIENT_PITCH_HEADERS))
+    _ensure_simple_headers(ws, CLIENT_PITCH_HEADERS)
+    return ws
+
+
+def _client_configs() -> list[dict]:
+    try:
+        rows = _clients_ws().get_all_records()
+    except Exception as e:
+        print(f"[CLIENT_CONFIG_WARN] could not load clients: {e}")
+        return []
+
+    clients = []
+    for row in rows:
+        client_name = str(row.get("client_name", "")).strip()
+        if not client_name:
+            continue
+
+        active = str(row.get("active", "TRUE")).strip().upper() != "FALSE"
+        if not active:
+            continue
+
+        clients.append({
+            "client_id": str(row.get("client_id", "")).strip() or _slugify_client_id(client_name),
+            "client_name": client_name,
+            "client_description": str(row.get("client_description", "")).strip(),
+            "active": active,
+        })
+
+    return sorted(clients, key=lambda x: x["client_name"].lower())
+
+
+def _client_by_id(client_id: str) -> Optional[dict]:
+    wanted = (client_id or "").strip().lower()
+    for client in _client_configs():
+        if client["client_id"].lower() == wanted:
+            return client
+    return None
+
+
+def _upsert_client(req: ClientConfigRequest) -> dict:
+    client_name = (req.client_name or "").strip()
+    if not client_name:
+        raise HTTPException(status_code=400, detail="client_name is required")
+
+    client_id = _slugify_client_id(client_name)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    row_values = [
+        client_id,
+        client_name[:120],
+        (req.client_description or "").strip()[:2500],
+        "TRUE",
+        today,
+    ]
+
+    ws = _clients_ws()
+    values = ws.get_all_values()
+    row_idx = None
+    for i, row in enumerate(values[1:], start=2):
+        existing_id = row[0].strip().lower() if len(row) > 0 else ""
+        existing_name = row[1].strip().lower() if len(row) > 1 else ""
+        if existing_id == client_id.lower() or existing_name == client_name.lower():
+            row_idx = i
+            break
+
+    if row_idx:
+        ws.update(range_name=f"A{row_idx}:E{row_idx}", values=[row_values])
+    else:
+        ws.append_row(row_values, value_input_option="USER_ENTERED")
+
+    return {"client_id": client_id, "client_name": client_name}
 
 
 def _weekly_config_payload() -> dict:
@@ -1689,6 +1837,151 @@ def get_trend_run_status(run_id: str, authorization: str = Header(default="")):
         "rows_written": rows_written,
         "latest_run_id": latest_rid or rid,
     }
+
+
+@app.get("/clients")
+def get_clients(authorization: str = Header(default="")):
+    _check_auth(authorization)
+    clients = _client_configs()
+    return {"count": len(clients), "clients": clients}
+
+
+@app.post("/clients")
+def upsert_client(req: ClientConfigRequest, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    result = _upsert_client(req)
+    return {"ok": True, **result}
+
+
+@app.post("/client-pitches/trigger")
+def trigger_client_pitch_generation(req: PitchTriggerRequest, response: Response, authorization: str = Header(default="")):
+    _check_auth(authorization)
+
+    client = _client_by_id(req.client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    pitch_run_id = f"pitch-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    mode = (req.mode or "auto").strip()
+    trend_run_id = (req.trend_run_id or "").strip()
+    max_pitches = str(max(1, min(int(req.max_pitches or 5), 8)))
+
+    _metadata_upsert("latest_pitch_run_id", pitch_run_id)
+    _metadata_upsert("latest_pitch_status", "running")
+    _metadata_upsert("latest_pitch_rows_written", "0")
+    _metadata_upsert("latest_pitch_client_id", client["client_id"])
+    _metadata_upsert("latest_pitch_mode", mode)
+
+    workflow = "client-pitch-generator.yml"
+    url = f"{GITHUB_API_BASE}/actions/workflows/{workflow}/dispatches"
+    body = {
+        "ref": GITHUB_REF,
+        "inputs": {
+            "pitch_run_id": pitch_run_id,
+            "client_id": client["client_id"],
+            "mode": mode,
+            "trend_run_id": trend_run_id,
+            "max_pitches": max_pitches,
+        },
+    }
+
+    r = _gh_request("POST", url, json=body)
+    print(
+        "[PITCH_TRIGGER_RESULT] "
+        f"run_id={pitch_run_id} status_code={r.status_code} workflow={workflow}"
+    )
+    if r.status_code != 204:
+        _metadata_upsert("latest_pitch_status", "failed")
+        raise HTTPException(status_code=502, detail=f"GitHub pitch dispatch failed: {r.status_code} {r.text}")
+
+    response.status_code = 202
+    return {
+        "ok": True,
+        "state": "queued",
+        "message": "Client pitch generator workflow triggered",
+        "pitch_run_id": pitch_run_id,
+    }
+
+
+@app.get("/client-pitches/run-status")
+def get_pitch_run_status(pitch_run_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    rid = (pitch_run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="pitch_run_id is required")
+
+    latest_rid = (_metadata_get("latest_pitch_run_id") or "").strip()
+    latest_status = (_metadata_get("latest_pitch_status") or "").strip().lower()
+    rows_written_raw = (_metadata_get("latest_pitch_rows_written") or "0").strip()
+    try:
+        rows_written = int(rows_written_raw)
+    except Exception:
+        rows_written = 0
+
+    if latest_rid and rid != latest_rid:
+        return {
+            "pitch_run_id": rid,
+            "status": "stale",
+            "rows_written": 0,
+            "latest_pitch_run_id": latest_rid,
+        }
+
+    status = latest_status if latest_status in {"running", "complete", "failed"} else "running"
+    return {
+        "pitch_run_id": rid,
+        "status": status,
+        "rows_written": rows_written,
+        "latest_pitch_run_id": latest_rid or rid,
+    }
+
+
+@app.get("/client-pitches/by-run")
+def get_client_pitches_by_run(pitch_run_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    rid = (pitch_run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="pitch_run_id is required")
+
+    try:
+        ws = _client_pitch_ws()
+        values = ws.get_all_values()
+    except Exception:
+        return {"pitch_run_id": rid, "count": 0, "pitches": []}
+
+    if len(values) <= 1:
+        return {"pitch_run_id": rid, "count": 0, "pitches": []}
+
+    headers = values[0]
+    idx = {h: i for i, h in enumerate(headers)}
+    ridx = idx.get("pitch_run_id", 0)
+    pitches = []
+
+    for row in values[1:]:
+        if not row or ridx >= len(row) or row[ridx] != rid:
+            continue
+        pitches.append({
+            "pitch_run_id": rid,
+            "generated_at": row[idx.get("generated_at", 1)] if idx.get("generated_at", 1) < len(row) else "",
+            "mode": row[idx.get("mode", 2)] if idx.get("mode", 2) < len(row) else "",
+            "client_name": row[idx.get("client_name", 3)] if idx.get("client_name", 3) < len(row) else "",
+            "pitch_angle": row[idx.get("pitch_angle", 4)] if idx.get("pitch_angle", 4) < len(row) else "",
+            "suggested_story": row[idx.get("suggested_story", 5)] if idx.get("suggested_story", 5) < len(row) else "",
+            "subject_line": row[idx.get("subject_line", 6)] if idx.get("subject_line", 6) < len(row) else "",
+            "supporting_evidence": row[idx.get("supporting_evidence", 7)] if idx.get("supporting_evidence", 7) < len(row) else "",
+            "supporting_urls": row[idx.get("supporting_urls", 8)] if idx.get("supporting_urls", 8) < len(row) else "",
+            "model_name": row[idx.get("model_name", 9)] if idx.get("model_name", 9) < len(row) else "",
+        })
+
+    return {"pitch_run_id": rid, "count": len(pitches), "pitches": pitches}
+
+
+@app.get("/client-pitches/latest")
+def get_latest_client_pitches(authorization: str = Header(default="")):
+    _check_auth(authorization)
+    rid = (_metadata_get("latest_pitch_run_id") or "").strip()
+    if not rid:
+        return {"pitch_run_id": None, "count": 0, "pitches": []}
+    return get_client_pitches_by_run(pitch_run_id=rid, authorization=authorization)
 
 
 @app.post("/sources/lists")
