@@ -15,7 +15,7 @@ import requests
 import jwt
 import gspread
 from fastapi import FastAPI, Header, HTTPException, Response, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response as FastAPIResponse, StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
@@ -23,10 +23,37 @@ from backend.publication_metadata_pipeline import run_publication_metadata_pipel
 
 app = FastAPI()
 
+CORS_ALLOWED_ORIGINS = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://repo-trigger.onrender.com",
+    "https://ca532.github.io",
+    "https://rrd.claireadler.com",
+}
+
+
+def _apply_cors_headers(request: Request, response: Response) -> None:
+    origin = (request.headers.get("origin") or "").strip()
+    if origin in CORS_ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = (
+            request.headers.get("access-control-request-headers")
+            or "authorization,content-type,accept"
+        )
+        response.headers["Vary"] = "Origin"
+
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = FastAPIResponse(status_code=204)
+        _apply_cors_headers(request, response)
+        return response
+
     response = await call_next(request)
+    _apply_cors_headers(request, response)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -35,14 +62,7 @@ async def security_headers(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://repo-trigger.onrender.com",
-        "https://ca532.github.io",
-        "https://rrd.claireadler.com",
-
-    ],
+    allow_origins=sorted(CORS_ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
