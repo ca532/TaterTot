@@ -10,7 +10,6 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Optional, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from fastapi.middleware.cors import CORSMiddleware
 import requests
 import jwt
 import gspread
@@ -59,14 +58,6 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     return response
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=sorted(CORS_ALLOWED_ORIGINS),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 GITHUB_OWNER = os.environ["GITHUB_OWNER"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
