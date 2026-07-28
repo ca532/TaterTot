@@ -47,6 +47,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+ALLOWED_CORS_ORIGINS = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://repo-trigger.onrender.com",
+    "https://ca532.github.io",
+    "https://rrd.claireadler.com",
+}
+
+
+def _cors_preflight_response(request: Request) -> Response:
+    origin = (request.headers.get("origin") or "").strip()
+    response = Response(status_code=204)
+
+    if origin in ALLOWED_CORS_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = (
+            request.headers.get("access-control-request-headers")
+            or "authorization,content-type,accept"
+        )
+        response.headers["Access-Control-Max-Age"] = "86400"
+        response.headers["Vary"] = "Origin"
+
+    return response
+
+
+@app.options("/{full_path:path}")
+def options_preflight(full_path: str, request: Request):
+    return _cors_preflight_response(request)
+
 GITHUB_OWNER = os.environ["GITHUB_OWNER"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 GITHUB_WORKFLOW = os.environ.get("GITHUB_WORKFLOW", "collect-articles.yml")
