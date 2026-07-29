@@ -78,6 +78,14 @@ def _cors_preflight_response(request: Request) -> Response:
 def options_preflight(full_path: str, request: Request):
     return _cors_preflight_response(request)
 
+
+@app.get("/debug/version")
+def debug_version():
+    return {
+        "version": "cors-catchall-2026-07-28",
+        "has_options_catchall": True,
+    }
+
 GITHUB_OWNER = os.environ["GITHUB_OWNER"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 GITHUB_WORKFLOW = os.environ.get("GITHUB_WORKFLOW", "collect-articles.yml")
