@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 import time
 import asyncio
@@ -1666,10 +1667,10 @@ def download_latest_artifact(authorization: str = Header(default="")):
 
 
 @app.get("/pipeline/latest-result")
-def latest_result(authorization: str = Header(default="")):
+async def latest_result(authorization: str = Header(default="")):
     _check_auth(authorization)
 
-    status = pipeline_status(authorization=authorization)
+    status = await pipeline_status(authorization=authorization)
     artifact = latest_artifact(authorization=authorization)
 
     return {
