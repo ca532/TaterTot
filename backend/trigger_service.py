@@ -86,6 +86,18 @@ def debug_version():
         "has_options_catchall": True,
     }
 
+
+@app.get("/debug/routes")
+def debug_routes():
+    return [
+        {
+            "path": getattr(route, "path", ""),
+            "methods": sorted(list(getattr(route, "methods", []) or [])),
+            "name": getattr(route, "name", ""),
+        }
+        for route in app.routes
+    ]
+
 GITHUB_OWNER = os.environ["GITHUB_OWNER"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 GITHUB_WORKFLOW = os.environ.get("GITHUB_WORKFLOW", "collect-articles.yml")
