@@ -27,6 +27,11 @@ function SummariesView() {
   const [showManageTopics, setShowManageTopics] = useState(false);
   const ADD_NEW_OPTION = "__add_new_topic__";
 
+  const getRunIdFromUrl = (runUrl) => {
+    const match = String(runUrl || "").match(/\/actions\/runs\/(\d+)/);
+    return match?.[1] || null;
+  };
+
   const updateRateLimitInfo = () => {
     const info = rateLimitService.canRunPipeline();
     setRateLimitInfo(info);
@@ -69,6 +74,7 @@ function SummariesView() {
       const runInfo = await googleSheetsAPI.getLatestRunInfo();
       if (runInfo) {
         setPdfLink({
+          runId: getRunIdFromUrl(runInfo.runUrl),
           runNumber: runInfo.runNumber,
           runUrl: runInfo.runUrl,
           artifactName: `roundup-files-${runInfo.runNumber}`,
@@ -160,6 +166,7 @@ function SummariesView() {
         const runInfo = await googleSheetsAPI.getLatestRunInfo();
         if (runInfo) {
           setPdfLink({
+            runId: getRunIdFromUrl(runInfo.runUrl),
             runNumber: runInfo.runNumber,
             runUrl: runInfo.runUrl,
           });
@@ -189,6 +196,7 @@ function SummariesView() {
     keywordsInput,
     setKeywordsInput,
     triggerRun,
+    activeRunId,
   } = usePipelineRunner({
     onSuccess: async () => {
       rateLimitService.recordPipelineComplete();
@@ -259,23 +267,29 @@ const handleRunPipeline = async () => {
 
   const handleDownloadPDF = async () => {
     try {
-      const result = await githubAPI.downloadLatestArtifactZip();
+      const runId = activeRunId || pdfLink?.runId;
+      if (!runId) {
+        alert("The PDF run could not be identified. Refresh the results and try again.");
+        return;
+      }
+
+      const result = await githubAPI.downloadArtifactZip(runId);
       if (!result.success) {
-        alert(result.error || "No PDF available yet. Run the pipeline first to generate a PDF.");
+        alert(result.error || "The PDF for this run is not available.");
         return;
       }
 
       const url = window.URL.createObjectURL(result.blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = result.filename || "latest-artifact.zip";
+      a.download = result.filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Error downloading PDF:", error);
-      alert("Failed to download latest PDF.");
+      alert("Failed to download the PDF for this run.");
     }
   };
 

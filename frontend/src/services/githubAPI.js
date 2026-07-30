@@ -280,14 +280,15 @@ class PipelineService {
     }
   }
 
-  async downloadLatestArtifactZip() {
-    const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/pipeline/download-latest-artifact`, {
-      method: "GET"
-    });
-
-    if (res.status === 404) {
-      return { success: false, error: "No PDF available yet. Run the pipeline first to generate a PDF." };
+  async downloadArtifactZip(runId) {
+    if (!runId) {
+      return { success: false, error: "No pipeline run is selected." };
     }
+
+    const res = await this.fetchWithAuthRetry(
+      `${PIPELINE_API_BASE}/pipeline/download-artifact?run_id=${encodeURIComponent(runId)}`,
+      { method: "GET" }
+    );
 
     if (!res.ok) {
       let message = `HTTP ${res.status}`;
@@ -303,7 +304,7 @@ class PipelineService {
     const blob = await res.blob();
     const contentDisposition = res.headers.get("content-disposition") || "";
     const match = contentDisposition.match(/filename="([^"]+)"/i);
-    const filename = match?.[1] || "latest-artifact.zip";
+    const filename = match?.[1] || `Reading-Roundup-${runId}.zip`;
     return { success: true, blob, filename };
   }
 

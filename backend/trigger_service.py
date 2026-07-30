@@ -1619,32 +1619,42 @@ def latest_artifact(authorization: str = Header(default="")):
     }
 
 
-@app.get("/pipeline/download-latest-artifact")
-def download_latest_artifact(authorization: str = Header(default="")):
+@app.get("/pipeline/download-artifact")
+def download_artifact(run_id: int, authorization: str = Header(default="")):
     _check_auth(authorization)
 
-    runs_url = f"{GITHUB_API_BASE}/actions/workflows/{GITHUB_WORKFLOW}/runs?per_page=10"
-    rr = _gh_request("GET", runs_url)
-    if rr.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"GitHub runs failed: {rr.status_code}")
+    run = _get_run_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
 
-    runs = rr.json().get("workflow_runs", [])
-    successful = next((r for r in runs if r.get("conclusion") == "success"), None)
-    if not successful:
-        raise HTTPException(status_code=404, detail="No successful workflow run found")
+    if run.get("head_branch") != GITHUB_REF:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} does not belong to branch {GITHUB_REF}",
+        )
 
-    artifacts_url = f"{GITHUB_API_BASE}/actions/runs/{successful['id']}/artifacts"
+    if run.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="The current PDF is still being generated")
+
+    if run.get("conclusion") != "success":
+        raise HTTPException(status_code=409, detail="This pipeline run did not complete successfully")
+
+    artifacts_url = f"{GITHUB_API_BASE}/actions/runs/{run_id}/artifacts"
     ar = _gh_request("GET", artifacts_url)
     if ar.status_code != 200:
         raise HTTPException(status_code=502, detail=f"GitHub artifacts failed: {ar.status_code}")
 
     artifacts = ar.json().get("artifacts", [])
     artifact = next(
-        (a for a in artifacts if str(a.get("name", "")).startswith("Reading-Roundup-")),
+        (
+            a for a in artifacts
+            if str(a.get("name", "")).startswith("Reading-Roundup-")
+            and not a.get("expired", False)
+        ),
         None,
     )
     if not artifact:
-        raise HTTPException(status_code=404, detail="No matching artifact found")
+        raise HTTPException(status_code=404, detail="This run has no available PDF artifact")
 
     download_url = artifact.get("archive_download_url")
     if not download_url:
@@ -1663,7 +1673,7 @@ def download_latest_artifact(authorization: str = Header(default="")):
             detail = gh_resp.text
         raise HTTPException(status_code=502, detail=f"Artifact download failed: {gh_resp.status_code} {detail}")
 
-    artifact_name = artifact.get("name") or "latest-artifact"
+    artifact_name = artifact.get("name") or f"Reading-Roundup-{run_id}"
     file_name = f"{artifact_name}.zip"
     return StreamingResponse(
         gh_resp.iter_content(chunk_size=1024 * 64),
