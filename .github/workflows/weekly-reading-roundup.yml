@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: weekly-reading-roundup-email
+  group: article-pipeline-global
   cancel-in-progress: false
 
 jobs:

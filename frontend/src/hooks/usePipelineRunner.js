@@ -36,6 +36,8 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
   const [keywordsInput, setKeywordsInput] = useState("");
   const [topic, setTopic] = useState("finance");
   const [activeRunId, setActiveRunId] = useState(null);
+  const activeRunIdRef = useRef(null);
+  const hasSeenActiveStatusRef = useRef(false);
   const pollRef = useRef(null);
   const failedStreakRef = useRef(0);
 
@@ -51,16 +53,42 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
       const data = await githubAPI.getLatestRunStatus();
       if (!data) return;
 
-      // If backend corrected runId after dispatch race, adopt it while still active.
-      if (activeRunId && data.runId && String(data.runId) !== String(activeRunId)) {
-        if (["queued", "running", "in_progress"].includes(String(data.status || "").toLowerCase())) {
-          setActiveRunId(data.runId);
-        } else {
-          return;
-        }
+      const backendStatus = String(data.status || "").toLowerCase();
+      const backendRunId = data.runId ? String(data.runId) : null;
+      const expectedRunId = activeRunIdRef.current
+        ? String(activeRunIdRef.current)
+        : null;
+      const isActiveStatus = ["queued", "running", "in_progress"].includes(backendStatus);
+
+      if (expectedRunId && backendRunId !== expectedRunId) {
+        return;
+      }
+
+      if (!expectedRunId && backendRunId && isActiveStatus) {
+        activeRunIdRef.current = backendRunId;
+        setActiveRunId(backendRunId);
+      }
+
+      if (isActiveStatus) {
+        hasSeenActiveStatusRef.current = true;
       }
 
       const normalized = mapStatus(data.status, data.conclusion);
+      const resolvedRunId = activeRunIdRef.current
+        ? String(activeRunIdRef.current)
+        : null;
+
+      if (
+        ["success", "failed"].includes(normalized)
+        && (
+          !resolvedRunId
+          || backendRunId !== resolvedRunId
+          || !hasSeenActiveStatusRef.current
+        )
+      ) {
+        return;
+      }
+
       if (normalized === "failed") {
         failedStreakRef.current += 1;
       } else {
@@ -122,9 +150,14 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     }
 
     failedStreakRef.current = 0;
+    hasSeenActiveStatusRef.current = false;
     setErrorMessage(null);
-    setActiveRunId(result.runId || null);
-    setRunStatus(result.state === "already_running" ? "queued" : "queued");
+
+    const triggeredRunId = result.runId || result.activeRunId || null;
+    activeRunIdRef.current = triggeredRunId;
+    setActiveRunId(triggeredRunId);
+
+    setRunStatus("queued");
     startPolling();
     return result;
   };

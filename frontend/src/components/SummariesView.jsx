@@ -156,17 +156,23 @@ function SummariesView() {
   const loadResultsAfterPipeline = async () => {
     try {
       const articlesData = await googleSheetsAPI.getArticles();
-      if (articlesData.length > 0) {
-        setArticles(articlesData);
+      const runInfo = await googleSheetsAPI.getLatestRunInfo();
+      const targetRunId = activeRunId || getRunIdFromUrl(runInfo?.runUrl);
+      const hasRunScopedRows = articlesData.some((article) => article.runId);
+      const runArticles = targetRunId && hasRunScopedRows
+        ? articlesData.filter((article) => String(article.runId) === String(targetRunId))
+        : articlesData;
+
+      if (runArticles.length > 0) {
+        setArticles(runArticles);
         setShowStarredOnly(false);
         await loadCurrentWeekStars();
-        const dates = articlesData.map((a) => new Date(a.collectedDate));
+        const dates = runArticles.map((a) => new Date(a.collectedDate));
         setLastRunTime(new Date(Math.max(...dates)));
 
-        const runInfo = await googleSheetsAPI.getLatestRunInfo();
         if (runInfo) {
           setPdfLink({
-            runId: getRunIdFromUrl(runInfo.runUrl),
+            runId: targetRunId,
             runNumber: runInfo.runNumber,
             runUrl: runInfo.runUrl,
           });
@@ -177,7 +183,9 @@ function SummariesView() {
       } else {
         const usedKeywordOverride = (keywordsInput || "").trim().length > 0;
         alert(
-          usedKeywordOverride
+          targetRunId && hasRunScopedRows
+            ? "Pipeline completed, but no article rows were found for this exact run."
+            : usedKeywordOverride
             ? "Pipeline completed, but 0 articles matched your keyword override. Try broader keywords or leave keywords blank to use defaults."
             : "Pipeline completed, but 0 articles were collected this run. Sources may have had no matching recent content."
         );
@@ -195,6 +203,8 @@ function SummariesView() {
     errorMessage,
     keywordsInput,
     setKeywordsInput,
+    topic,
+    setTopic,
     triggerRun,
     activeRunId,
   } = usePipelineRunner({
@@ -372,8 +382,24 @@ const handleRunPipeline = async () => {
         />
 
         <div className="w-full max-w-3xl mx-auto mt-4 mb-4 text-left">
-          <label className="block text-sm font-semibold mb-1">Topic</label>
+          <label htmlFor="pipeline-topic" className="block text-sm font-semibold mb-1">
+            Processing topic
+          </label>
           <select
+            id="pipeline-topic"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            className="w-full p-2 border border-gray-300 rounded mb-4"
+          >
+            <option value="finance">Finance</option>
+            <option value="luxury">Luxury</option>
+          </select>
+
+          <label htmlFor="publication-list" className="block text-sm font-semibold mb-1">
+            Publication list
+          </label>
+          <select
+            id="publication-list"
             value={selectedListName || ""}
             onChange={(e) => {
               const v = e.target.value;
@@ -390,7 +416,7 @@ const handleRunPipeline = async () => {
                 {s.list_name} ({s.active_rows}/{s.total_rows} active)
               </option>
             ))}
-            <option value={ADD_NEW_OPTION}>Add new category/topic</option>
+            <option value={ADD_NEW_OPTION}>Add new publication list</option>
           </select>
         </div>
 

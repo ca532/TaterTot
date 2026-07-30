@@ -154,6 +154,7 @@ class PipelineRunner:
                     'url': article.url,
                     'publication': article.publication,
                     'published_date': article.published_date.isoformat() if getattr(article, 'published_date', None) else '',
+                    'run_id': os.getenv('GITHUB_RUN_ID', ''),
                     'full_content': article.full_content,  # Keep for summarization
                     'journalist': 'Unknown',  # Placeholder
                     'author': author,      # Placeholder

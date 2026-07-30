@@ -109,6 +109,8 @@ class GoogleSheetsDB:
             headers = self.articles_sheet.row_values(1)
             if len(headers) < 9 or not headers[8]:
                 self.articles_sheet.update_cell(1, 9, 'published_date')
+            if len(headers) < 10 or not headers[9]:
+                self.articles_sheet.update_cell(1, 10, 'run_id')
         except Exception as e:
             print(f"⚠️  Could not ensure published_date header: {str(e)}")
         
@@ -124,6 +126,7 @@ class GoogleSheetsDB:
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 article.get('score', 0.0),
                 article.get('published_date', ''),
+                article.get('run_id', ''),
             ])
         
         # Append to sheet (keeps history)

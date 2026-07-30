@@ -1516,6 +1516,15 @@ async def pipeline_status(authorization: str = Header(default="")):
     _check_auth(authorization)
     async with STATUS_CACHE_LOCK:
         cached = dict(STATUS_CACHE)
+
+    with STATE_LOCK:
+        current_state = _read_state()
+        expected_run_id = current_state.get("last_run_id")
+
+    cached_run_id = cached.get("runId")
+    if expected_run_id and str(cached_run_id or "") != str(expected_run_id):
+        cached = await _refresh_status_once(force_github=True)
+
     if not cached.get("updatedAt"):
         cached = await _refresh_status_once(force_github=True)
 
