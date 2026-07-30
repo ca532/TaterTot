@@ -104,6 +104,13 @@ class GoogleSheetsDB:
         if not articles:
             print("⚠️  No articles to save")
             return
+
+        try:
+            headers = self.articles_sheet.row_values(1)
+            if len(headers) < 9 or not headers[8]:
+                self.articles_sheet.update_cell(1, 9, 'published_date')
+        except Exception as e:
+            print(f"⚠️  Could not ensure published_date header: {str(e)}")
         
         rows = []
         for article in articles:
@@ -116,6 +123,7 @@ class GoogleSheetsDB:
                 article.get('summary', ''),
                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 article.get('score', 0.0),
+                article.get('published_date', ''),
             ])
         
         # Append to sheet (keeps history)

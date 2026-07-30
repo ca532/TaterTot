@@ -15,6 +15,13 @@ function ArticlesList({
   onShowAll = () => {},
   onShowStarredOnly = () => {},
 }) {
+  const formatArticleDate = (value) => {
+    if (!value) return "Date unavailable";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Date unavailable";
+    return date.toLocaleDateString();
+  };
+
   // Filter articles from the last run only
   const filtered = articles.filter(article => {
     if (!lastRunTime) return true; // If no lastRunTime, show all articles
@@ -44,6 +51,7 @@ function ArticlesList({
     journalist: s.author || "Unknown",
     summary: s.summary || "No summary available",
     collectedDate: s.starred_at || "",
+    publishedDate: s.publishedDate || s.published_date || "",
     score: Number(s.score || 0),
   }));
   const displayedArticles = showStarredOnly ? starredWeekArticles : recentArticles;
@@ -182,7 +190,7 @@ function ArticlesList({
                   </span>
                   <span className="flex items-center gap-1">
                     <Calendar className="w-4 h-4" />
-                    {new Date(article.collectedDate).toLocaleDateString()}
+                    Published {formatArticleDate(article.publishedDate)}
                   </span>
                 </div>
               </div>

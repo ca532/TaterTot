@@ -62,6 +62,14 @@ class weeklyRoundupPDF:
             leftIndent=10,
             fontName='Helvetica-Oblique'
         )
+
+    def _format_published_date(self, raw_date: str) -> str:
+        if not raw_date:
+            return "Date unavailable"
+        try:
+            return datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).strftime("%d %B %Y")
+        except Exception:
+            return str(raw_date).split(" ")[0] or "Date unavailable"
     
     def generate_pdf(self, json_file: str, output_file: str = None):
         """Generate PDF from JSON summary data"""
@@ -142,6 +150,7 @@ class weeklyRoundupPDF:
                 title = article.get('title', 'Untitled')
                 author = article.get('author', 'Unknown')
                 summary = article.get('summary', 'No summary available')
+                published_date = self._format_published_date(article.get('published_date', ''))
                 url = article.get('url', '')
                 
                 # Format: Title by Author
@@ -149,7 +158,7 @@ class weeklyRoundupPDF:
                 story.append(Paragraph(article_header, self.article_style))
                 
                 # Summary text
-                summary_text = f"{summary}"
+                summary_text = f"<b>Published:</b> {published_date} - {summary}"
                 story.append(Paragraph(summary_text, self.article_style))
                 
                 # URL as metadata

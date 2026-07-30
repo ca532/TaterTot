@@ -330,6 +330,7 @@ class PipelineService {
           summary: article.summary,
           author: article.journalist || "Unknown",
           score: Number(article.score || 0),
+          published_date: article.publishedDate || article.published_date || "",
         })
       });
       const data = await res.json().catch(() => ({}));

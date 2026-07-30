@@ -25,6 +25,7 @@ class ArticleSummary:
     url: str
     publication: str
     topics: List[str] = None
+    published_date: Optional[str] = None
 
 class ArticleSummarizer:
     def __init__(self, model: str = None, custom_prompt: str = None):

@@ -184,6 +184,7 @@ class StarCreateRequest(BaseModel):
     summary: str
     author: Optional[str] = "Unknown"
     score: Optional[float] = 0.0
+    published_date: Optional[str] = ""
     week_key: Optional[str] = None
     user: Optional[str] = "default"
 
@@ -370,16 +371,20 @@ def _load_stars_sheet():
         ws = spreadsheet.worksheet(STARRED_SHEET_NAME)
     except Exception:
         ws = spreadsheet.add_worksheet(title=STARRED_SHEET_NAME, rows=2000, cols=12)
-        ws.update("A1:K1", [[
+        ws.update("A1:L1", [[
             "star_id", "article_id", "title", "url", "publication", "summary",
-            "author", "score", "starred_at", "week_key", "user"
+            "author", "score", "starred_at", "week_key", "user", "published_date"
         ]])
+
+    headers = ws.row_values(1)
+    if len(headers) < 12 or headers[11] != "published_date":
+        ws.update_cell(1, 12, "published_date")
 
     if STARS_DEBUG_LOG:
         try:
             print(f"[STARS_DEBUG] spreadsheet_title={spreadsheet.title!r}")
             print(f"[STARS_DEBUG] worksheet_title={ws.title!r}")
-            print(f"[STARS_DEBUG] A1:K1={ws.get('A1:K1')!r}")
+            print(f"[STARS_DEBUG] A1:L1={ws.get('A1:L1')!r}")
         except Exception as e:
             print(f"[STARS_DEBUG] header_probe_error={e}")
 
@@ -436,7 +441,7 @@ def _read_metadata_map() -> dict:
 
 
 def _stars_rows(ws):
-    values = ws.get("A:K")
+    values = ws.get("A:L")
     if not values:
         return []
 
@@ -956,7 +961,7 @@ def get_stars(week_key: Optional[str] = None, user: Optional[str] = "default", a
     if STARS_DEBUG_LOG:
         try:
             print(f"[STARS_DEBUG] get_stars worksheet_title={ws.title!r}")
-            print(f"[STARS_DEBUG] get_stars A1:K1={ws.get('A1:K1')!r}")
+            print(f"[STARS_DEBUG] get_stars A1:L1={ws.get('A1:L1')!r}")
         except Exception as e:
             print(f"[STARS_DEBUG] get_stars probe error={e}")
 
@@ -983,7 +988,7 @@ def create_star(req: StarCreateRequest, authorization: str = Header(default=""))
     if STARS_DEBUG_LOG:
         try:
             print(f"[STARS_DEBUG] create_star worksheet_title={ws.title!r}")
-            print(f"[STARS_DEBUG] create_star A1:K1={ws.get('A1:K1')!r}")
+            print(f"[STARS_DEBUG] create_star A1:L1={ws.get('A1:L1')!r}")
         except Exception as e:
             print(f"[STARS_DEBUG] create_star probe error={e}")
 
@@ -1013,6 +1018,7 @@ def create_star(req: StarCreateRequest, authorization: str = Header(default=""))
         datetime.now(timezone.utc).isoformat(),
         wk,
         usr,
+        req.published_date or "",
     ], value_input_option="USER_ENTERED")
 
     return {"ok": True, "star_id": star_id, "article_id": article_id, "existing": False}
@@ -1023,7 +1029,7 @@ def delete_star(star_id: str, authorization: str = Header(default="")):
     _check_auth(authorization)
     ws = _load_stars_sheet()
 
-    values = ws.get("A:K")
+    values = ws.get("A:L")
     if not values:
         return {"ok": True, "deleted": False}
 

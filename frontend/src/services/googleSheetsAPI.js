@@ -25,7 +25,7 @@ class GoogleSheetsService {
       return [];
     }
 
-    const range = 'Articles!A2:H'; // Skip header row, get all data (includes score)
+    const range = 'Articles!A2:I'; // Skip header row, get all data (includes score and published date)
     const url = `${this.baseURL}/values/${range}?key=${API_KEY}`;
     
     try {
@@ -52,6 +52,7 @@ class GoogleSheetsService {
         summary: row[5] || 'No summary available',
         collectedDate: row[6] || new Date().toISOString(),
         score: Number(row[7] || 0),
+        publishedDate: row[8] || '',
       }));
       
       console.log(`✅ Fetched ${articles.length} articles from Google Sheets`);

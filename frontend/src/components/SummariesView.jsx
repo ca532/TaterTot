@@ -142,6 +142,7 @@ function SummariesView() {
         author: article.journalist || "Unknown",
         score: Number(article.score || 0),
         starred_at: new Date().toISOString(),
+        published_date: article.publishedDate || article.published_date || "",
       },
     ]);
   };

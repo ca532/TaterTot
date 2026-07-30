@@ -126,6 +126,11 @@ class IntegratedPipeline:
                 )
                 
                 if summary:
+                    summary.published_date = (
+                        article.published_date.isoformat()
+                        if article.published_date
+                        else None
+                    )
                     summarized_articles.append(summary)
                     print(f"    Success")
                 else:
@@ -168,8 +173,11 @@ class IntegratedPipeline:
         output.append("-" * 60)
         
         for i, summary in enumerate(summaries, 1):
-            # Format: * [Title](URL) by Author - Summary
-            formatted = f"* [{summary.title}]({summary.url}) by {summary.author} - {summary.summary}"
+            published = summary.published_date or "Date unavailable"
+            formatted = (
+                f"* [{summary.title}]({summary.url}) by {summary.author} "
+                f"- Published: {published} - {summary.summary}"
+            )
             output.append(f"\n{formatted}")
         
         return "\n".join(output)
@@ -193,7 +201,8 @@ class IntegratedPipeline:
                 'author': summary.author,
                 'summary': summary.summary,
                 'url': summary.url,
-                'publication': summary.publication
+                'publication': summary.publication,
+                'published_date': summary.published_date,
             })
         
         with open(json_filename, 'w', encoding='utf-8') as f:
