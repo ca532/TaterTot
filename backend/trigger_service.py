@@ -102,7 +102,7 @@ def debug_routes():
 GITHUB_OWNER = os.environ["GITHUB_OWNER"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 GITHUB_WORKFLOW = os.environ.get("GITHUB_WORKFLOW", "collect-articles.yml")
-GITHUB_REF = os.environ.get("GITHUB_REF", "main")
+GITHUB_REF = os.environ["GITHUB_REF"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 APP_LOGIN_PASSWORD = os.environ["APP_LOGIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
