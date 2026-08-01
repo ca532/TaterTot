@@ -11,16 +11,6 @@ DEFAULTS = {
     "weekly_source_list_name": "",
     "weekly_keywords": "",
 }
-TOPIC_DEFAULTS = {
-    "finance": {
-        "topic_name": "Finance",
-        "keywords": "",
-    },
-    "luxury": {
-        "topic_name": "Luxury",
-        "keywords": "",
-    },
-}
 
 
 def _spreadsheet():
@@ -68,13 +58,12 @@ def read_config() -> Dict[str, str]:
 
     topic = values["weekly_topic"].strip() or "Finance"
     topic_cfg = read_topic_config(topic)
-    pipeline_topic = infer_pipeline_topic(topic_cfg["topic_name"], topic_cfg["keywords"])
     source_list_name = values["weekly_source_list_name"].strip() or topic_cfg["topic_name"]
     keywords = values["weekly_keywords"].strip() or topic_cfg["keywords"]
 
     return {
         "weekly_topic": topic_cfg["topic_name"],
-        "weekly_pipeline_topic": pipeline_topic,
+        "weekly_pipeline_topic": topic_cfg["topic_name"],
         "weekly_source_list_name": source_list_name,
         "weekly_keywords": keywords.replace("\r", " ").replace("\n", " ").strip(),
     }
@@ -92,25 +81,17 @@ def _clean_keywords(raw: str) -> str:
     return ", ".join(out)
 
 
-def infer_pipeline_topic(topic_name: str, keywords: str = "") -> str:
-    text = " ".join([topic_name or "", keywords or ""]).lower()
-    luxury_terms = {
-        "luxury", "jewellery", "jewelry", "fashion", "watch", "watches", "horology",
-        "diamond", "diamonds", "cartier", "tiffany", "bulgari", "chanel", "dior",
-        "haute couture", "timepiece", "gem", "gems", "royal", "red carpet",
-    }
-    return "luxury" if any(term in text for term in luxury_terms) else "finance"
-
-
 def read_topic_config(topic_name: str) -> Dict[str, str]:
-    wanted = (topic_name or "finance").strip().lower()
+    wanted = (topic_name or "").strip().lower()
+    if not wanted:
+        raise RuntimeError("A weekly topic must be configured")
     ss = _spreadsheet()
 
     try:
         ws = ss.worksheet(os.getenv("TOPIC_CONFIG_SHEET", "Topic Config"))
         rows = ws.get_all_records()
-    except Exception:
-        return TOPIC_DEFAULTS.get(wanted, TOPIC_DEFAULTS["finance"])
+    except Exception as exc:
+        raise RuntimeError("Could not load Topic Config") from exc
 
     for row in rows:
         name = str(row.get("topic_name", "")).strip()
@@ -124,7 +105,7 @@ def read_topic_config(topic_name: str) -> Dict[str, str]:
             "keywords": _clean_keywords(str(row.get("keywords", "")).strip()),
         }
 
-    return TOPIC_DEFAULTS.get(wanted, TOPIC_DEFAULTS["finance"])
+    raise RuntimeError(f"Active topic configuration '{topic_name}' was not found")
 
 
 def print_github_env() -> None:

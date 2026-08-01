@@ -203,8 +203,6 @@ function SummariesView() {
     errorMessage,
     keywordsInput,
     setKeywordsInput,
-    topic,
-    setTopic,
     triggerRun,
     activeRunId,
   } = usePipelineRunner({
@@ -382,21 +380,8 @@ const handleRunPipeline = async () => {
         />
 
         <div className="w-full max-w-3xl mx-auto mt-4 mb-4 text-left">
-          <label htmlFor="pipeline-topic" className="block text-sm font-semibold mb-1">
-            Processing topic
-          </label>
-          <select
-            id="pipeline-topic"
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            className="w-full p-2 border border-gray-300 rounded mb-4"
-          >
-            <option value="finance">Finance</option>
-            <option value="luxury">Luxury</option>
-          </select>
-
           <label htmlFor="publication-list" className="block text-sm font-semibold mb-1">
-            Publication list
+            Topic
           </label>
           <select
             id="publication-list"
@@ -416,7 +401,7 @@ const handleRunPipeline = async () => {
                 {s.list_name} ({s.active_rows}/{s.total_rows} active)
               </option>
             ))}
-            <option value={ADD_NEW_OPTION}>Add new publication list</option>
+            <option value={ADD_NEW_OPTION}>Add new topic</option>
           </select>
         </div>
 

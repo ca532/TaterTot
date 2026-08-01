@@ -42,8 +42,7 @@ def _parse_keywords_override() -> list[str]:
 
 
 def _parse_topic() -> str:
-    raw = os.getenv("TOPIC", "finance").strip().lower()
-    return raw if raw in {"finance", "luxury"} else "finance"
+    return os.getenv("TOPIC", "").strip()
 
 
 def _parse_source_list_name() -> str:
@@ -104,8 +103,10 @@ class PipelineRunner:
         
         # Initialize your agents
         print("🤖 Initializing Article Collector...")
-        self.topic = _parse_topic()
         self.source_list_name = _parse_source_list_name()
+        self.topic = _parse_topic() or self.source_list_name
+        if not self.topic:
+            raise ValueError("TOPIC or SOURCE_LIST_NAME is required")
         print(f"Using topic: {self.topic}")
         if self.source_list_name:
             print(f"Using source list: {self.source_list_name}")

@@ -34,7 +34,6 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
   const [runStatus, setRunStatus] = useState("idle");
   const [errorMessage, setErrorMessage] = useState(null);
   const [keywordsInput, setKeywordsInput] = useState("");
-  const [topic, setTopic] = useState("finance");
   const [activeRunId, setActiveRunId] = useState(null);
   const activeRunIdRef = useRef(null);
   const hasSeenActiveStatusRef = useRef(false);
@@ -139,9 +138,10 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
       return { success: false, error: msg };
     }
 
+    const topic = String(listName).trim();
     const payload = keywords.length > 0
-      ? { keywords, topic, list_name: listName }
-      : { topic, list_name: listName };
+      ? { keywords, topic, list_name: topic }
+      : { topic, list_name: topic };
     const result = await githubAPI.triggerPipeline(payload);
     if (!result.success) {
       setRunStatus("idle");
@@ -172,8 +172,6 @@ export default function usePipelineRunner({ onSuccess, onFailure }) {
     errorMessage,
     keywordsInput,
     setKeywordsInput,
-    topic,
-    setTopic,
     triggerRun,
     activeRunId,
   };

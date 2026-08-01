@@ -54,96 +54,13 @@ class ArticleCandidate:
     candidate_source: str = "unknown"
 
 class CustomArticleCollector:
-    def __init__(self, topic: str = "finance", source_list_name: str = None):
+    def __init__(self, topic: str = "", source_list_name: str = None):
         """Initialize collector with your specific sources and keywords"""
-        self.topic = (topic or "finance").strip().lower()
+        self.topic = (topic or source_list_name or "").strip()
         self.source_list_name = (source_list_name or "").strip()
-        if self.topic not in {"finance", "luxury"}:
-            self.topic = "finance"
-        
-        # Your custom keywords for relevance filtering (British English)
-        self.finance_keywords = [
-            # 'luxury', 'jewellery', 'fine jewellery', 'craftsmanship',
-            # 'jewelry', 'diamond', 'engagement ring', 'wedding ring',
-            # 'fashion', 'accessories', 'watches', 'timepiece',
-            # 'necklace', 'bracelet', 'earrings', 'pendant', 'brooch',
-            # 'gold', 'platinum', 'silver', 'emerald', 'sapphire', 'ruby',
-            # 'cartier', 'tiffany', 'bulgari', 'chanel', 'dior', 'van cleef',
-            # 'graff', 'harry winston', 'chopard', 'piaget', 'boucheron',
-            # 'red carpet', 'celebrity', 'haute couture', 'collection',
-            # 'launch', 'collaboration', 'limited edition', 'auction',
-            # 'investment', 'trends', 'style', 'fashion week', 'royal', 'royals',
-            # 'Luxury sector', 'Luxury marketing trends', 'Lab grown diamonds',
-            # 'Diamond price', 'Gold price', 'jewels',
-            # # English royalty keywords
-            # 'crown', 'tiara', 'coronation', 'queen', 'king', 'prince', 'princess',
-            # 'duchess', 'duke', 'royal family', 'buckingham palace', 'windsor',
-            # 'crown jewels', 'state visit', 'royal wedding', 'monarchy',
-            # 'sovereign', 'regalia', 'royal collection', 'palace'
-            'eurozone derivatives clearing','euro interest rate swaps clearing',
-            'euro ccp infrastructure','emir clearing rules','clearing house',
-            'interest-rate derivatives','otc derivatives','interest rate swaps',
-            'fx swaps','credit derivatives','central counterparty clearing',
-            'eurozone interest rate derivatives clearing infrastructure', 'mutual funds',
-            'hedge funds', 'private equity', 'blockchain', 'cryptocurrency', 'fintech',
-            'gold market price', 'risk management', 'compliance', "Equivalence regime", 
-            "Brexit financial regulations", "European banking", "Capitals of finance", 
-            "Post-Brexit clearing", "Institutional confidence", "Stablecoin", "Venture Capital", 
-            "Market Infrastructure", "Market Volatility", "Capital Requirements", 
-            "Investment banks", "Tokenisation", "Systemic risk", "Davos", "Capitalisation"
-        ]
-        
-        self.finance_keyword_weight_map = {
-            # Priority 4.0: core clearing/reg structure
-            "eurozone derivatives clearing": 4.0,
-            "euro interest rate swaps clearing": 4.0,
-            "euro ccp infrastructure": 4.0,
-            "emir clearing rules": 4.0,
-            "post-brexit clearing": 4.0,
-            "central counterparty clearing": 4.0,
-            "capital requirements": 4.0,
-            "eurozone interest rate derivatives clearing infrastructure": 4.0,
-            # Priority 3.0: institutional markets/policy risk
-            "otc derivatives": 3.0,
-            "interest-rate derivatives": 3.0,
-            "interest rate swaps": 3.0,
-            "fx swaps": 3.0,
-            "credit derivatives": 3.0,
-            "systemic risk": 3.0,
-            "market infrastructure": 3.0,
-            "market volatility": 3.0,
-            "brexit financial regulations": 3.0,
-            "equivalence regime": 3.0,
-            "european banking": 3.0,
-            "institutional confidence": 3.0,
-            "investment banks": 3.0,
-            # Priority 2.5: fintech / digital assets
-            "fintech": 2.5,
-            "blockchain": 2.5,
-            "cryptocurrency": 2.5,
-            "stablecoin": 2.5,
-            "tokenisation": 2.5,
-            "venture capital": 2.5,
-            "clearing house": 2.5,
-            # Priority 2.0: broad finance
-            "mutual funds": 2.0,
-            "hedge funds": 2.0,
-            "private equity": 2.0,
-            "risk management": 2.0,
-            "compliance": 2.0,
-            "capitalisation": 2.0,
-            "gold market price": 2.0,
-            # Lower-signal broad phrases
-            "capitals of finance": 1.5,
-            "davos": 1.5,
-        }
-        self.finance_combo_bonuses = [
-            (("brexit", "clearing"), 1.0),
-            (("stablecoin", "compliance"), 0.8),
-            (("stablecoin", "regulation"), 0.8),
-            (("derivatives", "ccp"), 1.0),
-            (("derivatives", "clearing"), 1.0),
-        ]
+
+        self.active_keywords = []
+        self.keyword_weight_map = {}
         self.max_hits_per_keyword = 2
         self.max_total_repeat_bonus = 3.0
         self.unique_keyword_bonus = 0.35
@@ -552,50 +469,24 @@ class CustomArticleCollector:
 
         }
         
-        self.luxury_keywords = [
-            'luxury', 'jewellery', 'fine jewellery', 'craftsmanship',
-            'jewelry', 'diamond', 'engagement ring', 'wedding ring',
-            'fashion', 'accessories', 'watches', 'timepiece',
-            'necklace', 'bracelet', 'earrings', 'pendant', 'brooch',
-            'gold', 'platinum', 'silver', 'emerald', 'sapphire', 'ruby',
-            'cartier', 'tiffany', 'bulgari', 'chanel', 'dior', 'van cleef',
-            'graff', 'harry winston', 'chopard', 'piaget', 'boucheron',
-            'red carpet', 'celebrity', 'haute couture', 'collection',
-            'launch', 'collaboration', 'limited edition', 'auction',
-            'investment', 'trends', 'style', 'fashion week', 'royal', 'royals',
-            'luxury sector', 'luxury marketing trends', 'lab grown diamonds',
-            'diamond price', 'gold price', 'jewels',
-            'crown', 'tiara', 'coronation', 'queen', 'king', 'prince', 'princess',
-            'duchess', 'duke', 'royal family', 'buckingham palace', 'windsor',
-            'crown jewels', 'state visit', 'royal wedding', 'monarchy',
-            'sovereign', 'regalia', 'royal collection', 'palace'
-        ]
-        self.luxury_keyword_weight_map = self._build_luxury_keyword_weight_map()
-        self.luxury_combo_bonuses = [
-            (("royal", "jewellery"), 1.0),
-            (("red carpet", "diamond"), 0.8),
-            (("haute couture", "collection"), 0.8),
-        ]
         self.luxury_sources = self._build_luxury_sources()
 
-        if self.topic == "luxury":
-            self.active_keywords = [k.lower() for k in self.luxury_keywords]
-            self.target_sources = self.luxury_sources
-            self.keyword_weight_map = self.luxury_keyword_weight_map
-            self.keyword_combo_bonuses = self.luxury_combo_bonuses
-        else:
-            self.active_keywords = [k.lower() for k in self.finance_keywords]
-            self.target_sources = self.finance_sources
-            self.keyword_weight_map = self.finance_keyword_weight_map
-            self.keyword_combo_bonuses = self.finance_combo_bonuses
+        self.target_sources = (
+            self.luxury_sources if self.topic.lower() == "luxury" else self.finance_sources
+        )
 
         sheet_sources = self._load_sources_from_sheet()
         if sheet_sources:
             self.target_sources = sheet_sources
             print(f"✅ Loaded {len(self.target_sources)} active sources from list '{self.source_list_name}'")
 
-        # Cap behavior: keep dynamic caps for finance, fixed cap for luxury.
-        self.use_dynamic_caps = (self.topic != "luxury")
+        topic_config = self._load_topic_scoring_config()
+        if not topic_config["keywords"]:
+            raise ValueError(f"Topic '{self.source_list_name or self.topic}' has no configured keywords")
+        self.active_keywords = topic_config["keywords"]
+        self.keyword_weight_map = topic_config["weights"]
+
+        self.use_dynamic_caps = True
         # Evaluate a few extra candidates past cap, then trim by full-content score.
         self.post_cap_buffer = 3
         # Stop wasting attempts on a source if it keeps returning 401.
@@ -700,24 +591,58 @@ class CustomArticleCollector:
             }
         return out
 
-    def _build_luxury_keyword_weight_map(self) -> Dict[str, float]:
-        return {
-            "luxury": 4.0, "jewellery": 4.0, "fine jewellery": 4.0, "craftsmanship": 4.0, "jewels": 4.0,
-            "jewelry": 3.0, "diamond": 3.0, "engagement ring": 3.0, "wedding ring": 3.0, "lab grown diamonds": 3.0,
-            "diamond price": 3.0, "gold price": 3.0, "crown": 3.0, "tiara": 3.0, "coronation": 3.0, "queen": 3.0,
-            "king": 3.0, "prince": 3.0, "princess": 3.0, "duchess": 3.0, "duke": 3.0, "royal family": 3.0,
-            "buckingham palace": 3.0, "windsor": 3.0, "crown jewels": 3.0, "state visit": 3.0, "royal wedding": 3.0,
-            "monarchy": 3.0, "sovereign": 3.0, "regalia": 3.0, "royal collection": 3.0, "palace": 3.0,
-            "cartier": 3.5, "tiffany": 3.5, "bulgari": 3.5, "chanel": 3.5, "dior": 3.5, "van cleef": 3.5,
-            "graff": 3.5, "harry winston": 3.5, "chopard": 3.5, "piaget": 3.5, "boucheron": 3.5,
-            "necklace": 2.5, "bracelet": 2.5, "earrings": 2.5, "pendant": 2.5, "brooch": 2.5,
-            "gold": 2.5, "platinum": 2.5, "silver": 2.5, "emerald": 2.5, "sapphire": 2.5, "ruby": 2.5,
-            "fashion": 2.5, "accessories": 2.5, "watches": 2.5, "timepiece": 2.5, "collection": 2.5,
-            "launch": 2.5, "haute couture": 2.5, "limited edition": 2.5,
-            "red carpet": 2.0, "celebrity": 2.0, "fashion week": 2.0, "auction": 2.0, "royal": 2.0, "royals": 2.0,
-            "collaboration": 1.5, "investment": 1.5, "trends": 1.5, "style": 1.5, "luxury sector": 1.5,
-            "luxury marketing trends": 1.5
-        }
+    def _load_topic_scoring_config(self) -> Dict[str, object]:
+        topic_name = self.source_list_name or self.topic
+        if not topic_name:
+            raise ValueError("A topic name is required")
+
+        sheet_id = os.getenv("GOOGLE_SHEET_ID")
+        creds_json = os.getenv("GOOGLE_CREDENTIALS")
+        if not sheet_id:
+            raise ValueError("GOOGLE_SHEET_ID is required to load topic scoring")
+
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        if creds_json:
+            creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
+        else:
+            creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
+            creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
+
+        ws = gspread.authorize(creds).open_by_key(sheet_id).worksheet(
+            os.getenv("TOPIC_CONFIG_SHEET", "Topic Config")
+        )
+        for row in ws.get_all_records():
+            name = str(row.get("topic_name", "")).strip()
+            active = str(row.get("active", "TRUE")).strip().upper() != "FALSE"
+            if not active or name.lower() != topic_name.lower():
+                continue
+
+            keywords = list(dict.fromkeys(
+                part.strip().lower()
+                for part in str(row.get("keywords", "")).replace("\n", ",").split(",")
+                if part.strip()
+            ))
+            try:
+                raw_weights = json.loads(str(row.get("keyword_weights", "") or "{}"))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Topic '{name}' has invalid keyword weights") from exc
+
+            status = str(row.get("weighting_status", "")).strip().lower()
+            if keywords and (status != "complete" or not raw_weights):
+                raise ValueError(f"Topic '{name}' keyword weights have not been generated")
+
+            weights = {}
+            for keyword in keywords:
+                value = raw_weights.get(keyword, 1.0)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    value = 1.0
+                weights[keyword] = min(4.0, max(0.5, float(value)))
+            return {"keywords": keywords, "weights": weights}
+
+        raise ValueError(f"Active topic configuration '{topic_name}' was not found")
 
     def _build_luxury_sources(self) -> Dict[str, dict]:
         return {
@@ -876,9 +801,10 @@ class CustomArticleCollector:
         cleaned = [str(k).strip().lower() for k in (keywords or []) if str(k).strip()]
         if cleaned:
             self.active_keywords = cleaned
-            return
-        base_keywords = self.luxury_keywords if self.topic == "luxury" else self.finance_keywords
-        self.active_keywords = [k.lower() for k in base_keywords]
+            self.keyword_weight_map = {
+                keyword: self.keyword_weight_map.get(keyword, 1.0)
+                for keyword in cleaned
+            }
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").lower()).strip()
@@ -891,13 +817,6 @@ class CustomArticleCollector:
     def _weighted_score_for_keyword(self, kw_lower: str) -> float:
         kw = (kw_lower or "").strip().lower()
         return self.keyword_weight_map.get(kw, 1.0)
-
-    def _combo_bonus(self, text_lower: str) -> float:
-        bonus = 0.0
-        for terms, value in self.keyword_combo_bonuses:
-            if all(t in text_lower for t in terms):
-                bonus += value
-        return bonus
 
     def _keyword_occurrences(self, text_lower: str, keyword: str) -> int:
         kw = (keyword or "").strip().lower()
@@ -1091,7 +1010,6 @@ class CustomArticleCollector:
             self.max_unique_keyword_bonus
         )
         score += breadth_bonus
-        score += self._combo_bonus(combined_text)
 
         return score, sorted(set(found_keywords))
     
@@ -1274,10 +1192,6 @@ class CustomArticleCollector:
         if publication in source_specific_excludes:
             if any(term in url_lower for term in source_specific_excludes[publication]):
                 return False
-
-        # For luxury, require at least one active keyword in URL.
-        if self.topic == "luxury":
-            return any(keyword.lower() in url_lower for keyword in self.active_keywords)
 
         return True
 

@@ -17,9 +17,8 @@ on:
       topic:
         description: "Pipeline topic"
         required: false
-        default: "finance"
-        type: choice
-        options: ["finance", "luxury"]
+        default: "Finance"
+        type: string
       list_name:
         description: "Source list name from Source Lists sheet (optional)"
         required: false
@@ -66,6 +65,15 @@ jobs:
           set -euo pipefail
           cd backend
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > credentials.json
+
+      - name: Generate topic keyword weights when needed
+        working-directory: backend
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          TOPIC_NAME: ${{ github.event.inputs.list_name || github.event.inputs.topic }}
+          PITCH_MODEL_NAME: Qwen/Qwen2.5-1.5B-Instruct
+        run: python -u run_topic_keyword_weighting.py
 
       - name: Run Article Collection Pipeline (retry + timeout)
         shell: bash

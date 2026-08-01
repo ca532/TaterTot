@@ -3,7 +3,7 @@ name: Weekly Reading Roundup Email
 on:
   workflow_dispatch:
   schedule:
-    # Tuesdays at 9:00 AM UTC.
+    # Mondays at 9:00 AM UTC.
     # During BST this is 10:00 AM UK time.
     - cron: "0 9 * * 1"
 
@@ -67,6 +67,16 @@ jobs:
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+      - name: Backfill pending topic keyword weights
+        if: steps.uk-time.outputs.should_run == 'true'
+        working-directory: backend
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          TOPIC_NAME: __all__
+          PITCH_MODEL_NAME: Qwen/Qwen2.5-1.5B-Instruct
+        run: python -u run_topic_keyword_weighting.py
 
       - name: Run Article Collection Pipeline
         if: steps.uk-time.outputs.should_run == 'true'

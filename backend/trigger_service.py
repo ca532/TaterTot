@@ -159,7 +159,7 @@ META_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 class TriggerRequest(BaseModel):
     keywords: Optional[List[str]] = None
-    topic: Literal["finance", "luxury"] = "finance"
+    topic: str = "Finance"
     list_name: Optional[str] = None
 
 
@@ -575,7 +575,10 @@ def _split_keywords(raw: Optional[str]) -> list[str]:
     return cleaned
 
 
-TOPIC_CONFIG_HEADERS = ["topic_name", "keywords", "summary_prompt", "active", "updated"]
+TOPIC_CONFIG_HEADERS = [
+    "topic_name", "keywords", "summary_prompt", "active", "updated",
+    "keyword_weights", "weighting_status", "weighting_model",
+]
 
 
 def _ensure_topic_config_headers(ws) -> None:
@@ -602,46 +605,32 @@ def _ensure_topic_config_headers(ws) -> None:
             record.get("summary_prompt", ""),
             record.get("active", "TRUE"),
             record.get("updated", ""),
+            record.get("keyword_weights", ""),
+            record.get("weighting_status", "pending" if record.get("keywords") else "not_required"),
+            record.get("weighting_model", ""),
         ])
 
     ws.clear()
-    ws.update(range_name="A1:E1", values=[TOPIC_CONFIG_HEADERS])
+    ws.update(range_name="A1:H1", values=[TOPIC_CONFIG_HEADERS])
     if existing_rows:
         ws.append_rows(existing_rows, value_input_option="USER_ENTERED")
 
 
 def _topic_configs() -> list[dict]:
-    defaults = [
-        {
-            "topic_name": "finance",
-            "keywords": "",
-            "summary_prompt": "",
-            "keyword_count": 0,
-            "active": True,
-        },
-        {
-            "topic_name": "luxury",
-            "keywords": "",
-            "summary_prompt": "",
-            "keyword_count": 0,
-            "active": True,
-        },
-    ]
-
     try:
         ss = _load_main_spreadsheet()
         try:
             ws = ss.worksheet(TOPIC_CONFIG_SHEET)
         except Exception:
-            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=5)
-            ws.update(range_name="A1:E1", values=[TOPIC_CONFIG_HEADERS])
-            return defaults
+            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=8)
+            ws.update(range_name="A1:H1", values=[TOPIC_CONFIG_HEADERS])
+            return []
 
         _ensure_topic_config_headers(ws)
         rows = ws.get_all_records()
     except Exception as e:
         print(f"[TOPIC_CONFIG_WARN] could not load topic configs: {e}")
-        return defaults
+        return []
 
     configs = []
     for row in rows:
@@ -656,11 +645,14 @@ def _topic_configs() -> list[dict]:
             "topic_name": topic_name,
             "keywords": keywords,
             "summary_prompt": str(row.get("summary_prompt", "")).strip(),
+            "keyword_weights": str(row.get("keyword_weights", "")).strip(),
+            "weighting_status": str(row.get("weighting_status", "")).strip(),
+            "weighting_model": str(row.get("weighting_model", "")).strip(),
             "keyword_count": len(_split_keywords(keywords)),
             "active": True,
         })
 
-    return sorted(configs or defaults, key=lambda x: x["topic_name"].lower())
+    return sorted(configs, key=lambda x: x["topic_name"].lower())
 
 
 def _topic_config_for(topic_name: str) -> Optional[dict]:
@@ -684,7 +676,7 @@ def _topic_config_upsert(topic_name: str, keywords: str, summary_prompt: str = "
     try:
         ws = ss.worksheet(TOPIC_CONFIG_SHEET)
     except Exception:
-        ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=5)
+        ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=8)
 
     _ensure_topic_config_headers(ws)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -695,9 +687,12 @@ def _topic_config_upsert(topic_name: str, keywords: str, summary_prompt: str = "
             row_idx = i
             break
 
-    row_values = [topic, clean_keywords, clean_prompt, "TRUE", today]
+    row_values = [
+        topic, clean_keywords, clean_prompt, "TRUE", today, "",
+        "pending" if clean_keywords else "not_required", "",
+    ]
     if row_idx:
-        ws.update(range_name=f"A{row_idx}:E{row_idx}", values=[row_values])
+        ws.update(range_name=f"A{row_idx}:H{row_idx}", values=[row_values])
     else:
         ws.append_row(row_values, value_input_option="USER_ENTERED")
 
@@ -1094,9 +1089,11 @@ def _normalize_keywords(raw: Optional[List[str]]) -> List[str]:
 
 
 def _normalize_topic(raw: Optional[str]) -> str:
-    topic = (raw or "finance").strip().lower()
-    if topic not in {"finance", "luxury"}:
-        raise HTTPException(status_code=400, detail="Invalid topic")
+    topic = (raw or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+    if not _topic_config_for(topic):
+        raise HTTPException(status_code=400, detail=f"Unknown or inactive topic: {topic}")
     return topic
 
 
