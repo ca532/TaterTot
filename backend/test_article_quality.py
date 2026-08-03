@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from article_quality import (
+    has_low_signal_intent,
     normalize_publication_name,
     resolve_published_date,
     validate_article_content,
@@ -78,6 +79,11 @@ class ArticleQualityTests(unittest.TestCase):
         self.assertEqual(normalize_publication_name("businessinsider"), "Business Insider")
         self.assertEqual(normalize_publication_name("harpersbazaar"), "Harper's Bazaar")
         self.assertEqual(normalize_publication_name("nytimes"), "The New York Times")
+
+    def test_identifies_low_signal_article_intent(self):
+        self.assertTrue(has_low_signal_intent("The perfect date night top for GBP 36"))
+        self.assertTrue(has_low_signal_intent("This year's festival party looks"))
+        self.assertFalse(has_low_signal_intent("Cartier unveils a high jewellery collection"))
 
 
 if __name__ == "__main__":

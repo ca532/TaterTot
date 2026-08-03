@@ -19,6 +19,7 @@ from article_quality import (
     canonicalize_url,
     clean_article_text,
     extract_page_metadata,
+    has_low_signal_intent,
     normalize_publication_name,
     resolve_published_date,
     title_similarity,
@@ -510,7 +511,7 @@ class CustomArticleCollector:
         self.max_articles_per_publication = topic_config["max_articles_per_publication"]
         self.require_keyword_in_url = topic_config["require_keyword_in_url"]
 
-        self.use_dynamic_caps = False
+        self.use_dynamic_caps = True
         # Evaluate a few extra candidates past cap, then trim by full-content score.
         self.post_cap_buffer = 3
         # Stop wasting attempts on a source if it keeps returning 401.
@@ -885,16 +886,49 @@ class CustomArticleCollector:
         kw = (kw_lower or "").strip().lower()
         return self.keyword_weight_map.get(kw, 1.0)
 
-    def passes_relevance_gate(self, score: float, matched_keywords: List[str]) -> bool:
+    def relevance_gate_reason(
+        self,
+        score: float,
+        matched_keywords: List[str],
+        anchor_keywords: Optional[List[str]] = None,
+        title: str = "",
+    ) -> str:
         distinct = {self._normalize_text(keyword) for keyword in (matched_keywords or []) if keyword}
-        has_standalone = any(
-            self.keyword_policy_map.get(keyword, {}).get("standalone_eligible", False)
-            and self.keyword_weight_map.get(keyword, 1.0) >= self.high_weight_threshold
-            for keyword in distinct
-        )
-        return (
-            score >= self.minimum_relevance_score
-            and (has_standalone or len(distinct) >= self.minimum_distinct_keywords)
+        core = {
+            keyword for keyword in distinct
+            if self.keyword_policy_map.get(keyword, {}).get("tier") == "core"
+        }
+        supporting = {
+            keyword for keyword in distinct
+            if self.keyword_policy_map.get(keyword, {}).get("tier") == "supporting"
+        }
+        if score < self.minimum_relevance_score:
+            return "low_score"
+        if not core and len(supporting) < self.minimum_distinct_keywords:
+            return "insufficient_strong_keywords"
+
+        anchors = {
+            self._normalize_text(keyword)
+            for keyword in (anchor_keywords or [])
+            if keyword
+        }
+        anchor_core = core.intersection(anchors)
+        anchor_supporting = supporting.intersection(anchors)
+        if not anchor_core and len(anchor_supporting) < self.minimum_distinct_keywords:
+            return "missing_early_anchor"
+        if has_low_signal_intent(title) and not anchor_core:
+            return "low_signal_intent"
+        return ""
+
+    def passes_relevance_gate(
+        self,
+        score: float,
+        matched_keywords: List[str],
+        anchor_keywords: Optional[List[str]] = None,
+        title: str = "",
+    ) -> bool:
+        return not self.relevance_gate_reason(
+            score, matched_keywords, anchor_keywords, title
         )
 
     def _keyword_occurrences(self, text_lower: str, keyword: str) -> int:
@@ -1586,12 +1620,18 @@ class CustomArticleCollector:
                     candidate.full_content = clean_article_text(candidate.summary)
                     content_valid, _ = validate_article_content(candidate.full_content)
                     title_valid, _ = validate_title(candidate.title)
+                    _, anchor_keywords = self.calculate_relevance_score(
+                        "", f"{candidate.title} {candidate.full_content[:1000]}"
+                    )
                     if (
                         content_valid
                         and title_valid
                         and within_lookback(candidate.published_date, self.lookback_days)
                         and self.passes_relevance_gate(
-                            candidate.relevance_score, candidate.keywords_found or []
+                            candidate.relevance_score,
+                            candidate.keywords_found or [],
+                            anchor_keywords,
+                            candidate.title,
                         )
                     ):
                         return candidate
@@ -1647,6 +1687,15 @@ class CustomArticleCollector:
             
             candidate.relevance_score = full_score
             candidate.keywords_found = full_keywords
+            _, anchor_keywords = self.calculate_relevance_score(
+                "", f"{candidate.title} {candidate.full_content[:1000]}"
+            )
+            rejection_reason = self.relevance_gate_reason(
+                full_score, full_keywords, anchor_keywords, candidate.title
+            )
+            if rejection_reason:
+                self.source_fail_counts[rejection_reason] += 1
+                return None
 
             # Extract author using AgentSumm if available, otherwise fallback
             if AGENTSUMM_AVAILABLE:
@@ -1657,12 +1706,7 @@ class CustomArticleCollector:
             
             if article.meta_description and len(article.meta_description) > len(candidate.summary):
                 candidate.summary = article.meta_description
-            
-            if self.passes_relevance_gate(full_score, full_keywords):
-                return candidate
-            else:
-                self.source_fail_counts["low_score"] += 1
-                return None
+            return candidate
             
         except Exception as e:
             error_msg = str(e)
@@ -1719,6 +1763,9 @@ class CustomArticleCollector:
                 "invalid_title": 0,
                 "invalid_date": 0,
                 "low_score": 0,
+                "insufficient_strong_keywords": 0,
+                "missing_early_anchor": 0,
+                "low_signal_intent": 0,
                 "other_error": 0,
             }
             source_info = self.target_sources[publication]
@@ -1760,7 +1807,7 @@ class CustomArticleCollector:
 
                 time.sleep(random.uniform(1, 2))
 
-            # Recompute cap only when dynamic caps are enabled (finance pipeline).
+            # Expand only after the full-content quality and relevance gates pass.
             if self.use_dynamic_caps:
                 dynamic_cap = self._dynamic_max_from_extracted(publication_articles, baseline_max_articles)
                 if dynamic_cap > max_articles_per_publication:
@@ -1853,7 +1900,9 @@ class CustomArticleCollector:
                 f" invalid={fc['invalid_url']}, 401={fc['http_401']}, 403={fc['http_403']},"
                 f" 429={fc['http_429']}, short={fc['short_text']}, boilerplate={fc['boilerplate']},"
                 f" title={fc['invalid_title']}, date={fc['invalid_date']}, placeholder={fc['placeholder']},"
-                f" low_score={fc['low_score']}, other={fc['other_error']}"
+                f" low_score={fc['low_score']}, strong={fc['insufficient_strong_keywords']},"
+                f" anchor={fc['missing_early_anchor']}, intent={fc['low_signal_intent']},"
+                f" other={fc['other_error']}"
             )
             
             if final_3:

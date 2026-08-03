@@ -29,6 +29,11 @@ GENERIC_TITLES = {
     "analysis", "advertising", "ai", "a smarter way", "above and beyond",
     "featured articles", "jewels club", "home", "latest news",
 }
+LOW_SIGNAL_TITLE_PATTERNS = (
+    "get her look", "shopping basket", "buyers guide", "date night top",
+    "party look", "festival", "summer dress", "slipdress", "jersey dress",
+    "cardigan", "shoe emporium", "movie", "remake",
+)
 INVALID_AUTHORS = {
     "", "unknown", "every time", "authorizing sanctions", "admin",
     "staff", "editor", "editors",
@@ -99,6 +104,11 @@ def validate_title(title: str) -> tuple[bool, str]:
     if len(cleaned) < 12:
         return False, "short_title"
     return True, ""
+
+
+def has_low_signal_intent(title: str) -> bool:
+    lowered = clean_article_text(title).lower()
+    return any(pattern in lowered for pattern in LOW_SIGNAL_TITLE_PATTERNS)
 
 
 def validate_author(author: str) -> str:
