@@ -8,11 +8,14 @@ from reportlab.pdfbase.ttfonts import TTFont
 from datetime import datetime
 import json
 from typing import List, Dict
+from xml.sax.saxutils import escape, quoteattr
 
 class weeklyRoundupPDF:
-    def __init__(self):
+    def __init__(self, topic_name: str = "", lookback_days: int = 14):
         """Initialize PDF generator with styling"""
         self.styles = getSampleStyleSheet()
+        self.topic_name = (topic_name or "").strip()
+        self.lookback_days = max(1, int(lookback_days or 14))
         
         # Custom styles for the roundup
         self.title_style = ParagraphStyle(
@@ -105,13 +108,14 @@ class weeklyRoundupPDF:
         story = []
         
         # Title
-        title = Paragraph("Weekly Luxury Jewellery Reading Roundup", self.title_style)
+        title_text = f"Weekly {escape(self.topic_name)} Reading Roundup" if self.topic_name else "Weekly Reading Roundup"
+        title = Paragraph(title_text, self.title_style)
         story.append(title)
         story.append(Spacer(1, 0.2 * inch))
         
         # Metadata
         date_text = f"<b>Date:</b> {datetime.now().strftime('%d %B %Y')}"
-        coverage_text = f"<b>Coverage Period:</b> Last 14 days"
+        coverage_text = f"<b>Coverage Period:</b> Last {self.lookback_days} days"
         total_text = f"<b>Total Articles:</b> {len(summaries)}"
         
         story.append(Paragraph(date_text, self.article_style))
@@ -142,7 +146,7 @@ class weeklyRoundupPDF:
         # Add each publication's articles
         for pub, articles in sorted(by_publication.items()):
             # Publication header
-            pub_header = f"{pub}"
+            pub_header = escape(str(pub))
             story.append(Paragraph(pub_header, self.publication_style))
             
             # Articles for this publication
@@ -154,16 +158,16 @@ class weeklyRoundupPDF:
                 url = article.get('url', '')
                 
                 # Format: Title by Author
-                article_header = f"<b>{title}</b> by {author}"
+                article_header = f"<b>{escape(str(title))}</b> by {escape(str(author))}"
                 story.append(Paragraph(article_header, self.article_style))
                 
                 # Summary text
-                summary_text = f"<b>Published:</b> {published_date} - {summary}"
+                summary_text = f"<b>Published:</b> {escape(str(published_date))} - {escape(str(summary))}"
                 story.append(Paragraph(summary_text, self.article_style))
                 
                 # URL as metadata
                 if url:
-                    url_text = f"<link href='{url}'>{url}</link>"
+                    url_text = f"<link href={quoteattr(str(url))}>{escape(str(url))}</link>"
                     story.append(Paragraph(url_text, self.meta_style))
                 
                 story.append(Spacer(1, 0.15 * inch))

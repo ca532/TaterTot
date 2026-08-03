@@ -1,0 +1,84 @@
+import unittest
+from datetime import datetime, timedelta, timezone
+
+from article_quality import (
+    normalize_publication_name,
+    resolve_published_date,
+    validate_article_content,
+    validate_author,
+    validate_candidate_url,
+    validate_summary,
+    within_lookback,
+)
+
+
+class ArticleQualityTests(unittest.TestCase):
+    def test_rejects_homepages_and_known_landing_pages(self):
+        invalid_urls = [
+            "https://www.businessinsider.com/",
+            "https://www.businessinsider.com/artificial-intelligence",
+            "https://www.businessinsider.com/a-smarter-way",
+            "https://www.retail-jeweller.com/",
+            "https://thejewels.club/",
+            "https://example.com/category/luxury",
+        ]
+        for url in invalid_urls:
+            with self.subTest(url=url):
+                self.assertFalse(validate_candidate_url(url)[0])
+
+        self.assertTrue(
+            validate_candidate_url(
+                "https://www.forbes.com/sites/example/2026/08/01/luxury-market-growth/"
+            )[0]
+        )
+
+    def test_rejects_boilerplate_and_accepts_article_prose(self):
+        consent = "To enable Google Custom Search, please click Allow and Continue. " * 20
+        listing = "Exclusive Story 2 min read Another Story 3 min read " * 20
+        prose = (
+            "The jewellery house introduced a new collection in London. "
+            "Its designers discussed craftsmanship, materials, and long-term investment. "
+            "Executives said the launch reflects demand across Europe and the United States. "
+        ) * 8
+        self.assertFalse(validate_article_content(consent)[0])
+        self.assertFalse(validate_article_content(listing)[0])
+        self.assertTrue(validate_article_content(prose)[0])
+
+    def test_rejects_false_authors(self):
+        for author in ("Every Time", "Josh Brandinfusion.Co.Za", "news@example.com"):
+            with self.subTest(author=author):
+                self.assertEqual(validate_author(author), "Unknown")
+        self.assertEqual(validate_author("Clara Ludmir"), "Clara Ludmir")
+
+    def test_page_metadata_wins_and_dates_respect_lookback(self):
+        now = datetime.now(timezone.utc)
+        rss_date = now - timedelta(days=2)
+        page_date = now - timedelta(days=1)
+        resolved, source = resolve_published_date(
+            {"published_date": page_date.isoformat(), "published_date_source": "json_ld"},
+            rss_date=rss_date,
+        )
+        self.assertEqual(source, "json_ld")
+        self.assertEqual(resolved.date(), page_date.date())
+        self.assertTrue(within_lookback(resolved, 14, now=now))
+        self.assertFalse(within_lookback(now - timedelta(days=15), 14, now=now))
+        self.assertFalse(within_lookback(now + timedelta(days=1), 14, now=now))
+
+    def test_rejects_prompt_leakage_and_repetition(self):
+        prompt = "Focus on luxury brands jewellery houses designers and craftsmanship."
+        self.assertFalse(validate_summary(prompt, prompt)[0])
+        self.assertFalse(validate_summary("Luxury launch. " * 30, prompt)[0])
+        valid = (
+            "LVMH reported improved sales led by watches and jewellery, while executives "
+            "said demand remained uneven across Europe, Asia, and the United States."
+        )
+        self.assertTrue(validate_summary(valid, prompt)[0])
+
+    def test_normalizes_known_publication_names(self):
+        self.assertEqual(normalize_publication_name("businessinsider"), "Business Insider")
+        self.assertEqual(normalize_publication_name("harpersbazaar"), "Harper's Bazaar")
+        self.assertEqual(normalize_publication_name("nytimes"), "The New York Times")
+
+
+if __name__ == "__main__":
+    unittest.main()

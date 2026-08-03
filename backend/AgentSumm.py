@@ -9,6 +9,8 @@ import json
 from bs4 import BeautifulSoup
 import random
 
+from article_quality import clean_article_text, validate_article_content, validate_author, validate_summary
+
 # Try to import cloudscraper for CloudFlare bypass
 try:
     import cloudscraper
@@ -72,33 +74,18 @@ class ArticleSummarizer:
     ) -> Optional[ArticleSummary]:
         """Summarize an article focusing on luxury brands, jewelry pieces, and celebrities"""
         try:
-            input_text = article_content[:4000]
+            input_text = clean_article_text(article_content)[:4000]
+            content_valid, content_reason = validate_article_content(input_text)
+            if not content_valid:
+                print(f"Skipping invalid summary input ({content_reason}): {article_url}")
+                return None
 
             if self.is_promptable:
-                if self.custom_prompt:
-                    prompt = self.custom_prompt
-                    if "{article}" in prompt:
-                        prompt = prompt.replace("{article}", input_text)
-                    else:
-                        prompt = f"{prompt}\n\nArticle:\n{input_text}"
-                else:
-                    prompt = (
-                        "Summarize this luxury, jewellery, and culture article for PR/media monitoring. "
-                        "Focus on luxury brands, jewellery houses, designers, executives, celebrities, "
-                        "product launches, cultural relevance, craftsmanship, market implications, and notable details. "
-                        "Write one concise paragraph in a polished, editorial tone.\n\n"
-                        f"Article:\n{input_text}"
-                    )
-                summary_text = self.summarizer(
-                    prompt,
-                    max_length=260,
-                    min_length=100,
-                    do_sample=False,
-                    truncation=True,
-                    num_beams=4,
-                    length_penalty=1.0,
-                    early_stopping=True
-                )[0]["summary_text"]
+                summary_text = self._generate_prompted_summary(input_text, use_short_prompt=False)
+                valid, reason = validate_summary(summary_text, self.custom_prompt)
+                if not valid:
+                    print(f"Retrying summary after quality failure ({reason}): {article_url}")
+                    summary_text = self._generate_prompted_summary(input_text, use_short_prompt=True)
             else:
                 summary_text = self.summarizer(
                     input_text,
@@ -111,10 +98,15 @@ class ArticleSummarizer:
                     early_stopping=True
                 )[0]["summary_text"]
 
+            valid, reason = validate_summary(summary_text, self.custom_prompt)
+            if not valid:
+                print(f"Skipping invalid summary ({reason}): {article_url}")
+                return None
+
             return ArticleSummary(
                 title=title,
-                author=author if author else "Unknown",
-                summary=summary_text.strip(),
+                author=validate_author(author),
+                summary=clean_article_text(summary_text),
                 url=article_url,
                 publication=publication,
                 topics=[]
@@ -123,6 +115,32 @@ class ArticleSummarizer:
         except Exception as e:
             print(f"Error summarizing article {article_url}: {e}")
             return None
+
+    def _generate_prompted_summary(self, input_text: str, use_short_prompt: bool) -> str:
+        if use_short_prompt:
+            prompt = f"Summarize the article accurately in one concise paragraph.\n\nArticle:\n{input_text}"
+        elif self.custom_prompt:
+            prompt = self.custom_prompt
+            if "{article}" in prompt:
+                prompt = prompt.replace("{article}", input_text)
+            else:
+                prompt = f"{prompt}\n\nArticle:\n{input_text}"
+        else:
+            prompt = (
+                "Summarize this article for PR and media monitoring. Preserve names, organizations, "
+                "numbers, and material implications. Write one concise paragraph.\n\n"
+                f"Article:\n{input_text}"
+            )
+        return self.summarizer(
+            prompt,
+            max_length=260,
+            min_length=100,
+            do_sample=False,
+            truncation=True,
+            num_beams=4,
+            length_penalty=1.0,
+            early_stopping=True,
+        )[0]["summary_text"]
 
 def extract_publication_name(url: str) -> str:
     domain = urlparse(url).netloc.replace("www.", "").split(".")[0]
@@ -145,11 +163,15 @@ def extract_author(article: Article, text: str) -> str:
                         if isinstance(entry, dict) and "author" in entry:
                             author = _get_author_from_jsonld(entry["author"])
                             if author:
-                                return author
+                                validated = validate_author(author)
+                                if validated != "Unknown":
+                                    return validated
                 elif isinstance(data, dict) and "author" in data:
                     author = _get_author_from_jsonld(data["author"])
                     if author:
-                        return author
+                        validated = validate_author(author)
+                        if validated != "Unknown":
+                            return validated
             except Exception:
                 continue
     except Exception:
@@ -157,7 +179,9 @@ def extract_author(article: Article, text: str) -> str:
 
     # 2. Fallback: use newspaper3k's authors field
     if article.authors:
-        return article.authors[0]
+        validated = validate_author(article.authors[0])
+        if validated != "Unknown":
+            return validated
 
     # 3. Regex scan of title, meta description, and body text
     combined_text = " ".join([
@@ -168,7 +192,7 @@ def extract_author(article: Article, text: str) -> str:
 
     match = re.search(r"\b[Bb]y\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)", combined_text)
     if match:
-        return match.group(1)
+        return validate_author(match.group(1))
 
     return "Unknown"
 

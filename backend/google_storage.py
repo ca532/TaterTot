@@ -111,6 +111,10 @@ class GoogleSheetsDB:
                 self.articles_sheet.update_cell(1, 9, 'published_date')
             if len(headers) < 10 or not headers[9]:
                 self.articles_sheet.update_cell(1, 10, 'run_id')
+            audit_headers = ('published_date_source', 'matched_keywords', 'canonical_url')
+            for column, header in enumerate(audit_headers, start=11):
+                if len(headers) < column or not headers[column - 1]:
+                    self.articles_sheet.update_cell(1, column, header)
         except Exception as e:
             print(f"⚠️  Could not ensure published_date header: {str(e)}")
         
@@ -127,6 +131,9 @@ class GoogleSheetsDB:
                 article.get('score', 0.0),
                 article.get('published_date', ''),
                 article.get('run_id', ''),
+                article.get('published_date_source', 'unavailable'),
+                article.get('matched_keywords', ''),
+                article.get('canonical_url', article.get('url', '')),
             ])
         
         # Append to sheet (keeps history)

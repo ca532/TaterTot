@@ -15,6 +15,20 @@ from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 import random
 
+from article_quality import (
+    canonicalize_url,
+    clean_article_text,
+    extract_page_metadata,
+    normalize_publication_name,
+    resolve_published_date,
+    title_similarity,
+    validate_article_content,
+    validate_author,
+    validate_candidate_url,
+    validate_title,
+    within_lookback,
+)
+
 # Import extract_author from AgentSumm
 try:
     from AgentSumm import extract_author
@@ -45,13 +59,15 @@ class ArticleCandidate:
     title: str
     url: str
     publication: str
-    published_date: datetime
+    published_date: Optional[datetime]
     summary: str
     author: str = "Unknown"
     relevance_score: float = 0.0
     keywords_found: List[str] = None
     full_content: str = ""
     candidate_source: str = "unknown"
+    published_date_source: str = "unavailable"
+    canonical_url: str = ""
 
 class CustomArticleCollector:
     def __init__(self, topic: str = "", source_list_name: str = None):
@@ -61,8 +77,9 @@ class CustomArticleCollector:
 
         self.active_keywords = []
         self.keyword_weight_map = {}
+        self.keyword_policy_map = {}
         self.max_hits_per_keyword = 2
-        self.max_total_repeat_bonus = 3.0
+        self.max_total_repeat_bonus = 1.0
         self.unique_keyword_bonus = 0.35
         self.max_unique_keyword_bonus = 2.8
 
@@ -485,8 +502,15 @@ class CustomArticleCollector:
             raise ValueError(f"Topic '{self.source_list_name or self.topic}' has no configured keywords")
         self.active_keywords = topic_config["keywords"]
         self.keyword_weight_map = topic_config["weights"]
+        self.keyword_policy_map = topic_config["policies"]
+        self.minimum_relevance_score = topic_config["minimum_relevance_score"]
+        self.minimum_distinct_keywords = topic_config["minimum_distinct_keywords"]
+        self.high_weight_threshold = topic_config["high_weight_threshold"]
+        self.lookback_days = topic_config["lookback_days"]
+        self.max_articles_per_publication = topic_config["max_articles_per_publication"]
+        self.require_keyword_in_url = topic_config["require_keyword_in_url"]
 
-        self.use_dynamic_caps = True
+        self.use_dynamic_caps = False
         # Evaluate a few extra candidates past cap, then trim by full-content score.
         self.post_cap_buffer = 3
         # Stop wasting attempts on a source if it keeps returning 401.
@@ -580,7 +604,7 @@ class CustomArticleCollector:
 
         out = {}
         for r in scoped:
-            publication = str(r.get("publication", "")).strip() or "Unknown"
+            publication = normalize_publication_name(str(r.get("publication", "")))
             base_url = str(r.get("base_url", "")).strip()
             sitemap_url = str(r.get("sitemap_url", "")).strip() or None
             rss_url = str(r.get("rss_url", "")).strip()
@@ -630,17 +654,52 @@ class CustomArticleCollector:
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Topic '{name}' has invalid keyword weights") from exc
 
+            try:
+                scoring_policy = json.loads(str(row.get("scoring_policy", "") or "{}"))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Topic '{name}' has an invalid scoring policy") from exc
+
             status = str(row.get("weighting_status", "")).strip().lower()
-            if keywords and (status != "complete" or not raw_weights):
-                raise ValueError(f"Topic '{name}' keyword weights have not been generated")
+            if keywords and (status != "complete" or (not scoring_policy and not raw_weights)):
+                raise ValueError(f"Topic '{name}' scoring policy has not been generated")
 
             weights = {}
+            raw_policies = scoring_policy.get("keyword_policies", {}) if isinstance(scoring_policy, dict) else {}
+            policies = {}
             for keyword in keywords:
-                value = raw_weights.get(keyword, 1.0)
+                item = raw_policies.get(keyword, {}) if isinstance(raw_policies.get(keyword, {}), dict) else {}
+                value = item.get("weight", raw_weights.get(keyword, 1.0))
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
                     value = 1.0
                 weights[keyword] = min(4.0, max(0.5, float(value)))
-            return {"keywords": keywords, "weights": weights}
+                policies[keyword] = {
+                    "weight": weights[keyword],
+                    "tier": str(item.get("tier", "broad")).lower(),
+                    "standalone_eligible": item.get("standalone_eligible") is True,
+                }
+
+            def number(field, default, minimum, maximum, integer=False):
+                policy_value = scoring_policy.get(field) if isinstance(scoring_policy, dict) else None
+                raw = row.get(field)
+                if raw in {None, ""}:
+                    raw = policy_value if policy_value not in {None, ""} else default
+                try:
+                    value = int(raw) if integer else float(raw)
+                except (TypeError, ValueError):
+                    value = default
+                return max(minimum, min(value, maximum))
+
+            return {
+                "keywords": keywords,
+                "weights": weights,
+                "policies": policies,
+                "minimum_relevance_score": number("minimum_relevance_score", 4.0, 2.0, 8.0),
+                "minimum_distinct_keywords": number("minimum_distinct_keywords", 2, 1, 3, integer=True),
+                "high_weight_threshold": number("high_weight_threshold", 2.5, 2.0, 4.0),
+                "lookback_days": number("lookback_days", 14, 1, 30, integer=True),
+                "max_articles_per_publication": number("max_articles_per_publication", 5, 1, 10, integer=True),
+                "require_keyword_in_url": str(row.get("require_keyword_in_url", "FALSE")).upper() == "TRUE",
+            }
 
         raise ValueError(f"Active topic configuration '{topic_name}' was not found")
 
@@ -805,6 +864,14 @@ class CustomArticleCollector:
                 keyword: self.keyword_weight_map.get(keyword, 1.0)
                 for keyword in cleaned
             }
+            self.keyword_policy_map = {
+                keyword: self.keyword_policy_map.get(keyword, {
+                    "weight": self.keyword_weight_map[keyword],
+                    "tier": "broad",
+                    "standalone_eligible": False,
+                })
+                for keyword in cleaned
+            }
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", (text or "").lower()).strip()
@@ -817,6 +884,18 @@ class CustomArticleCollector:
     def _weighted_score_for_keyword(self, kw_lower: str) -> float:
         kw = (kw_lower or "").strip().lower()
         return self.keyword_weight_map.get(kw, 1.0)
+
+    def passes_relevance_gate(self, score: float, matched_keywords: List[str]) -> bool:
+        distinct = {self._normalize_text(keyword) for keyword in (matched_keywords or []) if keyword}
+        has_standalone = any(
+            self.keyword_policy_map.get(keyword, {}).get("standalone_eligible", False)
+            and self.keyword_weight_map.get(keyword, 1.0) >= self.high_weight_threshold
+            for keyword in distinct
+        )
+        return (
+            score >= self.minimum_relevance_score
+            and (has_standalone or len(distinct) >= self.minimum_distinct_keywords)
+        )
 
     def _keyword_occurrences(self, text_lower: str, keyword: str) -> int:
         kw = (keyword or "").strip().lower()
@@ -1050,10 +1129,10 @@ class CustomArticleCollector:
                     if hasattr(entry, 'published_parsed') and entry.published_parsed:
                         pub_date = datetime(*entry.published_parsed[:6])
                     else:
-                        pub_date = datetime.now()
+                        pub_date = None
                     
                     # Skip articles older than 7 days (weekly collection)
-                    if (datetime.now() - pub_date).days > 7:
+                    if pub_date and not within_lookback(pub_date, self.lookback_days):
                         continue
                     
                     title = entry.get('title', '').strip()
@@ -1074,7 +1153,8 @@ class CustomArticleCollector:
                             summary=summary,
                             relevance_score=score,
                             keywords_found=keywords,
-                            candidate_source="rss"
+                            candidate_source="rss",
+                            published_date_source="rss" if pub_date else "unavailable",
                         )
                         candidates.append(candidate)
                         
@@ -1111,7 +1191,10 @@ class CustomArticleCollector:
         return all_candidates
     
     def is_relevant_url(self, url: str, publication: str = "") -> bool:
-        """URL filtering; luxury additionally requires keyword-in-URL."""
+        """Reject known non-article URLs before spending a fetch."""
+        valid, _ = validate_candidate_url(url, publication)
+        if not valid:
+            return False
         url_lower = url.lower().rstrip('/')
         parsed = urlparse(url_lower)
         host = parsed.netloc or ""
@@ -1192,6 +1275,9 @@ class CustomArticleCollector:
         if publication in source_specific_excludes:
             if any(term in url_lower for term in source_specific_excludes[publication]):
                 return False
+
+        if self.require_keyword_in_url:
+            return any(keyword in url_lower for keyword in self.active_keywords)
 
         return True
 
@@ -1288,10 +1374,13 @@ class CustomArticleCollector:
                                 else:
                                     lastmod_date = datetime.strptime(lastmod_str[:10], '%Y-%m-%d')
                                 lastmod_date = lastmod_date.replace(tzinfo=None)
-                            except:
-                                lastmod_date = datetime.now()
+                            except Exception:
+                                lastmod_date = None
                         else:
-                            lastmod_date = datetime.now()
+                            lastmod_date = None
+
+                        if lastmod_date and not within_lookback(lastmod_date, self.lookback_days):
+                            continue
                         
                         urls.append((url, lastmod_date))
         except:
@@ -1379,12 +1468,12 @@ class CustomArticleCollector:
                                     lastmod_date = datetime.strptime(lastmod_str[:10], '%Y-%m-%d')
                                 lastmod_date = lastmod_date.replace(tzinfo=None)
                                 
-                                if (datetime.now() - lastmod_date).days > 7:
+                                if not within_lookback(lastmod_date, self.lookback_days):
                                     continue
-                            except:
-                                lastmod_date = datetime.now()
+                            except Exception:
+                                lastmod_date = None
                         else:
-                            lastmod_date = datetime.now()
+                            lastmod_date = None
                         
                         urls.append((url, lastmod_date))
             
@@ -1398,7 +1487,8 @@ class CustomArticleCollector:
                             published_date=pub_date,
                             summary="",
                             relevance_score=1.0,
-                            candidate_source="sitemap"
+                            candidate_source="sitemap",
+                            published_date_source="sitemap" if pub_date else "unavailable",
                         )
                         candidates.append(candidate)
                         
@@ -1493,12 +1583,17 @@ class CustomArticleCollector:
                 # Fallback for blocked pages (common on premium domains):
                 # keep RSS metadata-only candidates when they are already relevant.
                 if response.status_code in {401, 403, 429} and candidate.summary:
-                    if not candidate.full_content:
-                        candidate.full_content = candidate.summary
-                    if not candidate.title:
-                        candidate.title = candidate.url
-                    # Require minimum relevance before accepting metadata-only fallback.
-                    if candidate.relevance_score >= 1.0:
+                    candidate.full_content = clean_article_text(candidate.summary)
+                    content_valid, _ = validate_article_content(candidate.full_content)
+                    title_valid, _ = validate_title(candidate.title)
+                    if (
+                        content_valid
+                        and title_valid
+                        and within_lookback(candidate.published_date, self.lookback_days)
+                        and self.passes_relevance_gate(
+                            candidate.relevance_score, candidate.keywords_found or []
+                        )
+                    ):
                         return candidate
                 return None
             
@@ -1506,37 +1601,48 @@ class CustomArticleCollector:
             article.download_state = 2
             article.html = response.text
             article.parse()
-            
-            if not article.text or len(article.text) < 150:
+
+            page_metadata = extract_page_metadata(response.text)
+            candidate.canonical_url = canonicalize_url(
+                page_metadata.get("canonical_url") or candidate.url
+            )
+            canonical_valid, _ = validate_candidate_url(candidate.canonical_url, candidate.publication)
+            if not canonical_valid:
+                self.source_fail_counts["invalid_url"] += 1
+                return None
+
+            candidate.full_content = clean_article_text(article.text)
+            content_valid, content_reason = validate_article_content(candidate.full_content)
+            if not content_valid:
                 self.source_fail_counts["short_text"] += 1
+                if content_reason == "boilerplate_content":
+                    self.source_fail_counts["boilerplate"] += 1
                 return None
 
-            # Reject obvious placeholder/template pages that poison summaries
-            text_lower = article.text.lower()
-            placeholder_markers = [
-                "lorem ipsum dolor sit amet",
-                "consectetur adipiscing elit",
-                "donec neque eros",
-                "in accumsan, ex a ultrices bibendum",
-            ]
-            marker_hits = sum(1 for m in placeholder_markers if m in text_lower)
-
-            # If multiple placeholder markers are present, treat as invalid extraction
-            if marker_hits >= 2:
-                self.current_source_placeholder_skip_count = getattr(
-                    self, "current_source_placeholder_skip_count", 0
-                ) + 1
-                self.source_fail_counts["placeholder"] += 1
-                print(f"  Skipping placeholder/template content: {candidate.publication}")
+            candidate.title = clean_article_text(
+                page_metadata.get("title") or article.title or candidate.title
+            )
+            title_valid, _ = validate_title(candidate.title)
+            if not title_valid:
+                self.source_fail_counts["invalid_title"] += 1
                 return None
-            
-            candidate.full_content = article.text
-            
-            if not candidate.title and article.title:
-                candidate.title = article.title
+
+            rss_date = candidate.published_date if candidate.published_date_source == "rss" else None
+            sitemap_date = candidate.published_date if candidate.published_date_source == "sitemap" else None
+            resolved_date, date_source = resolve_published_date(
+                page_metadata,
+                newspaper_date=getattr(article, "publish_date", None),
+                rss_date=rss_date,
+                sitemap_date=sitemap_date,
+            )
+            if not within_lookback(resolved_date, self.lookback_days):
+                self.source_fail_counts["invalid_date"] += 1
+                return None
+            candidate.published_date = resolved_date
+            candidate.published_date_source = date_source
             
             full_score, full_keywords = self.calculate_relevance_score(
-                candidate.title or "", article.text
+                candidate.title or "", candidate.full_content
             )
             
             candidate.relevance_score = full_score
@@ -1544,15 +1650,15 @@ class CustomArticleCollector:
 
             # Extract author using AgentSumm if available, otherwise fallback
             if AGENTSUMM_AVAILABLE:
-                candidate.author = extract_author(article, article.text)
+                candidate.author = extract_author(article, candidate.full_content)
             else:
-                candidate.author = self._fallback_extract_author(article, article.text)
+                candidate.author = self._fallback_extract_author(article, candidate.full_content)
+            candidate.author = validate_author(candidate.author)
             
             if article.meta_description and len(article.meta_description) > len(candidate.summary):
                 candidate.summary = article.meta_description
             
-            # Threshold 1.0 for weekly collection
-            if full_score >= 1.0:
+            if self.passes_relevance_gate(full_score, full_keywords):
                 return candidate
             else:
                 self.source_fail_counts["low_score"] += 1
@@ -1585,7 +1691,7 @@ class CustomArticleCollector:
         cap_label = "Dynamic cap per publication" if self.use_dynamic_caps else "Fixed cap per publication"
         print(f"Weekly Article Collection ({cap_label})")
         print("=" * 60)
-        baseline_max_articles = 5
+        baseline_max_articles = self.max_articles_per_publication
         
         sources_to_use = sources_subset if sources_subset else list(self.target_sources.keys())
         print(f"Targeting {len(sources_to_use)} publications\n")
@@ -1609,6 +1715,9 @@ class CustomArticleCollector:
                 "http_429": 0,
                 "short_text": 0,
                 "placeholder": 0,
+                "boilerplate": 0,
+                "invalid_title": 0,
+                "invalid_date": 0,
                 "low_score": 0,
                 "other_error": 0,
             }
@@ -1742,7 +1851,8 @@ class CustomArticleCollector:
             print(
                 "  Fail reasons:"
                 f" invalid={fc['invalid_url']}, 401={fc['http_401']}, 403={fc['http_403']},"
-                f" 429={fc['http_429']}, short={fc['short_text']}, placeholder={fc['placeholder']},"
+                f" 429={fc['http_429']}, short={fc['short_text']}, boilerplate={fc['boilerplate']},"
+                f" title={fc['invalid_title']}, date={fc['invalid_date']}, placeholder={fc['placeholder']},"
                 f" low_score={fc['low_score']}, other={fc['other_error']}"
             )
             
@@ -1756,10 +1866,24 @@ class CustomArticleCollector:
             
             time.sleep(random.uniform(3, 6))
         
+        all_articles = self._deduplicate_articles(all_articles)
         print(f"Collection complete: {len(all_articles)} total articles")
         print(f"Publications covered: {len(set(a.publication for a in all_articles))}/{len(sources_to_use)}")
         
         return all_articles
+
+    def _deduplicate_articles(self, articles: List[ArticleCandidate]) -> List[ArticleCandidate]:
+        kept = []
+        for candidate in sorted(articles, key=lambda item: item.relevance_score, reverse=True):
+            candidate_url = canonicalize_url(candidate.canonical_url or candidate.url)
+            duplicate = any(
+                candidate_url == canonicalize_url(existing.canonical_url or existing.url)
+                or title_similarity(candidate.title, existing.title) >= 0.92
+                for existing in kept
+            )
+            if not duplicate:
+                kept.append(candidate)
+        return kept
     
     def generate_collection_report(self, articles: List[ArticleCandidate]) -> str:
         if not articles:
@@ -1795,7 +1919,9 @@ class CustomArticleCollector:
         for i, article in enumerate(articles, 1):
             report.append(f"{i}. {article.title}")
             report.append(f"   {article.publication} | {article.author} | Score: {article.relevance_score:.1f}")
-            report.append(f"   {article.published_date.strftime('%Y-%m-%d')}")
+            report.append(
+                f"   {article.published_date.strftime('%Y-%m-%d') if article.published_date else 'Date unavailable'}"
+            )
             report.append(f"   {article.url}\n")
         
         return "\n".join(report)
@@ -1808,7 +1934,8 @@ class CustomArticleCollector:
                 'url': article.url,
                 'publication': article.publication,
                 'author': article.author,
-                'published_date': article.published_date.isoformat(),
+                'published_date': article.published_date.isoformat() if article.published_date else '',
+                'published_date_source': article.published_date_source,
                 'summary': article.summary,
                 'full_content': article.full_content,
                 'relevance_score': article.relevance_score,

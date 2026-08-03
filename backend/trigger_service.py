@@ -577,7 +577,10 @@ def _split_keywords(raw: Optional[str]) -> list[str]:
 
 TOPIC_CONFIG_HEADERS = [
     "topic_name", "keywords", "summary_prompt", "active", "updated",
-    "keyword_weights", "weighting_status", "weighting_model",
+    "keyword_weights", "scoring_policy", "minimum_relevance_score",
+    "minimum_distinct_keywords", "high_weight_threshold", "lookback_days",
+    "max_articles_per_publication", "require_keyword_in_url",
+    "weighting_status", "weighting_model",
 ]
 
 
@@ -606,12 +609,19 @@ def _ensure_topic_config_headers(ws) -> None:
             record.get("active", "TRUE"),
             record.get("updated", ""),
             record.get("keyword_weights", ""),
+            record.get("scoring_policy", ""),
+            record.get("minimum_relevance_score", "4.0"),
+            record.get("minimum_distinct_keywords", "2"),
+            record.get("high_weight_threshold", "2.5"),
+            record.get("lookback_days", "14"),
+            record.get("max_articles_per_publication", "5"),
+            record.get("require_keyword_in_url", "FALSE"),
             record.get("weighting_status", "pending" if record.get("keywords") else "not_required"),
             record.get("weighting_model", ""),
         ])
 
     ws.clear()
-    ws.update(range_name="A1:H1", values=[TOPIC_CONFIG_HEADERS])
+    ws.update(range_name="A1:O1", values=[TOPIC_CONFIG_HEADERS])
     if existing_rows:
         ws.append_rows(existing_rows, value_input_option="USER_ENTERED")
 
@@ -622,8 +632,8 @@ def _topic_configs() -> list[dict]:
         try:
             ws = ss.worksheet(TOPIC_CONFIG_SHEET)
         except Exception:
-            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=8)
-            ws.update(range_name="A1:H1", values=[TOPIC_CONFIG_HEADERS])
+            ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=15)
+            ws.update(range_name="A1:O1", values=[TOPIC_CONFIG_HEADERS])
             return []
 
         _ensure_topic_config_headers(ws)
@@ -646,6 +656,13 @@ def _topic_configs() -> list[dict]:
             "keywords": keywords,
             "summary_prompt": str(row.get("summary_prompt", "")).strip(),
             "keyword_weights": str(row.get("keyword_weights", "")).strip(),
+            "scoring_policy": str(row.get("scoring_policy", "")).strip(),
+            "minimum_relevance_score": row.get("minimum_relevance_score", 4.0),
+            "minimum_distinct_keywords": row.get("minimum_distinct_keywords", 2),
+            "high_weight_threshold": row.get("high_weight_threshold", 2.5),
+            "lookback_days": row.get("lookback_days", 14),
+            "max_articles_per_publication": row.get("max_articles_per_publication", 5),
+            "require_keyword_in_url": str(row.get("require_keyword_in_url", "FALSE")).upper() == "TRUE",
             "weighting_status": str(row.get("weighting_status", "")).strip(),
             "weighting_model": str(row.get("weighting_model", "")).strip(),
             "keyword_count": len(_split_keywords(keywords)),
@@ -676,7 +693,7 @@ def _topic_config_upsert(topic_name: str, keywords: str, summary_prompt: str = "
     try:
         ws = ss.worksheet(TOPIC_CONFIG_SHEET)
     except Exception:
-        ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=8)
+        ws = ss.add_worksheet(title=TOPIC_CONFIG_SHEET, rows=100, cols=15)
 
     _ensure_topic_config_headers(ws)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -688,11 +705,12 @@ def _topic_config_upsert(topic_name: str, keywords: str, summary_prompt: str = "
             break
 
     row_values = [
-        topic, clean_keywords, clean_prompt, "TRUE", today, "",
+        topic, clean_keywords, clean_prompt, "TRUE", today, "", "",
+        "4.0", "2", "2.5", "14", "5", "FALSE",
         "pending" if clean_keywords else "not_required", "",
     ]
     if row_idx:
-        ws.update(range_name=f"A{row_idx}:H{row_idx}", values=[row_values])
+        ws.update(range_name=f"A{row_idx}:O{row_idx}", values=[row_values])
     else:
         ws.append_row(row_values, value_input_option="USER_ENTERED")
 

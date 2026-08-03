@@ -11,6 +11,13 @@ from client_pitch_generator import PITCH_MODEL_NAME, extract_json, load_model
 
 TOPIC_NAME = os.getenv("TOPIC_NAME", "__all__").strip()
 TOPIC_SHEET = os.getenv("TOPIC_CONFIG_SHEET", "Topic Config")
+TOPIC_HEADERS = [
+    "topic_name", "keywords", "summary_prompt", "active", "updated",
+    "keyword_weights", "scoring_policy", "minimum_relevance_score",
+    "minimum_distinct_keywords", "high_weight_threshold", "lookback_days",
+    "max_articles_per_publication", "require_keyword_in_url",
+    "weighting_status", "weighting_model",
+]
 
 
 def open_topic_sheet():
@@ -34,52 +41,130 @@ def clean_keywords(raw):
     ))
 
 
-def validated_weights(keywords, generated):
-    raw_weights = generated.get("keyword_weights", {}) if isinstance(generated, dict) else {}
-    normalized = {str(key).strip().lower(): value for key, value in raw_weights.items()}
-    weights = {}
+def ensure_topic_headers(worksheet):
+    values = worksheet.get_all_values()
+    if not values:
+        worksheet.append_row(TOPIC_HEADERS)
+        return
+    existing_headers = [str(value).strip() for value in values[0]]
+    if existing_headers == TOPIC_HEADERS:
+        return
+
+    migrated = []
+    for row in values[1:]:
+        record = {
+            header: row[index] if index < len(row) else ""
+            for index, header in enumerate(existing_headers)
+            if header
+        }
+        if not str(record.get("topic_name", "")).strip():
+            continue
+        migrated.append([
+            record.get("topic_name", ""), record.get("keywords", ""),
+            record.get("summary_prompt", ""), record.get("active", "TRUE"),
+            record.get("updated", ""), record.get("keyword_weights", ""),
+            record.get("scoring_policy", ""), record.get("minimum_relevance_score", "4.0"),
+            record.get("minimum_distinct_keywords", "2"),
+            record.get("high_weight_threshold", "2.5"), record.get("lookback_days", "14"),
+            record.get("max_articles_per_publication", "5"),
+            record.get("require_keyword_in_url", "FALSE"),
+            record.get("weighting_status", "pending" if record.get("keywords") else "not_required"),
+            record.get("weighting_model", ""),
+        ])
+    worksheet.clear()
+    worksheet.update(range_name="A1:O1", values=[TOPIC_HEADERS])
+    if migrated:
+        worksheet.append_rows(migrated, value_input_option="USER_ENTERED")
+
+
+def _bounded_float(value, default, minimum, maximum):
+    try:
+        return max(minimum, min(float(value), maximum))
+    except (TypeError, ValueError):
+        return default
+
+
+def _bounded_int(value, default, minimum, maximum):
+    try:
+        return max(minimum, min(int(value), maximum))
+    except (TypeError, ValueError):
+        return default
+
+
+def validated_policy(keywords, generated):
+    raw_policies = generated.get("keyword_policies", {}) if isinstance(generated, dict) else {}
+    normalized = {str(key).strip().lower(): value for key, value in raw_policies.items()}
+    policies = {}
     for keyword in keywords:
-        try:
-            value = float(normalized.get(keyword, 1.0))
-        except (TypeError, ValueError):
-            value = 1.0
-        weights[keyword] = round(max(0.5, min(value, 4.0)), 2)
-    return weights
+        item = normalized.get(keyword, {})
+        if not isinstance(item, dict):
+            item = {}
+        weight = round(_bounded_float(item.get("weight"), 1.0, 0.5, 4.0), 2)
+        tier = str(item.get("tier", "broad")).strip().lower()
+        if tier not in {"core", "supporting", "broad"}:
+            tier = "broad"
+        standalone = item.get("standalone_eligible") is True
+        policies[keyword] = {
+            "weight": weight,
+            "tier": tier,
+            "standalone_eligible": standalone and tier != "broad" and weight >= 2.5,
+        }
+
+    return {
+        "keyword_policies": policies,
+        "minimum_relevance_score": round(
+            _bounded_float(generated.get("minimum_relevance_score"), 4.0, 2.0, 8.0), 2
+        ),
+        "minimum_distinct_keywords": _bounded_int(
+            generated.get("minimum_distinct_keywords"), 2, 1, 3
+        ),
+        "high_weight_threshold": round(
+            _bounded_float(generated.get("high_weight_threshold"), 2.5, 2.0, 4.0), 2
+        ),
+    }
 
 
-def generate_weights(model, tokenizer, topic_name, keywords, summary_prompt):
+def generate_policy(model, tokenizer, topic_name, keywords, summary_prompt):
     messages = [{
         "role": "user",
         "content": (
-            "Configure deterministic article-relevance scoring.\n"
+            "Configure deterministic article-relevance scoring for a media-monitoring pipeline.\n"
             f"Topic: {topic_name}\n"
             f"Summary objective: {summary_prompt}\n"
             f"Keywords: {json.dumps(keywords)}\n\n"
-            "Assign every supplied keyword a relevance weight from 0.5 to 4.0. "
-            "Use 4.0 for essential specific signals, 3.0 for strongly relevant signals, "
-            "2.0 for supporting signals, 1.0 for broad or ambiguous signals, and 0.5 for weak signals. "
-            "Do not add or remove keywords. Return only valid JSON in this shape: "
-            '{"keyword_weights":{"keyword":1.0}}'
+            "General exclusions are sports, health advice, crime, unrelated politics, generic celebrity news, "
+            "shopping lists, and landing pages unless directly relevant to the topic objective.\n"
+            "For every supplied keyword return a weight from 0.5 to 4.0, a tier of core/supporting/broad, "
+            "and standalone_eligible=true only when that keyword independently establishes topic relevance. "
+            "Broad or ambiguous terms must not qualify independently. Reserve 3.5-4.0 for unambiguous core "
+            "signals and assign broad terms 0.5-1.5. Do not add or remove keywords. "
+            "Recommend a minimum_relevance_score from 2.0-8.0, minimum_distinct_keywords from 1-3, and "
+            "high_weight_threshold from 2.0-4.0. Return only valid JSON in this shape: "
+            '{"keyword_policies":{"keyword":{"weight":1.0,"tier":"broad",'
+            '"standalone_eligible":false}},"minimum_relevance_score":4.0,'
+            '"minimum_distinct_keywords":2,"high_weight_threshold":2.5}'
         ),
     }]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
     with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=700, do_sample=False)
+        output = model.generate(**inputs, max_new_tokens=3000, do_sample=False)
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
-    return validated_weights(keywords, extract_json(text))
+    generated = extract_json(text)
+    raw_policies = generated.get("keyword_policies", {}) if isinstance(generated, dict) else {}
+    returned_keywords = {str(key).strip().lower() for key in raw_policies}
+    missing_keywords = set(keywords).difference(returned_keywords)
+    if not raw_policies or missing_keywords:
+        raise ValueError(
+            "Qwen returned an incomplete scoring policy; missing keywords: "
+            f"{sorted(missing_keywords)}"
+        )
+    return validated_policy(keywords, generated)
 
 
 def main():
     worksheet = open_topic_sheet()
-    required_headers = [
-        "topic_name", "keywords", "summary_prompt", "active", "updated",
-        "keyword_weights", "weighting_status", "weighting_model",
-    ]
-    current_headers = worksheet.row_values(1)
-    for column, header in enumerate(required_headers, start=1):
-        if column > len(current_headers) or not current_headers[column - 1]:
-            worksheet.update_cell(1, column, header)
+    ensure_topic_headers(worksheet)
 
     records = worksheet.get_all_records()
     headers = worksheet.row_values(1)
@@ -97,7 +182,10 @@ def main():
         if not keywords:
             worksheet.update_cell(index, columns["weighting_status"], "not_required")
             continue
-        if str(record.get("weighting_status", "")).strip().lower() == "complete" and record.get("keyword_weights"):
+        if (
+            str(record.get("weighting_status", "")).strip().lower() == "complete"
+            and record.get("scoring_policy")
+        ):
             continue
         selected.append((index, record, keywords))
 
@@ -111,11 +199,25 @@ def main():
     model, tokenizer = load_model()
     for row_index, record, keywords in selected:
         try:
-            weights = generate_weights(
+            policy = generate_policy(
                 model, tokenizer, str(record.get("topic_name", "")).strip(), keywords,
                 str(record.get("summary_prompt", "")).strip(),
             )
+            weights = {
+                keyword: item["weight"]
+                for keyword, item in policy["keyword_policies"].items()
+            }
             worksheet.update_cell(row_index, columns["keyword_weights"], json.dumps(weights, sort_keys=True))
+            worksheet.update_cell(row_index, columns["scoring_policy"], json.dumps(policy, sort_keys=True))
+            worksheet.update_cell(
+                row_index, columns["minimum_relevance_score"], policy["minimum_relevance_score"]
+            )
+            worksheet.update_cell(
+                row_index, columns["minimum_distinct_keywords"], policy["minimum_distinct_keywords"]
+            )
+            worksheet.update_cell(
+                row_index, columns["high_weight_threshold"], policy["high_weight_threshold"]
+            )
             worksheet.update_cell(row_index, columns["weighting_status"], "complete")
             worksheet.update_cell(row_index, columns["weighting_model"], PITCH_MODEL_NAME)
             worksheet.update_cell(row_index, columns["updated"], datetime.now(timezone.utc).strftime("%Y-%m-%d"))

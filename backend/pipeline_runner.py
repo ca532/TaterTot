@@ -155,6 +155,9 @@ class PipelineRunner:
                     'url': article.url,
                     'publication': article.publication,
                     'published_date': article.published_date.isoformat() if getattr(article, 'published_date', None) else '',
+                    'published_date_source': getattr(article, 'published_date_source', 'unavailable'),
+                    'matched_keywords': ', '.join(getattr(article, 'keywords_found', []) or []),
+                    'canonical_url': getattr(article, 'canonical_url', '') or article.url,
                     'run_id': os.getenv('GITHUB_RUN_ID', ''),
                     'full_content': article.full_content,  # Keep for summarization
                     'journalist': 'Unknown',  # Placeholder
@@ -249,7 +252,10 @@ class PipelineRunner:
         # Generate PDF
         try:
             print("📝 Generating PDF...")
-            pdf_gen = weeklyRoundupPDF()
+            pdf_gen = weeklyRoundupPDF(
+                topic_name=self.topic,
+                lookback_days=self.collector.lookback_days,
+            )
             pdf_path = pdf_gen.generate_pdf(json_file, pdf_file)
             
             # Clean up temporary JSON
