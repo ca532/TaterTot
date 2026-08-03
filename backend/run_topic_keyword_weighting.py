@@ -124,6 +124,63 @@ def validated_policy(keywords, generated):
     }
 
 
+def condense_keywords(
+    model,
+    tokenizer,
+    topic_name,
+    keywords,
+    summary_prompt,
+    minimum=20,
+    maximum=30,
+):
+    if len(keywords) <= maximum:
+        return keywords
+
+    messages = [{
+        "role": "user",
+        "content": (
+            "Select the strongest keywords for an article relevance filter.\n"
+            f"Topic: {topic_name}\n"
+            f"Summary objective: {summary_prompt}\n"
+            f"Available keywords: {json.dumps(keywords)}\n\n"
+            f"Return between {minimum} and {maximum} keywords.\n"
+            "Keep specific, high-signal topic terms and important named entities.\n"
+            "Keep a small number of supporting terms only when they add useful coverage.\n"
+            "Remove duplicates, weak terms, and broad ambiguous terms that frequently "
+            "match unrelated sports, health, politics, crime, celebrity, or shopping stories.\n"
+            "Do not invent keywords.\n"
+            "Return only valid JSON in this shape:\n"
+            '{"selected_keywords":["keyword one","keyword two"]}'
+        ),
+    }]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
+    with torch.no_grad():
+        output = model.generate(
+            **inputs,
+            max_new_tokens=700,
+            do_sample=False,
+            temperature=None,
+            top_p=None,
+            top_k=None,
+        )
+    text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
+    generated = extract_json(text)
+    raw_selected = generated.get("selected_keywords", []) if isinstance(generated, dict) else []
+    allowed = set(keywords)
+    selected = list(dict.fromkeys(
+        str(keyword).strip().lower()
+        for keyword in raw_selected
+        if str(keyword).strip().lower() in allowed
+    ))
+    if not minimum <= len(selected) <= maximum:
+        raise ValueError(
+            "Qwen returned an invalid condensed keyword list: "
+            f"expected {minimum}-{maximum}, received {len(selected)}"
+        )
+    return selected
+
+
 def generate_policy(model, tokenizer, topic_name, keywords, summary_prompt):
     messages = [{
         "role": "user",
@@ -148,7 +205,14 @@ def generate_policy(model, tokenizer, topic_name, keywords, summary_prompt):
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
     with torch.no_grad():
-        output = model.generate(**inputs, max_new_tokens=3000, do_sample=False)
+        output = model.generate(
+            **inputs,
+            max_new_tokens=1800,
+            do_sample=False,
+            temperature=None,
+            top_p=None,
+            top_k=None,
+        )
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
     generated = extract_json(text)
     raw_policies = generated.get("keyword_policies", {}) if isinstance(generated, dict) else {}
@@ -199,14 +263,33 @@ def main():
     model, tokenizer = load_model()
     for row_index, record, keywords in selected:
         try:
+            topic_name = str(record.get("topic_name", "")).strip()
+            summary_prompt = str(record.get("summary_prompt", "")).strip()
+            condensed_keywords = condense_keywords(
+                model=model,
+                tokenizer=tokenizer,
+                topic_name=topic_name,
+                keywords=keywords,
+                summary_prompt=summary_prompt,
+            )
+            print(
+                f"Condensed {topic_name} keywords: "
+                f"{len(keywords)} -> {len(condensed_keywords)}"
+            )
             policy = generate_policy(
-                model, tokenizer, str(record.get("topic_name", "")).strip(), keywords,
-                str(record.get("summary_prompt", "")).strip(),
+                model=model,
+                tokenizer=tokenizer,
+                topic_name=topic_name,
+                keywords=condensed_keywords,
+                summary_prompt=summary_prompt,
             )
             weights = {
                 keyword: item["weight"]
                 for keyword, item in policy["keyword_policies"].items()
             }
+            worksheet.update_cell(
+                row_index, columns["keywords"], ", ".join(condensed_keywords)
+            )
             worksheet.update_cell(row_index, columns["keyword_weights"], json.dumps(weights, sort_keys=True))
             worksheet.update_cell(row_index, columns["scoring_policy"], json.dumps(policy, sort_keys=True))
             worksheet.update_cell(
