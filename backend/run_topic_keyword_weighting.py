@@ -173,11 +173,15 @@ def condense_keywords(
         for keyword in raw_selected
         if str(keyword).strip().lower() in allowed
     ))
-    if not minimum <= len(selected) <= maximum:
-        raise ValueError(
-            "Qwen returned an invalid condensed keyword list: "
-            f"expected {minimum}-{maximum}, received {len(selected)}"
-        )
+    selected = selected[:maximum]
+    if len(selected) < minimum:
+        remaining = [keyword for keyword in keywords if keyword not in selected]
+        selected.extend(remaining[:minimum - len(selected)])
+
+    print(
+        f"Qwen selected {len(raw_selected)} entries; "
+        f"using {len(selected)} validated keywords"
+    )
     return selected
 
 
