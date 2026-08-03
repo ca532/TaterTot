@@ -6,7 +6,7 @@ import gspread
 import torch
 from google.oauth2.service_account import Credentials
 
-from client_pitch_generator import PITCH_MODEL_NAME, extract_json, load_model
+from client_pitch_generator import PITCH_MODEL_NAME, load_model
 
 
 TOPIC_NAME = os.getenv("TOPIC_NAME", "__all__").strip()
@@ -91,36 +91,38 @@ def _bounded_int(value, default, minimum, maximum):
         return default
 
 
-def validated_policy(keywords, generated):
-    raw_policies = generated.get("keyword_policies", {}) if isinstance(generated, dict) else {}
-    normalized = {str(key).strip().lower(): value for key, value in raw_policies.items()}
-    policies = {}
-    for keyword in keywords:
-        item = normalized.get(keyword, {})
-        if not isinstance(item, dict):
-            item = {}
-        weight = round(_bounded_float(item.get("weight"), 1.0, 0.5, 4.0), 2)
-        tier = str(item.get("tier", "broad")).strip().lower()
-        if tier not in {"core", "supporting", "broad"}:
-            tier = "broad"
-        standalone = item.get("standalone_eligible") is True
-        policies[keyword] = {
-            "weight": weight,
-            "tier": tier,
-            "standalone_eligible": standalone and tier != "broad" and weight >= 2.5,
-        }
+def extract_generated_json(text):
+    decoder = json.JSONDecoder()
+    value = text or ""
+    for index, character in enumerate(value):
+        if character != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(value[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
 
+
+def policy_from_absolute_score(value):
+    score = round(_bounded_float(value, 20.0, 0.0, 100.0), 2)
+    if score >= 80:
+        weight, tier, standalone = 4.0, "core", True
+    elif score >= 60:
+        weight, tier, standalone = 3.0, "supporting", False
+    elif score >= 40:
+        weight, tier, standalone = 2.0, "supporting", False
+    elif score >= 20:
+        weight, tier, standalone = 1.0, "broad", False
+    else:
+        weight, tier, standalone = 0.5, "broad", False
     return {
-        "keyword_policies": policies,
-        "minimum_relevance_score": round(
-            _bounded_float(generated.get("minimum_relevance_score"), 4.0, 2.0, 8.0), 2
-        ),
-        "minimum_distinct_keywords": _bounded_int(
-            generated.get("minimum_distinct_keywords"), 2, 1, 3
-        ),
-        "high_weight_threshold": round(
-            _bounded_float(generated.get("high_weight_threshold"), 2.5, 2.0, 4.0), 2
-        ),
+        "absolute_score": score,
+        "weight": weight,
+        "tier": tier,
+        "standalone_eligible": standalone,
     }
 
 
@@ -165,7 +167,7 @@ def condense_keywords(
             top_k=None,
         )
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
-    generated = extract_json(text)
+    generated = extract_generated_json(text)
     raw_selected = generated.get("selected_keywords", []) if isinstance(generated, dict) else []
     allowed = set(keywords)
     selected = list(dict.fromkeys(
@@ -189,21 +191,19 @@ def generate_policy(model, tokenizer, topic_name, keywords, summary_prompt):
     messages = [{
         "role": "user",
         "content": (
-            "Configure deterministic article-relevance scoring for a media-monitoring pipeline.\n"
+            "Score keyword relevance for a media-monitoring pipeline.\n"
             f"Topic: {topic_name}\n"
             f"Summary objective: {summary_prompt}\n"
             f"Keywords: {json.dumps(keywords)}\n\n"
-            "General exclusions are sports, health advice, crime, unrelated politics, generic celebrity news, "
-            "shopping lists, and landing pages unless directly relevant to the topic objective.\n"
-            "For every supplied keyword return a weight from 0.5 to 4.0, a tier of core/supporting/broad, "
-            "and standalone_eligible=true only when that keyword independently establishes topic relevance. "
-            "Broad or ambiguous terms must not qualify independently. Reserve 3.5-4.0 for unambiguous core "
-            "signals and assign broad terms 0.5-1.5. Do not add or remove keywords. "
-            "Recommend a minimum_relevance_score from 2.0-8.0, minimum_distinct_keywords from 1-3, and "
-            "high_weight_threshold from 2.0-4.0. Return only valid JSON in this shape: "
-            '{"keyword_policies":{"keyword":{"weight":1.0,"tier":"broad",'
-            '"standalone_eligible":false}},"minimum_relevance_score":4.0,'
-            '"minimum_distinct_keywords":2,"high_weight_threshold":2.5}'
+            "For every supplied keyword, assign an absolute score from 0 to 100 answering: "
+            "how strongly does this keyword independently establish that an article is relevant "
+            "to the topic and summary objective? Score 80-100 only for unmistakable independent "
+            "topic signals, 60-79 for strong signals needing context, 40-59 for supporting terms, "
+            "and 0-39 for broad or ambiguous terms. General sports, health advice, crime, unrelated "
+            "politics, generic celebrity news, and shopping terms must score below 40 unless the "
+            "keyword itself is an unmistakable topic signal. Do not add or remove keywords. "
+            "Return only valid JSON in this shape: "
+            '{"keyword_scores":{"keyword":75}}'
         ),
     }]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -211,23 +211,45 @@ def generate_policy(model, tokenizer, topic_name, keywords, summary_prompt):
     with torch.no_grad():
         output = model.generate(
             **inputs,
-            max_new_tokens=1800,
+            max_new_tokens=900,
             do_sample=False,
             temperature=None,
             top_p=None,
             top_k=None,
         )
     text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
-    generated = extract_json(text)
-    raw_policies = generated.get("keyword_policies", {}) if isinstance(generated, dict) else {}
-    returned_keywords = {str(key).strip().lower() for key in raw_policies}
-    missing_keywords = set(keywords).difference(returned_keywords)
-    if not raw_policies or missing_keywords:
-        raise ValueError(
-            "Qwen returned an incomplete scoring policy; missing keywords: "
-            f"{sorted(missing_keywords)}"
+    generated = extract_generated_json(text)
+    raw_scores = generated.get("keyword_scores", {}) if isinstance(generated, dict) else {}
+    if not raw_scores and isinstance(generated, dict):
+        supplied = set(keywords)
+        direct_scores = {
+            str(keyword).strip().lower(): score
+            for keyword, score in generated.items()
+            if str(keyword).strip().lower() in supplied
+        }
+        raw_scores = direct_scores
+    if not raw_scores:
+        print(f"Qwen score response was not parseable; preview: {text[:300]!r}")
+    normalized_scores = {
+        str(keyword).strip().lower(): score
+        for keyword, score in raw_scores.items()
+    } if isinstance(raw_scores, dict) else {}
+    missing_keywords = [keyword for keyword in keywords if keyword not in normalized_scores]
+    if missing_keywords:
+        print(
+            f"Qwen omitted {len(missing_keywords)} keyword scores; "
+            "using conservative score 20 for those keywords"
         )
-    return validated_policy(keywords, generated)
+
+    return {
+        "keyword_policies": {
+            keyword: policy_from_absolute_score(normalized_scores.get(keyword, 20.0))
+            for keyword in keywords
+        },
+        "minimum_relevance_score": 4.0,
+        "minimum_distinct_keywords": 2,
+        "high_weight_threshold": 4.0,
+    }
 
 
 def main():
