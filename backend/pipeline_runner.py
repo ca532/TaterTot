@@ -158,6 +158,7 @@ class PipelineRunner:
                     'published_date_source': getattr(article, 'published_date_source', 'unavailable'),
                     'matched_keywords': ', '.join(getattr(article, 'keywords_found', []) or []),
                     'canonical_url': getattr(article, 'canonical_url', '') or article.url,
+                    'topic': self.topic,
                     'run_id': os.getenv('GITHUB_RUN_ID', ''),
                     'full_content': article.full_content,  # Keep for summarization
                     'journalist': 'Unknown',  # Placeholder

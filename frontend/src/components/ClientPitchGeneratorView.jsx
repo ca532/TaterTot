@@ -282,7 +282,7 @@ export default function ClientPitchGeneratorView() {
               )}
             </div>
             <p className="text-sm text-gray-600 mb-3"><span className="font-semibold">Subject:</span> {p.subject_line}</p>
-            <p className="text-sm text-gray-700 mb-2"><span className="font-semibold">Story:</span> {p.suggested_story}</p>
+            <p className="text-sm text-gray-700 mb-2 whitespace-pre-line"><span className="font-semibold">Story:</span> {p.suggested_story}</p>
             <p className="text-sm text-gray-700 mb-2"><span className="font-semibold">Evidence:</span> {p.supporting_evidence}</p>
             {p.supporting_urls && (
               <p className="text-sm text-[#b8860b] break-all"><span className="font-semibold text-gray-700">URLs:</span> {p.supporting_urls}</p>

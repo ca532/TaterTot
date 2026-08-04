@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -131,34 +132,74 @@ def load_trend_evidence(db: GoogleSheetsDB, run_id: str):
     return evidence
 
 
-def load_recent_coverage_evidence(db: GoogleSheetsDB):
+def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
     rows = db.articles_sheet.get_all_records()
-    evidence = []
+    client_terms = {
+        term.lower()
+        for term in re.findall(
+            r"[A-Za-z0-9][A-Za-z0-9'-]+",
+            client.get("client_description", ""),
+        )
+        if len(term) >= 4
+    }
+    valid = []
 
-    for r in reversed(rows):
-        title = r.get("TITLE") or r.get("Title") or r.get("title") or ""
-        summary = r.get("SUMMARY") or r.get("Summary") or r.get("summary") or ""
-        if not title or not summary:
+    for row_position, r in enumerate(rows):
+        title = str(r.get("TITLE") or r.get("Title") or r.get("title") or "").strip()
+        summary = str(r.get("SUMMARY") or r.get("Summary") or r.get("summary") or "").strip()
+        topic = str(r.get("TOPIC") or r.get("Topic") or r.get("topic") or "").strip()
+        run_id = str(r.get("RUN_ID") or r.get("Run ID") or r.get("run_id") or "").strip()
+
+        try:
+            score = float(r.get("SCORE") or r.get("Score") or r.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        if not title or not summary or not run_id or score < 4.0:
             continue
 
-        evidence.append({
-            "title": str(title).strip()[:300],
+        article_text = f"{title} {summary} {topic}".lower()
+        overlap = sum(term in article_text for term in client_terms)
+        if len(client_terms) >= 2 and overlap < 2:
+            continue
+
+        valid.append({
+            "_row_position": row_position,
+            "run_id": run_id,
+            "title": title[:300],
             "publication": str(r.get("PUBLICATION") or r.get("Publication") or r.get("publication") or "").strip(),
-            "summary": str(summary).strip()[:900],
+            "summary": summary[:900],
+            "topic": topic,
+            "score": score,
             "url": str(r.get("URL") or r.get("url") or "").strip(),
         })
 
-        if len(evidence) >= 12:
-            break
-
-    if not evidence:
+    if not valid:
         return []
 
-    return [{
-        "coverage_basis": "recent summarized articles",
-        "articles": evidence,
-        "supporting_urls": " | ".join([x["url"] for x in evidence if x.get("url")][:5]),
-    }]
+    latest_run_id = max(valid, key=lambda item: item["_row_position"])["run_id"]
+    latest_articles = [item for item in valid if item["run_id"] == latest_run_id][:15]
+
+    packets = []
+    for start in range(0, len(latest_articles), 5):
+        articles = latest_articles[start:start + 5]
+        if len(articles) < 3:
+            continue
+
+        clean_articles = [
+            {key: value for key, value in article.items() if key != "_row_position"}
+            for article in articles
+        ]
+        packets.append({
+            "coverage_basis": "recent client-relevant summarized articles",
+            "run_id": latest_run_id,
+            "articles": clean_articles,
+            "supporting_urls": " | ".join(
+                article["url"] for article in clean_articles if article.get("url")
+            ),
+        })
+
+    return packets
 
 
 def write_pitch_rows(ws, client, mode, pitches):
@@ -213,10 +254,10 @@ def main():
         mode = "trend_signals" if evidence_items else "recent_coverage"
 
     if mode == "recent_coverage":
-        evidence_items = load_recent_coverage_evidence(db)
+        evidence_items = load_recent_coverage_evidence(db, client)
         if not evidence_items:
             upsert_metadata_key(db, "latest_pitch_status", "failed")
-            raise RuntimeError("No recent summarized coverage found")
+            raise RuntimeError("No recent client-relevant summarized coverage found")
 
     print(f"[PITCH_EVIDENCE] mode={mode} items={len(evidence_items)}")
     model, tokenizer = load_model()
