@@ -67,13 +67,28 @@ def load_model():
 
 
 def extract_json(text: str) -> dict:
-    match = re.search(r"\{.*\}", text or "", flags=re.S)
-    if not match:
+    raw = (text or "").strip()
+    if not raw:
         return {}
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return {}
+
+    fenced = re.fullmatch(
+        r"\s*```(?:json)?\s*(.*?)\s*```\s*",
+        raw,
+        flags=re.S | re.I,
+    )
+    if fenced:
+        raw = fenced.group(1).strip()
+
+    decoder = json.JSONDecoder(strict=False)
+    for match in re.finditer(r"\{", raw):
+        try:
+            data, _ = decoder.raw_decode(raw[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+
+    return {}
 
 
 def build_prompt(client: Dict, evidence: Dict, mode: str) -> str:
@@ -108,6 +123,8 @@ Subject line:
 
 Suggested story:
 - Write 120 to 180 words in exactly two short paragraphs.
+- Because the response is JSON, encode the paragraph break as \\n\\n inside the suggested_story string.
+- Do not place literal unescaped line breaks inside any JSON string.
 - Lead with the strongest timely, evidence-supported fact.
 - Explain why the story matters now.
 - Connect the evidence directly to the client.
@@ -117,6 +134,9 @@ Suggested story:
 Supporting evidence:
 - Include only 2 or 3 directly relevant evidence points.
 - Ignore facts that are unsupported, ambiguous, or irrelevant to the client.
+
+The entire response must parse with json.loads(). Escape quotation marks and
+line breaks inside JSON strings. Do not use Markdown code fences.
 
 Return only valid JSON with these exact keys:
 {{
@@ -128,7 +148,11 @@ Return only valid JSON with these exact keys:
 """.strip()
 
 
-def _generate_once(model, tokenizer, messages) -> tuple[str, dict]:
+class PitchGenerationError(RuntimeError):
+    pass
+
+
+def _generate_once(model, tokenizer, messages, attempt: int) -> tuple[str, dict]:
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
 
@@ -137,15 +161,38 @@ def _generate_once(model, tokenizer, messages) -> tuple[str, dict]:
             **inputs,
             max_new_tokens=800,
             do_sample=False,
+            temperature=None,
+            top_p=None,
+            top_k=None,
             pad_token_id=tokenizer.eos_token_id,
         )
 
     generated = tokenizer.decode(
         output_ids[0][inputs["input_ids"].shape[-1]:],
         skip_special_tokens=True,
-    )
+    ).strip()
 
-    return generated, extract_json(generated)
+    data = extract_json(generated)
+    print(
+        f"[PITCH_GENERATION] attempt={attempt} "
+        f"output_chars={len(generated)} json_found={bool(data)}"
+    )
+    if not data:
+        print(
+            f"[PITCH_PARSE_FAILURE] attempt={attempt} "
+            f"output_preview={generated[:1500]!r}"
+        )
+
+    return generated, data
+
+
+def _clean_pitch(data: dict) -> dict:
+    return {
+        "pitch_angle": str(data.get("pitch_angle", "")).strip(),
+        "suggested_story": str(data.get("suggested_story", "")).strip(),
+        "subject_line": str(data.get("subject_line", "")).strip(),
+        "supporting_evidence": str(data.get("supporting_evidence", "")).strip(),
+    }
 
 
 def generate_pitch(model, tokenizer, client: Dict, evidence: Dict, mode: str) -> dict:
@@ -154,7 +201,7 @@ def generate_pitch(model, tokenizer, client: Dict, evidence: Dict, mode: str) ->
             "role": "system",
             "content": (
                 "You generate polished, evidence-grounded PR pitch ideas "
-                "for luxury clients and return only valid JSON."
+                "for luxury clients. Return one valid JSON object only."
             ),
         },
         {
@@ -163,26 +210,39 @@ def generate_pitch(model, tokenizer, client: Dict, evidence: Dict, mode: str) ->
         },
     ]
 
-    generated, data = _generate_once(model, tokenizer, messages)
+    generated, data = _generate_once(model, tokenizer, messages, attempt=1)
+    errors = validate_pitch(data)
+
+    if not errors:
+        return _clean_pitch(data)
+
+    print(f"[PITCH_VALIDATION_FAILURE] attempt=1 errors={errors}")
+    messages.extend([
+        {"role": "assistant", "content": generated},
+        {
+            "role": "user",
+            "content": (
+                "Your previous response failed validation. Return a corrected "
+                "JSON object only. Do not use Markdown fences. Encode the "
+                "paragraph break in suggested_story as \\n\\n.\n\n"
+                "Validation errors:\n"
+                + "\n".join(f"- {error}" for error in errors)
+            ),
+        },
+    ])
+
+    generated, data = _generate_once(model, tokenizer, messages, attempt=2)
     errors = validate_pitch(data)
 
     if errors:
-        messages.extend([
-            {"role": "assistant", "content": generated},
-            {
-                "role": "user",
-                "content": (
-                    "Revise the response to correct every validation error below. "
-                    "Preserve evidence accuracy and return only the corrected JSON.\n\n"
-                    + "\n".join(f"- {error}" for error in errors)
-                ),
-            },
-        ])
-        _, data = _generate_once(model, tokenizer, messages)
+        print(f"[PITCH_VALIDATION_FAILURE] attempt=2 errors={errors}")
+        print(
+            "[PITCH_FINAL_INVALID_OUTPUT] "
+            f"output_preview={generated[:1500]!r}"
+        )
+        raise PitchGenerationError(
+            "Pitch remained invalid after two generation attempts: "
+            + "; ".join(errors)
+        )
 
-    return {
-        "pitch_angle": str(data.get("pitch_angle", "")).strip(),
-        "suggested_story": str(data.get("suggested_story", "")).strip(),
-        "subject_line": str(data.get("subject_line", "")).strip(),
-        "supporting_evidence": str(data.get("supporting_evidence", "")).strip(),
-    }
+    return _clean_pitch(data)

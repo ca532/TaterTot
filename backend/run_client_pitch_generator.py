@@ -207,6 +207,16 @@ def write_pitch_rows(ws, client, mode, pitches):
     payload = []
 
     for p in pitches:
+        required_fields = (
+            "pitch_angle",
+            "suggested_story",
+            "subject_line",
+            "supporting_evidence",
+        )
+        if any(not str(p.get(field, "")).strip() for field in required_fields):
+            print("[PITCH_ROW_SKIPPED] reason=missing_required_fields")
+            continue
+
         ev = p.get("_evidence", {})
         payload.append([
             PITCH_RUN_ID,
@@ -263,10 +273,31 @@ def main():
     model, tokenizer = load_model()
 
     pitches = []
-    for evidence in evidence_items[:MAX_PITCHES]:
-        pitch = generate_pitch(model, tokenizer, client, evidence, mode)
+    generation_failures = []
+    for evidence_index, evidence in enumerate(
+        evidence_items[:MAX_PITCHES],
+        start=1,
+    ):
+        try:
+            pitch = generate_pitch(model, tokenizer, client, evidence, mode)
+        except Exception as exc:
+            generation_failures.append(str(exc))
+            print(
+                f"[PITCH_GENERATION_FAILED] evidence_index={evidence_index} "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            continue
+
         pitch["_evidence"] = evidence
         pitches.append(pitch)
+
+    if not pitches:
+        upsert_metadata_key(db, "latest_pitch_status", "failed")
+        upsert_metadata_key(db, "latest_pitch_rows_written", "0")
+        raise RuntimeError(
+            "No valid pitches were generated. "
+            f"Failures: {' | '.join(generation_failures)}"
+        )
 
     write_pitch_rows(ws, client, mode, pitches)
 
