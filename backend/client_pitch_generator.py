@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -50,6 +51,27 @@ def validate_pitch(data: dict) -> list[str]:
         errors.append("suggested_story must contain exactly two paragraphs")
     if not evidence:
         errors.append("supporting_evidence is required")
+    else:
+        if re.search(r"https?://|www\.", evidence, flags=re.I):
+            errors.append("supporting_evidence must not contain URLs")
+        if evidence.lstrip().startswith(("[", "{")):
+            errors.append(
+                "supporting_evidence must be plain language, not a data structure"
+            )
+        if any(
+            token in evidence.lower()
+            for token in (
+                "article_url",
+                "source_url",
+                "supporting_urls",
+                "evidence_points",
+                "'score':",
+                '"score":',
+            )
+        ):
+            errors.append(
+                "supporting_evidence must not contain internal field names"
+            )
 
     return errors
 
@@ -127,6 +149,39 @@ def extract_json(text: str) -> dict:
     return {}
 
 
+MODEL_HIDDEN_EVIDENCE_KEYS = {
+    "url",
+    "urls",
+    "article_url",
+    "source_url",
+    "canonical_url",
+    "supporting_urls",
+    "run_id",
+    "run_ids",
+    "window_days",
+}
+
+
+def evidence_for_prompt(value):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            normalized_key = str(key).strip().lower()
+            if normalized_key.startswith("_"):
+                continue
+            if normalized_key in MODEL_HIDDEN_EVIDENCE_KEYS:
+                continue
+            if normalized_key.endswith("_url") or normalized_key.endswith("_urls"):
+                continue
+            cleaned[key] = evidence_for_prompt(item)
+        return cleaned
+
+    if isinstance(value, list):
+        return [evidence_for_prompt(item) for item in value]
+
+    return value
+
+
 def build_prompt(client: Dict, evidence: Dict, mode: str) -> str:
     mode_note = (
         "This evidence comes from BERTopic trend analysis. You may call it a trend signal."
@@ -137,7 +192,18 @@ def build_prompt(client: Dict, evidence: Dict, mode: str) -> str:
     return f"""
 You are a senior luxury PR strategist.
 
-Use only the client context and evidence below. Do not invent facts.
+Use only the client context and reference coverage below. Do not invent facts.
+
+The reference coverage describes the wider media landscape. It does not
+necessarily describe the client. Never claim that the client launched a
+product, attended an event, dressed a celebrity, received press coverage,
+formed a partnership, or took another action unless that fact appears
+explicitly in the client description.
+
+Use unrelated brands, events, products, and celebrities only as evidence of
+an editorial theme or media opportunity. Do not transfer their actions or
+coverage to the client. Frame the result as a proposed story opportunity,
+not as an event that has already happened.
 
 Client:
 Name: {client.get("client_name", "")}
@@ -146,8 +212,8 @@ Description: {client.get("client_description", "")}
 Mode: {mode}
 Mode guidance: {mode_note}
 
-Evidence:
-{json.dumps(evidence, ensure_ascii=False, indent=2)}
+Reference coverage:
+{json.dumps(evidence_for_prompt(evidence), ensure_ascii=False, indent=2)}
 
 Draft one polished client pitch idea.
 
@@ -161,25 +227,29 @@ Suggested story:
 - Write 100 to 180 words in two short paragraphs.
 - Because the response is JSON, encode the paragraph break as \\n\\n inside the suggested_story string.
 - Do not place literal unescaped line breaks inside any JSON string.
-- Lead with the strongest timely, evidence-supported fact.
-- Explain why the story matters now.
-- Connect the evidence directly to the client.
-- State the proposed article, the client's contribution, and the reader value.
-- Do not merely repeat the supporting-evidence field.
+- Describe a proposed article or pitch opportunity.
+- Clearly distinguish reference-coverage facts from known client facts.
+- Explain why the coverage theme matters now.
+- Connect the theme to the client's documented positioning.
+- State what the client could contribute and what readers would gain.
+- Do not claim that the client participated in any referenced event, launch, collaboration, endorsement, or media appearance.
 
 Supporting evidence:
-- Include only 2 or 3 directly relevant evidence points.
-- Ignore facts that are unsupported, ambiguous, or irrelevant to the client.
+- Write 2 or 3 concise, plain-language coverage insights.
+- Describe themes found in the reference coverage.
+- Do not include URLs, domain names, JSON, Python structures, field names, scores, dates, or source metadata.
+- Do not state or imply that the coverage is about the client unless the supplied text explicitly says so.
+- Separate the insights with semicolons.
 
 The entire response must parse with json.loads(). Escape quotation marks and
 line breaks inside JSON strings. Do not use Markdown code fences.
 
 Return only valid JSON with these exact keys:
 {{
-  "pitch_angle": "",
-  "suggested_story": "",
-  "subject_line": "",
-  "supporting_evidence": ""
+  "pitch_angle": "A proposed editorial angle for the client",
+  "suggested_story": "First paragraph describing the timely coverage theme and proposed story.\\n\\nSecond paragraph explaining the client's possible contribution and reader value.",
+  "subject_line": "Specific Five to Nine Word Subject",
+  "supporting_evidence": "Coverage insight one; coverage insight two"
 }}
 """.strip()
 
@@ -222,12 +292,94 @@ def _generate_once(model, tokenizer, messages, attempt: int) -> tuple[str, dict]
     return generated, data
 
 
+EVIDENCE_METADATA_KEYS = {
+    "url",
+    "urls",
+    "article_url",
+    "source_url",
+    "canonical_url",
+    "supporting_urls",
+    "score",
+    "date",
+    "published_date",
+    "run_id",
+}
+
+
+def _extract_evidence_points(value) -> list[str]:
+    if isinstance(value, dict):
+        points = []
+        for key in (
+            "evidence_points",
+            "evidence",
+            "insights",
+            "points",
+            "summary",
+        ):
+            if key in value:
+                points.extend(_extract_evidence_points(value[key]))
+
+        if points:
+            return points
+
+        for key, item in value.items():
+            if str(key).lower() in EVIDENCE_METADATA_KEYS:
+                continue
+            points.extend(_extract_evidence_points(item))
+        return points
+
+    if isinstance(value, list):
+        points = []
+        for item in value:
+            points.extend(_extract_evidence_points(item))
+        return points
+
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _clean_supporting_evidence(value) -> str:
+    parsed = value
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.startswith(("[", "{")):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                try:
+                    parsed = ast.literal_eval(raw)
+                except (ValueError, SyntaxError):
+                    parsed = raw
+
+    points = _extract_evidence_points(parsed)
+    cleaned = []
+    seen = set()
+
+    for point in points:
+        point = re.sub(r"https?://\S+", "", point).strip(" -|,;")
+        point = re.sub(r"\s+", " ", point)
+        if not point:
+            continue
+
+        dedupe_key = point.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        cleaned.append(point)
+        if len(cleaned) >= 3:
+            break
+
+    return "; ".join(cleaned)
+
+
 def _clean_pitch(data: dict) -> dict:
     return {
         "pitch_angle": str(data.get("pitch_angle", "")).strip(),
         "suggested_story": str(data.get("suggested_story", "")).strip(),
         "subject_line": str(data.get("subject_line", "")).strip(),
-        "supporting_evidence": str(data.get("supporting_evidence", "")).strip(),
+        "supporting_evidence": _clean_supporting_evidence(
+            data.get("supporting_evidence", "")
+        ),
     }
 
 
