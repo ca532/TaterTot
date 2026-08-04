@@ -4,7 +4,7 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from client_pitch_generator import PITCH_MODEL_NAME, generate_pitch, load_model
 from google_storage import GoogleSheetsDB
@@ -132,8 +132,47 @@ def load_trend_evidence(db: GoogleSheetsDB, run_id: str):
     return evidence
 
 
+def _row_value(row: dict, *names):
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _parse_sheet_datetime(value) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+
+    if parsed is None:
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%m/%d/%Y %H:%M:%S",
+            "%m/%d/%Y",
+        ):
+            try:
+                parsed = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
     rows = db.articles_sheet.get_all_records()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     client_terms = {
         term.lower()
         for term in re.findall(
@@ -144,18 +183,36 @@ def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
     }
     valid = []
 
-    for row_position, r in enumerate(rows):
-        title = str(r.get("TITLE") or r.get("Title") or r.get("title") or "").strip()
-        summary = str(r.get("SUMMARY") or r.get("Summary") or r.get("summary") or "").strip()
-        topic = str(r.get("TOPIC") or r.get("Topic") or r.get("topic") or "").strip()
-        run_id = str(r.get("RUN_ID") or r.get("Run ID") or r.get("run_id") or "").strip()
+    for r in rows:
+        title = str(_row_value(r, "TITLE", "Title", "title")).strip()
+        summary = str(_row_value(r, "SUMMARY", "Summary", "summary")).strip()
+        topic = str(_row_value(r, "TOPIC", "Topic", "topic")).strip()
+        run_id = str(_row_value(r, "RUN_ID", "Run ID", "run_id")).strip()
+
+        published_at = _parse_sheet_datetime(
+            _row_value(r, "PUBLISHED_DATE", "Published Date", "published_date")
+        )
+        collected_at = _parse_sheet_datetime(
+            _row_value(
+                r,
+                "CREATED_AT",
+                "Created At",
+                "created_at",
+                "TIMESTAMP",
+                "Timestamp",
+                "timestamp",
+            )
+        )
+        article_date = published_at or collected_at
+        if article_date is None or article_date < cutoff:
+            continue
 
         try:
-            score = float(r.get("SCORE") or r.get("Score") or r.get("score") or 0)
+            score = float(_row_value(r, "SCORE", "Score", "score") or 0)
         except (TypeError, ValueError):
             score = 0.0
 
-        if not title or not summary or not run_id or score < 4.0:
+        if not title or not summary or score < 4.0:
             continue
 
         article_text = f"{title} {summary} {topic}".lower()
@@ -163,36 +220,58 @@ def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
         if len(client_terms) >= 2 and overlap < 2:
             continue
 
+        url = str(_row_value(r, "URL", "url")).strip()
+        canonical_url = str(
+            _row_value(r, "CANONICAL_URL", "Canonical URL", "canonical_url")
+        ).strip()
+
         valid.append({
-            "_row_position": row_position,
+            "_article_date": article_date,
+            "_dedupe_key": canonical_url.lower() or url.lower() or title.lower(),
             "run_id": run_id,
             "title": title[:300],
-            "publication": str(r.get("PUBLICATION") or r.get("Publication") or r.get("publication") or "").strip(),
+            "publication": str(
+                _row_value(r, "PUBLICATION", "Publication", "publication")
+            ).strip(),
             "summary": summary[:900],
             "topic": topic,
             "score": score,
-            "url": str(r.get("URL") or r.get("url") or "").strip(),
+            "published_date": article_date.isoformat(),
+            "url": canonical_url or url,
         })
 
-    if not valid:
-        return []
-
-    latest_run_id = max(valid, key=lambda item: item["_row_position"])["run_id"]
-    latest_articles = [item for item in valid if item["run_id"] == latest_run_id][:15]
+    valid.sort(key=lambda item: (item["_article_date"], item["score"]), reverse=True)
+    deduplicated = []
+    seen = set()
+    for article in valid:
+        key = article["_dedupe_key"]
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(article)
+        if len(deduplicated) >= 15:
+            break
 
     packets = []
-    for start in range(0, len(latest_articles), 5):
-        articles = latest_articles[start:start + 5]
+    for start in range(0, len(deduplicated), 3):
+        articles = deduplicated[start:start + 3]
         if len(articles) < 3:
             continue
 
         clean_articles = [
-            {key: value for key, value in article.items() if key != "_row_position"}
+            {
+                key: value
+                for key, value in article.items()
+                if not key.startswith("_")
+            }
             for article in articles
         ]
         packets.append({
-            "coverage_basis": "recent client-relevant summarized articles",
-            "run_id": latest_run_id,
+            "coverage_basis": (
+                "client-relevant summarized articles published or collected "
+                "in the last seven days"
+            ),
+            "window_days": 7,
             "articles": clean_articles,
             "supporting_urls": " | ".join(
                 article["url"] for article in clean_articles if article.get("url")
