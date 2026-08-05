@@ -76,10 +76,17 @@ def load_client(db: GoogleSheetsDB):
         cid = str(r.get("client_id", "")).strip()
         active = str(r.get("active", "TRUE")).strip().upper() != "FALSE"
         if cid == CLIENT_ID and active:
+            topic = str(r.get("topic", "")).strip()
+            if not topic:
+                raise RuntimeError(
+                    f"Client '{cid}' has no configured topic. "
+                    "Update the client before generating pitches."
+                )
             return {
                 "client_id": cid,
                 "client_name": str(r.get("client_name", "")).strip(),
                 "client_description": str(r.get("client_description", "")).strip(),
+                "topic": topic,
             }
 
     raise RuntimeError(f"Client not found or inactive: {CLIENT_ID}")
@@ -96,10 +103,10 @@ def latest_trend_run_id(db: GoogleSheetsDB) -> str:
     return ""
 
 
-def load_trend_evidence(db: GoogleSheetsDB, run_id: str):
-    rid = (run_id or latest_trend_run_id(db)).strip()
-    if not rid:
-        return []
+def load_trend_evidence(db: GoogleSheetsDB, run_id: str, topic: str):
+    wanted_topic = str(topic or "").strip().lower()
+    if not wanted_topic:
+        raise RuntimeError("Client topic is required")
 
     try:
         ws = db.spreadsheet.worksheet(TREND_SHEET_NAME)
@@ -107,8 +114,20 @@ def load_trend_evidence(db: GoogleSheetsDB, run_id: str):
     except Exception:
         return []
 
+    matching_rows = [
+        row
+        for row in rows
+        if str(row.get("topic", "")).strip().lower() == wanted_topic
+    ]
+
+    rid = str(run_id or "").strip()
+    if not rid and matching_rows:
+        rid = str(matching_rows[-1].get("trend_run_id", "")).strip()
+    if not rid:
+        return []
+
     evidence = []
-    for r in rows:
+    for r in matching_rows:
         if str(r.get("trend_run_id", "")).strip() != rid:
             continue
         if str(r.get("keyword", "")).strip() == "__NO_TRENDS__":
@@ -124,6 +143,7 @@ def load_trend_evidence(db: GoogleSheetsDB, run_id: str):
             "trend_score": r.get("trend_score", ""),
             "publication_count": r.get("publication_count", ""),
             "supporting_urls": str(r.get("supporting_urls", "")).strip(),
+            "topic": str(r.get("topic", "")).strip(),
         })
 
         if len(evidence) >= MAX_PITCHES:
@@ -172,6 +192,10 @@ def _parse_sheet_datetime(value) -> datetime | None:
 
 def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
     rows = db.articles_sheet.get_all_records()
+    client_topic = str(client.get("topic", "")).strip().lower()
+    if not client_topic:
+        raise RuntimeError("Client topic is required")
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     client_terms = {
         term.lower()
@@ -188,6 +212,8 @@ def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
         summary = str(_row_value(r, "SUMMARY", "Summary", "summary")).strip()
         topic = str(_row_value(r, "TOPIC", "Topic", "topic")).strip()
         run_id = str(_row_value(r, "RUN_ID", "Run ID", "run_id")).strip()
+        if topic.lower() != client_topic:
+            continue
 
         published_at = _parse_sheet_datetime(
             _row_value(r, "PUBLISHED_DATE", "Published Date", "published_date")
@@ -227,6 +253,7 @@ def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
 
         valid.append({
             "_article_date": article_date,
+            "_run_date": collected_at or article_date,
             "_dedupe_key": canonical_url.lower() or url.lower() or title.lower(),
             "run_id": run_id,
             "title": title[:300],
@@ -239,6 +266,19 @@ def load_recent_coverage_evidence(db: GoogleSheetsDB, client: dict):
             "published_date": article_date.isoformat(),
             "url": canonical_url or url,
         })
+
+    run_dates = {}
+    for article in valid:
+        article_run_id = article["run_id"]
+        if not article_run_id:
+            continue
+        current = run_dates.get(article_run_id)
+        if current is None or article["_run_date"] > current:
+            run_dates[article_run_id] = article["_run_date"]
+
+    if run_dates:
+        latest_run = max(run_dates, key=run_dates.get)
+        valid = [article for article in valid if article["run_id"] == latest_run]
 
     valid.sort(key=lambda item: (item["_article_date"], item["score"]), reverse=True)
     deduplicated = []
@@ -333,7 +373,11 @@ def main():
     evidence_items = []
 
     if REQUESTED_MODE in {"auto", "trend_signals"}:
-        evidence_items = load_trend_evidence(db, TREND_RUN_ID)
+        evidence_items = load_trend_evidence(
+            db,
+            TREND_RUN_ID,
+            client["topic"],
+        )
 
     if REQUESTED_MODE == "trend_signals" and not evidence_items:
         upsert_metadata_key(db, "latest_pitch_status", "failed")

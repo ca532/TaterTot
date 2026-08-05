@@ -4,6 +4,7 @@ import githubAPI from "../services/githubAPI";
 
 export default function ClientPitchGeneratorView() {
   const [clients, setClients] = useState([]);
+  const [topics, setTopics] = useState([]);
   const [clientId, setClientId] = useState("");
   const [mode, setMode] = useState("auto");
   const [maxPitches, setMaxPitches] = useState(5);
@@ -19,6 +20,7 @@ export default function ClientPitchGeneratorView() {
   const [newClient, setNewClient] = useState({
     client_name: "",
     client_description: "",
+    topic: "",
   });
 
   const stopPolling = () => {
@@ -39,15 +41,35 @@ export default function ClientPitchGeneratorView() {
     setClientId((current) => current || (list[0]?.client_id || ""));
   }, []);
 
+  const loadTopics = useCallback(async () => {
+    const res = await githubAPI.getTopicConfigs();
+    if (!res.success) {
+      setError(res.error || "Failed to load topics.");
+      return;
+    }
+
+    const list = res.topics || [];
+    setTopics(list);
+    setNewClient((current) => ({
+      ...current,
+      topic: current.topic || list[0]?.topic_name || "",
+    }));
+  }, []);
+
   useEffect(() => {
     loadClients();
+    loadTopics();
     return () => stopPolling();
-  }, [loadClients]);
+  }, [loadClients, loadTopics]);
 
   const saveClient = async () => {
     setError("");
     if (!newClient.client_name.trim()) {
       setError("Client name is required.");
+      return;
+    }
+    if (!newClient.topic) {
+      setError("Client topic is required.");
       return;
     }
     setSavingClient(true);
@@ -58,7 +80,11 @@ export default function ClientPitchGeneratorView() {
         return;
       }
       setShowNewClient(false);
-      setNewClient({ client_name: "", client_description: "" });
+      setNewClient({
+        client_name: "",
+        client_description: "",
+        topic: topics[0]?.topic_name || "",
+      });
       await loadClients();
       setClientId(res.client_id || "");
     } finally {
@@ -177,6 +203,7 @@ export default function ClientPitchGeneratorView() {
               {clients.map((client) => (
                 <option key={client.client_id} value={client.client_id}>
                   {client.client_name}
+                  {client.topic ? ` (${client.topic})` : " (topic required)"}
                 </option>
               ))}
             </select>
@@ -199,6 +226,19 @@ export default function ClientPitchGeneratorView() {
               onChange={(e) => setNewClient({ ...newClient, client_name: e.target.value })}
               className="w-full p-2 border border-gray-300 rounded mb-3"
             />
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Topic</label>
+            <select
+              value={newClient.topic}
+              onChange={(e) => setNewClient({ ...newClient, topic: e.target.value })}
+              className="w-full p-2 border border-gray-300 rounded mb-3"
+            >
+              <option value="">Select a topic</option>
+              {topics.map((topic) => (
+                <option key={topic.topic_name} value={topic.topic_name}>
+                  {topic.topic_name}
+                </option>
+              ))}
+            </select>
             <label className="block text-sm font-semibold text-gray-700 mb-1">Client Description</label>
             <textarea
               rows={5}

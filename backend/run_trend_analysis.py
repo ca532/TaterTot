@@ -34,12 +34,13 @@ def ensure_trend_sheet(db: GoogleSheetsDB):
         "supporting_urls",
         "status",
         "window_mode",
+        "topic",
     ]
     try:
         ws = db.spreadsheet.worksheet(TREND_SHEET_NAME)
     except Exception:
         ws = db.spreadsheet.add_worksheet(title=TREND_SHEET_NAME, rows=2000, cols=12)
-    ws.update(range_name="A1:K1", values=[headers])
+    ws.update(range_name="A1:L1", values=[headers])
     return ws
 
 
@@ -111,7 +112,7 @@ def _load_list_base_hosts(db: GoogleSheetsDB, list_name: str):
 
 
 def upsert_run_rows(ws, trend_run_id: str, rows, window_mode: str):
-    all_vals = ws.get("A:K")
+    all_vals = ws.get("A:L")
     if len(all_vals) > 1:
         to_delete = []
         headers = all_vals[0]
@@ -135,14 +136,15 @@ def upsert_run_rows(ws, trend_run_id: str, rows, window_mode: str):
         r.supporting_urls,
         r.status,
         window_mode,
+        TOPIC,
     ] for r in rows]
 
     if payload:
-        table_vals = ws.get("A:K")
+        table_vals = ws.get("A:L")
         next_row = max(2, len(table_vals) + 1)
         end_row = next_row + len(payload) - 1
         ws.update(
-            range_name=f"A{next_row}:K{end_row}",
+            range_name=f"A{next_row}:L{end_row}",
             values=payload
         )
 

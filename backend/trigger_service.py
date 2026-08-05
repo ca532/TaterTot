@@ -236,6 +236,7 @@ class TrendTriggerRequest(BaseModel):
 class ClientConfigRequest(BaseModel):
     client_name: str
     client_description: Optional[str] = ""
+    topic: str
 
 
 class PitchTriggerRequest(BaseModel):
@@ -721,6 +722,7 @@ CLIENT_CONFIG_HEADERS = [
     "client_description",
     "active",
     "updated",
+    "topic",
 ]
 
 CLIENT_PITCH_HEADERS = [
@@ -801,6 +803,7 @@ def _client_configs() -> list[dict]:
             "client_id": str(row.get("client_id", "")).strip() or _slugify_client_id(client_name),
             "client_name": client_name,
             "client_description": str(row.get("client_description", "")).strip(),
+            "topic": str(row.get("topic", "")).strip(),
             "active": active,
         })
 
@@ -820,6 +823,14 @@ def _upsert_client(req: ClientConfigRequest) -> dict:
     if not client_name:
         raise HTTPException(status_code=400, detail="client_name is required")
 
+    topic_config = _topic_config_for(req.topic)
+    if not topic_config:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown or inactive topic: {req.topic}",
+        )
+    topic = topic_config["topic_name"]
+
     client_id = _slugify_client_id(client_name)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     row_values = [
@@ -828,6 +839,7 @@ def _upsert_client(req: ClientConfigRequest) -> dict:
         (req.client_description or "").strip()[:2500],
         "TRUE",
         today,
+        topic,
     ]
 
     ws = _clients_ws()
@@ -841,11 +853,15 @@ def _upsert_client(req: ClientConfigRequest) -> dict:
             break
 
     if row_idx:
-        ws.update(range_name=f"A{row_idx}:E{row_idx}", values=[row_values])
+        ws.update(range_name=f"A{row_idx}:F{row_idx}", values=[row_values])
     else:
         ws.append_row(row_values, value_input_option="USER_ENTERED")
 
-    return {"client_id": client_id, "client_name": client_name}
+    return {
+        "client_id": client_id,
+        "client_name": client_name,
+        "topic": topic,
+    }
 
 
 def _weekly_config_payload() -> dict:
