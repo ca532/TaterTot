@@ -126,124 +126,114 @@ def policy_from_absolute_score(value):
     }
 
 
-def condense_keywords(
+def generate_policy(
     model,
     tokenizer,
     topic_name,
     keywords,
     summary_prompt,
-    minimum=20,
-    maximum=30,
+    batch_size=15,
 ):
-    if len(keywords) <= maximum:
-        return keywords
+    all_scores = {}
 
-    messages = [{
-        "role": "user",
-        "content": (
-            "Select the strongest keywords for an article relevance filter.\n"
-            f"Topic: {topic_name}\n"
-            f"Summary objective: {summary_prompt}\n"
-            f"Available keywords: {json.dumps(keywords)}\n\n"
-            f"Return between {minimum} and {maximum} keywords.\n"
-            "Keep specific, high-signal topic terms and important named entities.\n"
-            "Keep a small number of supporting terms only when they add useful coverage.\n"
-            "Remove duplicates, weak terms, and broad ambiguous terms that frequently "
-            "match unrelated sports, health, politics, crime, celebrity, or shopping stories.\n"
-            "Do not invent keywords.\n"
-            "Return only valid JSON in this shape:\n"
-            '{"selected_keywords":["keyword one","keyword two"]}'
-        ),
-    }]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=700,
-            do_sample=False,
-            temperature=None,
-            top_p=None,
-            top_k=None,
+    for start in range(0, len(keywords), batch_size):
+        batch = keywords[start:start + batch_size]
+        batch_number = (start // batch_size) + 1
+        total_batches = (len(keywords) + batch_size - 1) // batch_size
+
+        messages = [{
+            "role": "user",
+            "content": (
+                "Score keyword relevance for a media-monitoring pipeline.\n"
+                f"Topic: {topic_name}\n"
+                f"Summary objective: {summary_prompt}\n"
+                f"Keywords: {json.dumps(batch)}\n\n"
+                "For every supplied keyword, assign an absolute score from 0 to 100. "
+                "The score answers how strongly that keyword independently establishes "
+                "that an article is relevant to the topic and summary objective.\n\n"
+                "Use this scale:\n"
+                "- 80-100: unmistakable independent topic signal\n"
+                "- 60-79: strong signal that may need context\n"
+                "- 40-59: useful supporting term\n"
+                "- 20-39: broad or ambiguous term\n"
+                "- 0-19: weak, misleading, or generally irrelevant term\n\n"
+                "Sports, health advice, crime, unrelated politics, generic celebrity "
+                "news, and generic shopping terms must score below 40 unless the "
+                "keyword itself unmistakably establishes relevance to this topic.\n\n"
+                "Return every supplied keyword exactly once. "
+                "Do not add, remove, rename, combine, or paraphrase keywords. "
+                "Return only valid JSON in this exact shape:\n"
+                '{"keyword_scores":{"keyword":75}}'
+            ),
+        }]
+
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
         )
-    text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
-    generated = extract_generated_json(text)
-    raw_selected = generated.get("selected_keywords", []) if isinstance(generated, dict) else []
-    allowed = set(keywords)
-    selected = list(dict.fromkeys(
-        str(keyword).strip().lower()
-        for keyword in raw_selected
-        if str(keyword).strip().lower() in allowed
-    ))
-    selected = selected[:maximum]
-    if len(selected) < minimum:
-        remaining = [keyword for keyword in keywords if keyword not in selected]
-        selected.extend(remaining[:minimum - len(selected)])
-
-    print(
-        f"Qwen selected {len(raw_selected)} entries; "
-        f"using {len(selected)} validated keywords"
-    )
-    return selected
-
-
-def generate_policy(model, tokenizer, topic_name, keywords, summary_prompt):
-    messages = [{
-        "role": "user",
-        "content": (
-            "Score keyword relevance for a media-monitoring pipeline.\n"
-            f"Topic: {topic_name}\n"
-            f"Summary objective: {summary_prompt}\n"
-            f"Keywords: {json.dumps(keywords)}\n\n"
-            "For every supplied keyword, assign an absolute score from 0 to 100 answering: "
-            "how strongly does this keyword independently establish that an article is relevant "
-            "to the topic and summary objective? Score 80-100 only for unmistakable independent "
-            "topic signals, 60-79 for strong signals needing context, 40-59 for supporting terms, "
-            "and 0-39 for broad or ambiguous terms. General sports, health advice, crime, unrelated "
-            "politics, generic celebrity news, and shopping terms must score below 40 unless the "
-            "keyword itself is an unmistakable topic signal. Do not add or remove keywords. "
-            "Return only valid JSON in this shape: "
-            '{"keyword_scores":{"keyword":75}}'
-        ),
-    }]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=900,
-            do_sample=False,
-            temperature=None,
-            top_p=None,
-            top_k=None,
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=3000,
         )
-    text = tokenizer.decode(output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True)
-    generated = extract_generated_json(text)
-    raw_scores = generated.get("keyword_scores", {}) if isinstance(generated, dict) else {}
-    if not raw_scores and isinstance(generated, dict):
-        supplied = set(keywords)
-        direct_scores = {
+
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                max_new_tokens=700,
+                do_sample=False,
+                temperature=None,
+                top_p=None,
+                top_k=None,
+            )
+
+        text = tokenizer.decode(
+            output[0][inputs["input_ids"].shape[-1]:],
+            skip_special_tokens=True,
+        )
+        generated = extract_generated_json(text)
+        raw_scores = (
+            generated.get("keyword_scores", {})
+            if isinstance(generated, dict)
+            else {}
+        )
+
+        if not raw_scores and isinstance(generated, dict):
+            allowed = set(batch)
+            raw_scores = {
+                str(keyword).strip().lower(): score
+                for keyword, score in generated.items()
+                if str(keyword).strip().lower() in allowed
+            }
+
+        normalized_scores = {
             str(keyword).strip().lower(): score
-            for keyword, score in generated.items()
-            if str(keyword).strip().lower() in supplied
-        }
-        raw_scores = direct_scores
-    if not raw_scores:
-        print(f"Qwen score response was not parseable; preview: {text[:300]!r}")
-    normalized_scores = {
-        str(keyword).strip().lower(): score
-        for keyword, score in raw_scores.items()
-    } if isinstance(raw_scores, dict) else {}
-    missing_keywords = [keyword for keyword in keywords if keyword not in normalized_scores]
-    if missing_keywords:
+            for keyword, score in raw_scores.items()
+        } if isinstance(raw_scores, dict) else {}
+
+        missing = []
+        for keyword in batch:
+            if keyword in normalized_scores:
+                all_scores[keyword] = normalized_scores[keyword]
+            else:
+                all_scores[keyword] = 20.0
+                missing.append(keyword)
+
         print(
-            f"Qwen omitted {len(missing_keywords)} keyword scores; "
-            "using conservative score 20 for those keywords"
+            f"Scored keyword batch {batch_number}/{total_batches}: "
+            f"{len(batch) - len(missing)}/{len(batch)} returned by Qwen"
         )
+        if missing:
+            print(
+                f"  Qwen omitted {len(missing)} keywords; "
+                "assigned conservative score 20"
+            )
 
     return {
         "keyword_policies": {
-            keyword: policy_from_absolute_score(normalized_scores.get(keyword, 20.0))
+            keyword: policy_from_absolute_score(all_scores[keyword])
             for keyword in keywords
         },
         "minimum_relevance_score": 4.0,
@@ -291,31 +281,21 @@ def main():
         try:
             topic_name = str(record.get("topic_name", "")).strip()
             summary_prompt = str(record.get("summary_prompt", "")).strip()
-            condensed_keywords = condense_keywords(
+            print(
+                f"Generating scores for all {len(keywords)} "
+                f"{topic_name} keywords in batches"
+            )
+            policy = generate_policy(
                 model=model,
                 tokenizer=tokenizer,
                 topic_name=topic_name,
                 keywords=keywords,
                 summary_prompt=summary_prompt,
             )
-            print(
-                f"Condensed {topic_name} keywords: "
-                f"{len(keywords)} -> {len(condensed_keywords)}"
-            )
-            policy = generate_policy(
-                model=model,
-                tokenizer=tokenizer,
-                topic_name=topic_name,
-                keywords=condensed_keywords,
-                summary_prompt=summary_prompt,
-            )
             weights = {
                 keyword: item["weight"]
                 for keyword, item in policy["keyword_policies"].items()
             }
-            worksheet.update_cell(
-                row_index, columns["keywords"], ", ".join(condensed_keywords)
-            )
             worksheet.update_cell(row_index, columns["keyword_weights"], json.dumps(weights, sort_keys=True))
             worksheet.update_cell(row_index, columns["scoring_policy"], json.dumps(policy, sort_keys=True))
             worksheet.update_cell(

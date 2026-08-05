@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 import re
-from urllib.parse import urlparse, urljoin
+from urllib.parse import unquote, urljoin, urlparse
 import time
 import json
 import os
@@ -1224,6 +1224,16 @@ class CustomArticleCollector:
         
         return all_candidates
     
+    def calculate_url_relevance_score(self, url: str) -> tuple:
+        """Estimate relevance from a URL slug before downloading the page."""
+        try:
+            parsed = urlparse(url)
+            decoded_path = unquote(parsed.path or "")
+            path_text = re.sub(r"[-_/]+", " ", decoded_path)
+            return self.calculate_relevance_score("", path_text)
+        except Exception:
+            return 0.0, []
+
     def is_relevant_url(self, url: str, publication: str = "") -> bool:
         """Reject known non-article URLs before spending a fetch."""
         valid, _ = validate_candidate_url(url, publication)
@@ -1514,13 +1524,15 @@ class CustomArticleCollector:
             for url, pub_date in urls[:150]:
                 try:
                     if self.is_relevant_url(url, publication=publication):
+                        url_score, url_keywords = self.calculate_url_relevance_score(url)
                         candidate = ArticleCandidate(
                             title="",
                             url=url,
                             publication=publication,
                             published_date=pub_date,
                             summary="",
-                            relevance_score=1.0,
+                            relevance_score=url_score,
+                            keywords_found=url_keywords,
                             candidate_source="sitemap",
                             published_date_source="sitemap" if pub_date else "unavailable",
                         )
@@ -1778,12 +1790,22 @@ class CustomArticleCollector:
                 time.sleep(random.uniform(3, 6))
                 continue
             
-            source_priority = {"sitemap": 0, "rss": 1}
+            # RSS title/summary scores are stronger preliminary evidence than
+            # sitemap URL-slug scores, but relevance remains the primary key.
+            source_priority = {"rss": 0, "sitemap": 1}
             candidates.sort(
-                key=lambda x: (
-                    source_priority.get(x.candidate_source, 99),
-                    -x.relevance_score
+                key=lambda candidate: (
+                    -candidate.relevance_score,
+                    source_priority.get(candidate.candidate_source, 99),
                 )
+            )
+            scored_candidates = sum(
+                1 for candidate in candidates
+                if candidate.relevance_score > 0
+            )
+            print(
+                f"  Candidate ranking: {scored_candidates}/{len(candidates)} "
+                "URLs contain preliminary topic signals"
             )
             max_articles_per_publication = baseline_max_articles
             if self.use_dynamic_caps:
