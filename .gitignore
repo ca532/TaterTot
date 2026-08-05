@@ -17,6 +17,7 @@ credentials.json
 service-account.json
 *.json
 !backend/config/*.json
+!backend/tests/fixtures/*.json
 !frontend/package*.json
 !frontend/tsconfig*.json
 !frontend/vite.config.js

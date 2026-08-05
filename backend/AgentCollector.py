@@ -22,6 +22,7 @@ from article_quality import (
     has_low_signal_intent,
     normalize_publication_name,
     resolve_published_date,
+    relevance_gate_reason as evaluate_relevance_gate,
     title_similarity,
     validate_article_content,
     validate_author,
@@ -504,6 +505,8 @@ class CustomArticleCollector:
         self.active_keywords = topic_config["keywords"]
         self.keyword_weight_map = topic_config["weights"]
         self.keyword_policy_map = topic_config["policies"]
+        self.topic_entities = topic_config["topic_entities"]
+        self.supporting_concepts = topic_config["supporting_concepts"]
         self.minimum_relevance_score = topic_config["minimum_relevance_score"]
         self.minimum_distinct_keywords = topic_config["minimum_distinct_keywords"]
         self.high_weight_threshold = topic_config["high_weight_threshold"]
@@ -690,10 +693,22 @@ class CustomArticleCollector:
                     value = default
                 return max(minimum, min(value, maximum))
 
+            def policy_list(field, maximum):
+                raw = scoring_policy.get(field, []) if isinstance(scoring_policy, dict) else []
+                if not isinstance(raw, list):
+                    return []
+                return list(dict.fromkeys(
+                    str(value).strip().lower()
+                    for value in raw
+                    if isinstance(value, str) and value.strip()
+                ))[:maximum]
+
             return {
                 "keywords": keywords,
                 "weights": weights,
                 "policies": policies,
+                "topic_entities": policy_list("topic_entities", 25),
+                "supporting_concepts": policy_list("supporting_concepts", 20),
                 "minimum_relevance_score": number("minimum_relevance_score", 4.0, 2.0, 8.0),
                 "minimum_distinct_keywords": number("minimum_distinct_keywords", 2, 1, 3, integer=True),
                 "high_weight_threshold": number("high_weight_threshold", 2.5, 2.0, 4.0),
@@ -892,33 +907,25 @@ class CustomArticleCollector:
         matched_keywords: List[str],
         anchor_keywords: Optional[List[str]] = None,
         title: str = "",
+        anchor_text: str = "",
     ) -> str:
-        distinct = {self._normalize_text(keyword) for keyword in (matched_keywords or []) if keyword}
-        core = {
-            keyword for keyword in distinct
-            if self.keyword_policy_map.get(keyword, {}).get("tier") == "core"
-        }
-        supporting = {
-            keyword for keyword in distinct
-            if self.keyword_policy_map.get(keyword, {}).get("tier") == "supporting"
-        }
-        if score < self.minimum_relevance_score:
-            return "low_score"
-        if not core and len(supporting) < self.minimum_distinct_keywords:
-            return "insufficient_strong_keywords"
-
-        anchors = {
-            self._normalize_text(keyword)
-            for keyword in (anchor_keywords or [])
-            if keyword
-        }
-        anchor_core = core.intersection(anchors)
-        anchor_supporting = supporting.intersection(anchors)
-        if not anchor_core and len(anchor_supporting) < self.minimum_distinct_keywords:
-            return "missing_early_anchor"
-        if has_low_signal_intent(title) and not anchor_core:
-            return "low_signal_intent"
-        return ""
+        entity_matches = self._topic_signal_matches(
+            anchor_text, self.topic_entities
+        )
+        concept_matches = self._topic_signal_matches(
+            anchor_text, self.supporting_concepts
+        )
+        return evaluate_relevance_gate(
+            score=score,
+            matched_keywords=matched_keywords,
+            anchor_keywords=anchor_keywords,
+            title=title,
+            keyword_policy_map=self.keyword_policy_map,
+            minimum_relevance_score=self.minimum_relevance_score,
+            minimum_distinct_keywords=self.minimum_distinct_keywords,
+            topic_entity_matches=entity_matches,
+            supporting_concept_matches=concept_matches,
+        )
 
     def passes_relevance_gate(
         self,
@@ -926,10 +933,35 @@ class CustomArticleCollector:
         matched_keywords: List[str],
         anchor_keywords: Optional[List[str]] = None,
         title: str = "",
+        anchor_text: str = "",
     ) -> bool:
         return not self.relevance_gate_reason(
-            score, matched_keywords, anchor_keywords, title
+            score, matched_keywords, anchor_keywords, title, anchor_text
         )
+
+    def _topic_signal_matches(self, text: str, signals: List[str]) -> List[str]:
+        normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+        words = set(normalized.split())
+
+        def stem(token):
+            return token[:-1] if len(token) > 4 and token.endswith("s") else token
+
+        stemmed_words = {stem(word) for word in words}
+        matched = []
+        for signal in signals or []:
+            normalized_signal = re.sub(
+                r"[^a-z0-9]+", " ", str(signal).lower()
+            ).strip()
+            if not normalized_signal:
+                continue
+            tokens = [stem(token) for token in normalized_signal.split()]
+            if normalized_signal in normalized or (
+                len(tokens) >= 2 and all(token in stemmed_words for token in tokens)
+            ) or (
+                len(tokens) == 1 and tokens[0] in stemmed_words
+            ):
+                matched.append(signal)
+        return matched
 
     def _keyword_occurrences(self, text_lower: str, keyword: str) -> int:
         kw = (keyword or "").strip().lower()
@@ -969,23 +1001,48 @@ class CustomArticleCollector:
 
         return baseline
 
-    def _dynamic_max_from_extracted(self, extracted_articles: List[ArticleCandidate], baseline: int = 5) -> int:
-        """
-        Recompute cap from extracted/full-content scored articles.
-        Uses up to top 7 extracted items.
-        """
-        if not extracted_articles:
+    def _dynamic_max_from_extracted(
+        self,
+        extracted_articles: List[ArticleCandidate],
+        attempted_count: int,
+        baseline: int = 5,
+    ) -> int:
+        """Expand a source cap only when its extracted probe is consistently strong."""
+        if not extracted_articles or attempted_count <= 0:
             return baseline
 
-        ranked = sorted(extracted_articles, key=lambda x: x.relevance_score, reverse=True)
-        top7 = ranked[:7]
-        avg_top7 = sum(a.relevance_score for a in top7) / len(top7)
-        strong7 = sum(1 for a in top7 if a.relevance_score >= 7.0)
-        strong10 = sum(1 for a in top7 if a.relevance_score >= 10.0)
+        acceptance_ratio = len(extracted_articles) / attempted_count
+        ranked = sorted(
+            extracted_articles,
+            key=lambda article: article.relevance_score,
+            reverse=True,
+        )
+        average_score = sum(
+            article.relevance_score for article in ranked
+        ) / len(ranked)
+        core_anchored = sum(
+            1 for article in ranked
+            if any(
+                self.keyword_policy_map.get(
+                    self._normalize_text(keyword), {}
+                ).get("tier") == "core"
+                for keyword in (article.keywords_found or [])
+            )
+        )
 
-        if avg_top7 > 10.0 and strong10 >= 5:
+        if (
+            acceptance_ratio == 1.0
+            and len(ranked) >= 5
+            and average_score >= 10.0
+            and core_anchored >= 5
+        ):
             return 10
-        if avg_top7 >= 7.0 and strong7 >= 3:
+        if (
+            acceptance_ratio >= 0.80
+            and len(ranked) >= 4
+            and average_score >= 7.0
+            and core_anchored >= 4
+        ):
             return 8
         return baseline
     
@@ -1644,6 +1701,7 @@ class CustomArticleCollector:
                             candidate.keywords_found or [],
                             anchor_keywords,
                             candidate.title,
+                            f"{candidate.title} {candidate.full_content[:1000]}",
                         )
                     ):
                         return candidate
@@ -1703,7 +1761,11 @@ class CustomArticleCollector:
                 "", f"{candidate.title} {candidate.full_content[:1000]}"
             )
             rejection_reason = self.relevance_gate_reason(
-                full_score, full_keywords, anchor_keywords, candidate.title
+                full_score,
+                full_keywords,
+                anchor_keywords,
+                candidate.title,
+                f"{candidate.title} {candidate.full_content[:1000]}",
             )
             if rejection_reason:
                 self.source_fail_counts[rejection_reason] += 1
@@ -1776,6 +1838,7 @@ class CustomArticleCollector:
                 "invalid_date": 0,
                 "low_score": 0,
                 "insufficient_strong_keywords": 0,
+                "missing_core_keyword": 0,
                 "missing_early_anchor": 0,
                 "low_signal_intent": 0,
                 "other_error": 0,
@@ -1831,7 +1894,11 @@ class CustomArticleCollector:
 
             # Expand only after the full-content quality and relevance gates pass.
             if self.use_dynamic_caps:
-                dynamic_cap = self._dynamic_max_from_extracted(publication_articles, baseline_max_articles)
+                dynamic_cap = self._dynamic_max_from_extracted(
+                    publication_articles,
+                    attempted_count=probe_count,
+                    baseline=baseline_max_articles,
+                )
                 if dynamic_cap > max_articles_per_publication:
                     print(f"  Raising cap based on extracted quality: {max_articles_per_publication} -> {dynamic_cap}")
                     max_articles_per_publication = dynamic_cap
@@ -1923,6 +1990,7 @@ class CustomArticleCollector:
                 f" 429={fc['http_429']}, short={fc['short_text']}, boilerplate={fc['boilerplate']},"
                 f" title={fc['invalid_title']}, date={fc['invalid_date']}, placeholder={fc['placeholder']},"
                 f" low_score={fc['low_score']}, strong={fc['insufficient_strong_keywords']},"
+                f" core={fc['missing_core_keyword']},"
                 f" anchor={fc['missing_early_anchor']}, intent={fc['low_signal_intent']},"
                 f" other={fc['other_error']}"
             )

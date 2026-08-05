@@ -12,6 +12,7 @@ from dateutil import parser as date_parser
 BLOCKED_PATHS = {
     "/analysis", "/advertising", "/artificial-intelligence",
     "/a-smarter-way", "/above-and-beyond", "/featured-articles",
+    "/diamond-price-list",
 }
 BLOCKED_PATH_PARTS = (
     "/tag/", "/tags/", "/category/", "/categories/", "/author/",
@@ -30,9 +31,29 @@ GENERIC_TITLES = {
     "featured articles", "jewels club", "home", "latest news",
 }
 LOW_SIGNAL_TITLE_PATTERNS = (
+    # Puzzles and games
+    "wordle", "strands answers", "pips hints", "puzzle",
+    "hints and answer", "game review",
+    # Food and health
+    "recipe", "nutrition", "seed oil", "cooking show",
+    "vegetarian alternative", "health advice",
+    # Generic shopping and beauty
     "get her look", "shopping basket", "buyers guide", "date night top",
-    "party look", "festival", "summer dress", "slipdress", "jersey dress",
-    "cardigan", "shoe emporium", "movie", "remake",
+    "party look", "must-buy", "where to shop", "beauty products",
+    "makeup", "make-up", "bronzing", "blonzer", "hairstyles",
+    "cardigan", "driver shoes", "barrel leg trousers", "jean trends",
+    "hiking sandal", "summer dress", "slipdress", "jersey dress",
+    "shoe emporium",
+    # Generic entertainment and gossip
+    "secretly get married", "relationship", "reportedly",
+    "abuse allegations", "social media", "music festival",
+    "festival", "lollapalooza", "movie", "remake",
+    # Generic royal and institutional coverage
+    "welcomes her third baby", "newborn baby", "college rankings",
+    "sailing regatta",
+)
+NON_ARTICLE_TITLE_PATTERNS = (
+    "price list", "membership directory", "subscriber access",
 )
 INVALID_AUTHORS = {
     "", "unknown", "every time", "authorizing sanctions", "admin",
@@ -109,6 +130,62 @@ def validate_title(title: str) -> tuple[bool, str]:
 def has_low_signal_intent(title: str) -> bool:
     lowered = clean_article_text(title).lower()
     return any(pattern in lowered for pattern in LOW_SIGNAL_TITLE_PATTERNS)
+
+
+def relevance_gate_reason(
+    score: float,
+    matched_keywords,
+    anchor_keywords,
+    title: str,
+    keyword_policy_map: dict,
+    minimum_relevance_score: float,
+    minimum_distinct_keywords: int,
+    topic_entity_matches=None,
+    supporting_concept_matches=None,
+) -> str:
+    normalize = lambda value: re.sub(r"\s+", " ", str(value or "").lower()).strip()
+    distinct = {normalize(keyword) for keyword in (matched_keywords or []) if keyword}
+    anchors = {normalize(keyword) for keyword in (anchor_keywords or []) if keyword}
+
+    def tier(keyword):
+        return keyword_policy_map.get(keyword, {}).get("tier", "weak")
+
+    core = {keyword for keyword in distinct if tier(keyword) == "core"}
+    supporting = {keyword for keyword in distinct if tier(keyword) == "supporting"}
+    broad = {keyword for keyword in distinct if tier(keyword) in {"broad", "weak"}}
+    anchor_core = core.intersection(anchors)
+    anchor_supporting = supporting.intersection(anchors)
+    anchor_broad = broad.intersection(anchors)
+    entity_matches = set(topic_entity_matches or [])
+    concept_matches = set(supporting_concept_matches or [])
+    low_signal = has_low_signal_intent(title)
+
+    if any(pattern in clean_article_text(title).lower() for pattern in NON_ARTICLE_TITLE_PATTERNS):
+        return "low_signal_intent"
+    if anchor_core:
+        return ""
+    if entity_matches:
+        return ""
+    if len(anchor_supporting) >= minimum_distinct_keywords and not low_signal:
+        return ""
+    if (
+        concept_matches
+        and (anchor_supporting or anchor_broad)
+        and not low_signal
+    ):
+        return ""
+    if score < minimum_relevance_score:
+        return "low_score"
+    if low_signal:
+        return "low_signal_intent"
+    if not core:
+        return "missing_core_keyword"
+    if (
+        len(anchor_supporting) >= minimum_distinct_keywords
+        and not low_signal
+    ):
+        return ""
+    return "missing_early_anchor"
 
 
 def validate_author(author: str) -> str:
@@ -219,7 +296,7 @@ def prompt_overlap(summary: str, prompt: str) -> float:
 
 
 def repetition_ratio(text: str) -> float:
-    sentences = [s.strip().lower() for s in re.split(r"[.!?]+", text or "") if len(s.split()) >= 4]
+    sentences = [s.strip().lower() for s in re.split(r"[.!?]+", text or "") if len(s.split()) >= 2]
     if len(sentences) < 2:
         return 0.0
     unique = []

@@ -117,13 +117,69 @@ def policy_from_absolute_score(value):
     elif score >= 20:
         weight, tier, standalone = 1.0, "broad", False
     else:
-        weight, tier, standalone = 0.5, "broad", False
+        weight, tier, standalone = 0.5, "weak", False
     return {
         "absolute_score": score,
         "weight": weight,
         "tier": tier,
         "standalone_eligible": standalone,
     }
+
+
+def generate_topic_context(model, tokenizer, topic_name, keywords, summary_prompt):
+    messages = [{
+        "role": "user",
+        "content": (
+            "Create secondary relevance signals for a media-monitoring topic.\n"
+            f"Topic: {topic_name}\n"
+            f"Summary objective: {summary_prompt}\n"
+            f"Configured keywords: {json.dumps(keywords)}\n\n"
+            "Return up to 25 topic_entities and up to 20 supporting_concepts. "
+            "Topic entities are recognizable companies, brands, institutions, people, "
+            "products, or organizations that strongly establish relevance. Supporting "
+            "concepts are specific industry events, product categories, heritage themes, "
+            "or professional editorial concepts that can establish relevance when paired "
+            "with another topic signal. Avoid generic words, broad news categories, and "
+            "entities unrelated to the summary objective. Use short lowercase phrases. "
+            "Return only valid JSON in this shape:\n"
+            '{"topic_entities":["entity"],"supporting_concepts":["concept"]}'
+        ),
+    }]
+    prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
+    with torch.no_grad():
+        output = model.generate(
+            **inputs,
+            max_new_tokens=700,
+            do_sample=False,
+            temperature=None,
+            top_p=None,
+            top_k=None,
+        )
+    text = tokenizer.decode(
+        output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True
+    )
+    generated = extract_generated_json(text)
+
+    def validated_list(field, maximum):
+        raw = generated.get(field, []) if isinstance(generated, dict) else []
+        return list(dict.fromkeys(
+            str(value).strip().lower()
+            for value in raw
+            if isinstance(value, str)
+            and 2 <= len(value.strip()) <= 80
+            and not value.strip().lower().startswith(("http://", "https://"))
+        ))[:maximum]
+
+    entities = validated_list("topic_entities", 25)
+    concepts = validated_list("supporting_concepts", 20)
+    print(
+        f"Generated topic context: {len(entities)} entities, "
+        f"{len(concepts)} supporting concepts"
+    )
+    return entities, concepts
 
 
 def generate_policy(
@@ -231,6 +287,13 @@ def generate_policy(
                 "assigned conservative score 20"
             )
 
+    topic_entities, supporting_concepts = generate_topic_context(
+        model=model,
+        tokenizer=tokenizer,
+        topic_name=topic_name,
+        keywords=keywords,
+        summary_prompt=summary_prompt,
+    )
     return {
         "keyword_policies": {
             keyword: policy_from_absolute_score(all_scores[keyword])
@@ -239,6 +302,8 @@ def generate_policy(
         "minimum_relevance_score": 4.0,
         "minimum_distinct_keywords": 2,
         "high_weight_threshold": 4.0,
+        "topic_entities": topic_entities,
+        "supporting_concepts": supporting_concepts,
     }
 
 
