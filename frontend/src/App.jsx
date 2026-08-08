@@ -6,6 +6,7 @@ import SummariesView from './components/SummariesView';
 import TrendAnalysisView from './components/TrendAnalysisView';
 import WeeklyEmailSettingsView from './components/WeeklyEmailSettingsView';
 import ClientPitchGeneratorView from './components/ClientPitchGeneratorView';
+import ClientCoverageScannerView from './components/ClientCoverageScannerView';
 import './App.css';
 
 function AppContent() {
@@ -18,6 +19,7 @@ function AppContent() {
         {activeTab === 'weekly-email' && <WeeklyEmailSettingsView />}
         {activeTab === 'trends' && <TrendAnalysisView />}
         {activeTab === 'pitches' && <ClientPitchGeneratorView />}
+        {activeTab === 'coverage' && <ClientCoverageScannerView />}
       </Layout>
     </div>
   );

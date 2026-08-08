@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
+from backend.client_coverage_scanner import run_coverage_scan
 from backend.publication_metadata_pipeline import run_publication_metadata_pipeline
 
 app = FastAPI()
@@ -155,6 +156,9 @@ _META_CACHE = {"ts": 0.0, "data": {}}
 META_JOBS = {}
 META_JOBS_LOCK = threading.Lock()
 META_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+COVERAGE_JOBS = {}
+COVERAGE_JOBS_LOCK = threading.Lock()
+COVERAGE_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
 class TriggerRequest(BaseModel):
@@ -211,6 +215,18 @@ class SourceMetadataRunRequest(BaseModel):
     list_name: str
 
 
+class CoveragePublicationInput(BaseModel):
+    publication: str
+    publication_url: str
+
+
+class CoverageScanRequest(BaseModel):
+    client_name: str
+    author: Optional[str] = ""
+    keywords: Optional[str] = ""
+    publications: List[CoveragePublicationInput]
+
+
 def _meta_job_set(job_id: str, **fields):
     with META_JOBS_LOCK:
         if job_id not in META_JOBS:
@@ -221,6 +237,18 @@ def _meta_job_set(job_id: str, **fields):
 def _meta_job_get(job_id: str):
     with META_JOBS_LOCK:
         return dict(META_JOBS.get(job_id, {}))
+
+
+def _coverage_job_set(job_id: str, **fields):
+    with COVERAGE_JOBS_LOCK:
+        if job_id not in COVERAGE_JOBS:
+            COVERAGE_JOBS[job_id] = {}
+        COVERAGE_JOBS[job_id].update(fields)
+
+
+def _coverage_job_get(job_id: str):
+    with COVERAGE_JOBS_LOCK:
+        return dict(COVERAGE_JOBS.get(job_id, {}))
 
 
 class TrendTriggerRequest(BaseModel):
@@ -2089,6 +2117,149 @@ def get_latest_client_pitches(authorization: str = Header(default="")):
     if not rid:
         return {"pitch_run_id": None, "count": 0, "pitches": []}
     return get_client_pitches_by_run(pitch_run_id=rid, authorization=authorization)
+
+
+@app.post("/coverage/scan/run")
+def run_client_coverage_scan(req: CoverageScanRequest, authorization: str = Header(default="")):
+    _check_auth(authorization)
+
+    client_name = (req.client_name or "").strip()
+    if not client_name:
+        raise HTTPException(status_code=400, detail="client_name is required")
+
+    publications = [
+        {
+            "publication": p.publication.strip(),
+            "publication_url": p.publication_url.strip(),
+        }
+        for p in req.publications
+        if p.publication.strip() and p.publication_url.strip()
+    ]
+    if not publications:
+        raise HTTPException(status_code=400, detail="At least one publication is required")
+
+    keywords = _split_keywords(req.keywords)
+    author = (req.author or "").strip()
+    job_id = uuid.uuid4().hex
+    coverage_run_id = f"coverage-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+
+    _coverage_job_set(
+        job_id,
+        status="running",
+        phase="initializing",
+        current=0,
+        total=len(publications),
+        message="Starting coverage scan",
+        coverage_run_id=coverage_run_id,
+        summary=None,
+        results=[],
+        error=None,
+    )
+
+    def _runner():
+        try:
+            def _progress_cb(phase: str, current: int, total: int, message: str):
+                _coverage_job_set(
+                    job_id,
+                    status="running",
+                    phase=phase or "running",
+                    current=int(current or 0),
+                    total=int(total or 0),
+                    message=message or "",
+                )
+
+            result = run_coverage_scan(
+                client_name=client_name,
+                publications=publications,
+                author=author,
+                keywords=keywords,
+                coverage_run_id=coverage_run_id,
+                progress_callback=_progress_cb,
+            )
+            _coverage_job_set(
+                job_id,
+                status="complete",
+                phase="complete",
+                current=len(publications),
+                total=len(publications),
+                message="Coverage scan complete",
+                coverage_run_id=result.get("coverage_run_id", coverage_run_id),
+                summary=result.get("summary"),
+                results=result.get("results", []),
+            )
+        except Exception as e:
+            _coverage_job_set(
+                job_id,
+                status="failed",
+                phase="failed",
+                message=f"Coverage scan failed: {str(e)}",
+                error=str(e),
+            )
+
+    COVERAGE_EXECUTOR.submit(_runner)
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "coverage_run_id": coverage_run_id,
+        "status": "running",
+    }
+
+
+@app.get("/coverage/scan/progress")
+def get_client_coverage_scan_progress(job_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    if not job_id:
+        raise HTTPException(status_code=400, detail="job_id is required")
+    job = _coverage_job_get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"ok": True, **job}
+
+
+@app.get("/coverage/report")
+def get_client_coverage_report(coverage_run_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+
+    rid = (coverage_run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="coverage_run_id is required")
+
+    ss = _load_main_spreadsheet()
+    try:
+        ws = ss.worksheet(os.environ.get("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports"))
+    except Exception:
+        return {
+            "ok": True,
+            "coverage_run_id": rid,
+            "summary": {
+                "total_rows": 0,
+                "found": 0,
+                "possible_match": 0,
+                "not_found": 0,
+                "error": 0,
+            },
+            "results": [],
+        }
+
+    rows = ws.get_all_records()
+    scoped = [
+        r for r in rows
+        if str(r.get("coverage_run_id", "")).strip() == rid
+    ]
+    summary = {
+        "total_rows": len(scoped),
+        "found": sum(1 for r in scoped if str(r.get("status", "")).strip() == "found"),
+        "possible_match": sum(1 for r in scoped if str(r.get("status", "")).strip() == "possible_match"),
+        "not_found": sum(1 for r in scoped if str(r.get("status", "")).strip() == "not_found"),
+        "error": sum(1 for r in scoped if str(r.get("status", "")).strip() == "error"),
+    }
+
+    return {
+        "ok": True,
+        "coverage_run_id": rid,
+        "summary": summary,
+        "results": scoped,
+    }
 
 
 @app.post("/sources/lists")

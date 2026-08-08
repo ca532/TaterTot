@@ -1,4 +1,4 @@
-import { FileText, BarChart3, Mail, Lightbulb } from 'lucide-react';
+import { FileText, BarChart3, Mail, Lightbulb, Search } from 'lucide-react';
 
 function Navigation({ activeTab, setActiveTab }) {
   const tabs = [
@@ -6,6 +6,7 @@ function Navigation({ activeTab, setActiveTab }) {
     { id: 'weekly-email', label: 'Weekly Email', icon: Mail },
     { id: 'trends', label: 'Trend Analysis', icon: BarChart3 },
     { id: 'pitches', label: 'Client Pitch Generator', icon: Lightbulb },
+    { id: 'coverage', label: 'Client Coverage', icon: Search },
   ];
 
   return (

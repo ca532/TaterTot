@@ -517,6 +517,49 @@ class PipelineService {
     }
   }
 
+  async runClientCoverageScan(payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/coverage/scan/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getClientCoverageScanProgress(jobId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/scan/progress?job_id=${encodeURIComponent(jobId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getClientCoverageReport(coverageRunId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/report?coverage_run_id=${encodeURIComponent(coverageRunId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, results: [] };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message, results: [] };
+    }
+  }
+
   async getWeeklyEmailConfig() {
     try {
       const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/weekly-email-config`, {
