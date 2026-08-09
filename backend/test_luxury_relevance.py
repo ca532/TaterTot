@@ -52,7 +52,9 @@ SUPPORTING_CONCEPTS = {
 def _policy_map():
     policy = {}
     for keyword in CORE_KEYWORDS:
-        policy[keyword] = {"tier": "core", "weight": 4.0}
+        policy[keyword] = {
+            "tier": "core", "weight": 4.0, "standalone_eligible": True
+        }
     for keyword in SUPPORTING_KEYWORDS:
         policy[keyword] = {"tier": "supporting", "weight": 3.0}
     for keyword in WEAK_KEYWORDS:

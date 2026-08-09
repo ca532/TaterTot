@@ -20,6 +20,7 @@ from article_quality import (
     clean_article_text,
     extract_page_metadata,
     has_low_signal_intent,
+    keyword_matches,
     normalize_publication_name,
     resolve_published_date,
     relevance_gate_reason as evaluate_relevance_gate,
@@ -514,9 +515,14 @@ class CustomArticleCollector:
         self.max_articles_per_publication = topic_config["max_articles_per_publication"]
         self.require_keyword_in_url = topic_config["require_keyword_in_url"]
 
-        self.use_dynamic_caps = True
-        # Evaluate a few extra candidates past cap, then trim by full-content score.
-        self.post_cap_buffer = 3
+        # Keep a strict maximum of three accepted articles per publication while
+        # the generated relevance policy is being precision-tested.
+        self.use_dynamic_caps = False
+        self.max_articles_per_publication = min(
+            self.max_articles_per_publication,
+            3,
+        )
+        self.post_cap_buffer = 0
         # Stop wasting attempts on a source if it keeps returning 401.
         self.max_401_per_source = 5
         self.max_403_per_source = 8
@@ -1146,6 +1152,7 @@ class CustomArticleCollector:
     def calculate_relevance_score(self, title: str, content: str) -> tuple:
         """Calculate relevance score based on active keywords."""
         combined_text = self._normalize_text(f"{title} {content}")
+        combined_words = set(re.findall(r"[a-z0-9]+", combined_text))
         found_keywords = []
         found_keyword_set = set()
         score = 0.0
@@ -1155,7 +1162,7 @@ class CustomArticleCollector:
             kw_lower = self._normalize_text(keyword)
             base_w = self._weighted_score_for_keyword(kw_lower)
 
-            if kw_lower and kw_lower in combined_text:
+            if keyword_matches(combined_text, [kw_lower]):
                 found_keywords.append(keyword)
                 found_keyword_set.add(kw_lower)
                 score += base_w
@@ -1168,7 +1175,7 @@ class CustomArticleCollector:
             # Partial token fallback for longer phrases
             tokens = self._keyword_tokens(kw_lower)
             if len(tokens) >= 3:
-                hits = sum(1 for t in tokens if t in combined_text)
+                hits = sum(1 for token in tokens if token in combined_words)
                 if hits >= 2:
                     found_keywords.append(keyword)
                     found_keyword_set.add(kw_lower)
@@ -1378,7 +1385,8 @@ class CustomArticleCollector:
                 return False
 
         if self.require_keyword_in_url:
-            return any(keyword in url_lower for keyword in self.active_keywords)
+            path_text = unquote(urlparse(url_lower).path).replace("-", "_")
+            return bool(keyword_matches(path_text, self.active_keywords))
 
         return True
 

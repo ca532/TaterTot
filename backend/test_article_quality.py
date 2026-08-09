@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from article_quality import (
     has_low_signal_intent,
+    keyword_matches,
     normalize_publication_name,
     resolve_published_date,
     validate_article_content,
@@ -84,6 +85,17 @@ class ArticleQualityTests(unittest.TestCase):
         self.assertTrue(has_low_signal_intent("The perfect date night top for GBP 36"))
         self.assertTrue(has_low_signal_intent("This year's festival party looks"))
         self.assertFalse(has_low_signal_intent("Cartier unveils a high jewellery collection"))
+
+    def test_keyword_matching_uses_word_and_phrase_boundaries(self):
+        keywords = ["king", "fine jewellery", "investment"]
+        self.assertEqual([], keyword_matches("working and speaking", keywords))
+        self.assertEqual(
+            ["fine jewellery", "investment"],
+            keyword_matches(
+                "A fine-jewellery house announced an investment in craftsmanship.",
+                keywords,
+            ),
+        )
 
 
 if __name__ == "__main__":

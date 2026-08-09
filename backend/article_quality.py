@@ -132,6 +132,21 @@ def has_low_signal_intent(title: str) -> bool:
     return any(pattern in lowered for pattern in LOW_SIGNAL_TITLE_PATTERNS)
 
 
+def keyword_matches(text: str, keywords) -> list[str]:
+    """Return exact word/phrase matches without substring false positives."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
+    matched = []
+    for keyword in keywords or []:
+        normalized_keyword = re.sub(
+            r"[^a-z0-9]+", " ", str(keyword or "").lower()
+        ).strip()
+        if not normalized_keyword:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(normalized_keyword)}(?![a-z0-9])", normalized):
+            matched.append(keyword)
+    return matched
+
+
 def relevance_gate_reason(
     score: float,
     matched_keywords,
@@ -162,9 +177,23 @@ def relevance_gate_reason(
 
     if any(pattern in clean_article_text(title).lower() for pattern in NON_ARTICLE_TITLE_PATTERNS):
         return "low_signal_intent"
-    if anchor_core:
-        return ""
+    # Curated/generated entities are specific brands, companies, products, or
+    # people and can establish relevance despite otherwise broad title wording.
     if entity_matches:
+        return ""
+    if low_signal:
+        return "low_signal_intent"
+    if score < minimum_relevance_score:
+        return "low_score"
+
+    title_core = set(keyword_matches(title, core))
+    standalone_title_core = {
+        keyword for keyword in title_core
+        if keyword_policy_map.get(keyword, {}).get("standalone_eligible") is True
+    }
+    if standalone_title_core:
+        return ""
+    if anchor_core and (concept_matches or anchor_supporting or len(anchor_core) >= 2):
         return ""
     if len(anchor_supporting) >= minimum_distinct_keywords and not low_signal:
         return ""
@@ -174,10 +203,6 @@ def relevance_gate_reason(
         and not low_signal
     ):
         return ""
-    if score < minimum_relevance_score:
-        return "low_score"
-    if low_signal:
-        return "low_signal_intent"
     if not core:
         return "missing_core_keyword"
     if (

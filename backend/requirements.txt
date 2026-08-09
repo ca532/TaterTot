@@ -22,6 +22,8 @@ transformers==4.44.2
 torch==2.1.1
 sentencepiece==0.1.99
 numpy<2
+huggingface-hub>=0.23.2
+llama-cpp-python>=0.2.90,<1
 
 # PDF Generation
 reportlab==4.0.7

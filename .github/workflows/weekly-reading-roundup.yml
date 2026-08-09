@@ -75,7 +75,8 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           TOPIC_NAME: __all__
-          PITCH_MODEL_NAME: Qwen/Qwen2.5-1.5B-Instruct
+          KEYWORD_MODEL_REPO: Qwen/Qwen2.5-3B-Instruct-GGUF
+          KEYWORD_MODEL_FILE: qwen2.5-3b-instruct-q4_k_m.gguf
         run: python -u run_topic_keyword_weighting.py
 
       - name: Run Article Collection Pipeline

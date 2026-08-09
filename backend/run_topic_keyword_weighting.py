@@ -1,16 +1,26 @@
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import gspread
-import torch
 from google.oauth2.service_account import Credentials
+from huggingface_hub import hf_hub_download
+from llama_cpp import Llama
 
-from client_pitch_generator import PITCH_MODEL_NAME, load_model
+from article_quality import keyword_matches, relevance_gate_reason
 
 
 TOPIC_NAME = os.getenv("TOPIC_NAME", "__all__").strip()
 TOPIC_SHEET = os.getenv("TOPIC_CONFIG_SHEET", "Topic Config")
+KEYWORD_MODEL_REPO = os.getenv(
+    "KEYWORD_MODEL_REPO", "Qwen/Qwen2.5-3B-Instruct-GGUF"
+).strip()
+KEYWORD_MODEL_FILE = os.getenv(
+    "KEYWORD_MODEL_FILE", "qwen2.5-3b-instruct-q4_k_m.gguf"
+).strip()
+KEYWORD_MODEL_ID = f"{KEYWORD_MODEL_REPO}:{KEYWORD_MODEL_FILE}"
+GENERATION_ATTEMPTS = 3
 TOPIC_HEADERS = [
     "topic_name", "keywords", "summary_prompt", "active", "updated",
     "keyword_weights", "scoring_policy", "minimum_relevance_score",
@@ -106,6 +116,44 @@ def extract_generated_json(text):
     return {}
 
 
+def load_keyword_model():
+    model_path = hf_hub_download(
+        repo_id=KEYWORD_MODEL_REPO,
+        filename=KEYWORD_MODEL_FILE,
+    )
+    return Llama(
+        model_path=model_path,
+        n_ctx=4096,
+        n_threads=max(1, (os.cpu_count() or 2) - 1),
+        n_batch=256,
+        verbose=False,
+    )
+
+
+def generate_json(model, messages, label, validator=None):
+    last_error = "no response"
+    for attempt in range(1, GENERATION_ATTEMPTS + 1):
+        try:
+            response = model.create_chat_completion(
+                messages=messages,
+                temperature=0.0,
+                max_tokens=700,
+                response_format={"type": "json_object"},
+            )
+            text = response["choices"][0]["message"]["content"]
+            generated = extract_generated_json(text)
+            if generated and (validator is None or validator(generated)):
+                return generated
+            last_error = "response JSON was missing or failed schema validation"
+        except Exception as exc:
+            last_error = str(exc)
+        print(
+            f"  {label} attempt {attempt}/{GENERATION_ATTEMPTS} failed: "
+            f"{last_error[:160]}"
+        )
+    raise RuntimeError(f"{label} failed after {GENERATION_ATTEMPTS} attempts: {last_error}")
+
+
 def policy_from_absolute_score(value):
     score = round(_bounded_float(value, 20.0, 0.0, 100.0), 2)
     if score >= 80:
@@ -126,7 +174,7 @@ def policy_from_absolute_score(value):
     }
 
 
-def generate_topic_context(model, tokenizer, topic_name, keywords, summary_prompt):
+def generate_topic_context(model, topic_name, keywords, summary_prompt):
     messages = [{
         "role": "user",
         "content": (
@@ -145,23 +193,17 @@ def generate_topic_context(model, tokenizer, topic_name, keywords, summary_promp
             '{"topic_entities":["entity"],"supporting_concepts":["concept"]}'
         ),
     }]
-    prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+    generated = generate_json(
+        model,
+        messages,
+        "Topic context generation",
+        validator=lambda value: (
+            isinstance(value.get("topic_entities"), list)
+            and len(value["topic_entities"]) >= 3
+            and isinstance(value.get("supporting_concepts"), list)
+            and len(value["supporting_concepts"]) >= 3
+        ),
     )
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3000)
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=700,
-            do_sample=False,
-            temperature=None,
-            top_p=None,
-            top_k=None,
-        )
-    text = tokenizer.decode(
-        output[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True
-    )
-    generated = extract_generated_json(text)
 
     def validated_list(field, maximum):
         raw = generated.get(field, []) if isinstance(generated, dict) else []
@@ -175,6 +217,14 @@ def generate_topic_context(model, tokenizer, topic_name, keywords, summary_promp
 
     entities = validated_list("topic_entities", 25)
     concepts = validated_list("supporting_concepts", 20)
+    if len(entities) < 3:
+        raise RuntimeError(
+            f"Topic context returned only {len(entities)} entities; at least 3 are required"
+        )
+    if len(concepts) < 3:
+        raise RuntimeError(
+            f"Topic context returned only {len(concepts)} supporting concepts; at least 3 are required"
+        )
     print(
         f"Generated topic context: {len(entities)} entities, "
         f"{len(concepts)} supporting concepts"
@@ -184,7 +234,6 @@ def generate_topic_context(model, tokenizer, topic_name, keywords, summary_promp
 
 def generate_policy(
     model,
-    tokenizer,
     topic_name,
     keywords,
     summary_prompt,
@@ -223,33 +272,28 @@ def generate_policy(
             ),
         }]
 
-        prompt = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        inputs = tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=3000,
-        )
-
-        with torch.no_grad():
-            output = model.generate(
-                **inputs,
-                max_new_tokens=700,
-                do_sample=False,
-                temperature=None,
-                top_p=None,
-                top_k=None,
+        def complete_keyword_batch(value):
+            raw = value.get("keyword_scores", value)
+            if not isinstance(raw, dict):
+                return False
+            normalized = {
+                str(keyword).strip().lower(): score
+                for keyword, score in raw.items()
+            }
+            return all(
+                keyword in normalized
+                and isinstance(normalized[keyword], (int, float))
+                and not isinstance(normalized[keyword], bool)
+                and 0 <= float(normalized[keyword]) <= 100
+                for keyword in batch
             )
 
-        text = tokenizer.decode(
-            output[0][inputs["input_ids"].shape[-1]:],
-            skip_special_tokens=True,
+        generated = generate_json(
+            model,
+            messages,
+            f"Keyword batch {batch_number}/{total_batches}",
+            validator=complete_keyword_batch,
         )
-        generated = extract_generated_json(text)
         raw_scores = (
             generated.get("keyword_scores", {})
             if isinstance(generated, dict)
@@ -265,8 +309,11 @@ def generate_policy(
             }
 
         normalized_scores = {
-            str(keyword).strip().lower(): score
+            str(keyword).strip().lower(): float(score)
             for keyword, score in raw_scores.items()
+            if isinstance(score, (int, float))
+            and not isinstance(score, bool)
+            and 0 <= float(score) <= 100
         } if isinstance(raw_scores, dict) else {}
 
         missing = []
@@ -274,7 +321,6 @@ def generate_policy(
             if keyword in normalized_scores:
                 all_scores[keyword] = normalized_scores[keyword]
             else:
-                all_scores[keyword] = 20.0
                 missing.append(keyword)
 
         print(
@@ -282,14 +328,13 @@ def generate_policy(
             f"{len(batch) - len(missing)}/{len(batch)} returned by Qwen"
         )
         if missing:
-            print(
-                f"  Qwen omitted {len(missing)} keywords; "
-                "assigned conservative score 20"
+            raise RuntimeError(
+                f"Keyword batch {batch_number}/{total_batches} omitted: "
+                f"{', '.join(missing)}"
             )
 
     topic_entities, supporting_concepts = generate_topic_context(
         model=model,
-        tokenizer=tokenizer,
         topic_name=topic_name,
         keywords=keywords,
         summary_prompt=summary_prompt,
@@ -305,6 +350,61 @@ def generate_policy(
         "topic_entities": topic_entities,
         "supporting_concepts": supporting_concepts,
     }
+
+
+def validate_policy_against_fixture(topic_name, keywords, policy):
+    """Block publication of a Luxury policy that regresses the labeled corpus."""
+    if topic_name.strip().lower() != "luxury":
+        return
+    fixture_path = (
+        Path(__file__).parent / "tests" / "fixtures" / "luxury_relevance_20260805.json"
+    )
+    if not fixture_path.exists():
+        raise RuntimeError(f"Luxury relevance fixture is missing: {fixture_path}")
+
+    fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
+    policy_map = policy["keyword_policies"]
+    entities = policy["topic_entities"]
+    concepts = policy["supporting_concepts"]
+    false_positives = []
+    false_negatives = []
+
+    for item in fixtures:
+        full_text = f'{item["title"]} {item["summary"]}'
+        anchor_text = f'{item["title"]} {item["summary"][:1000]}'
+        matched = keyword_matches(full_text, keywords)
+        anchors = keyword_matches(anchor_text, keywords)
+        score = sum(policy_map[keyword]["weight"] for keyword in matched)
+        accepted = not relevance_gate_reason(
+            score=score,
+            matched_keywords=matched,
+            anchor_keywords=anchors,
+            title=item["title"],
+            keyword_policy_map=policy_map,
+            minimum_relevance_score=policy["minimum_relevance_score"],
+            minimum_distinct_keywords=policy["minimum_distinct_keywords"],
+            topic_entity_matches=keyword_matches(anchor_text, entities),
+            supporting_concept_matches=keyword_matches(anchor_text, concepts),
+        )
+        if item["expected"] == "keep" and not accepted:
+            false_negatives.append(item["title"])
+        elif item["expected"] == "reject" and accepted:
+            false_positives.append(item["title"])
+
+    expected_keeps = sum(item["expected"] == "keep" for item in fixtures)
+    expected_rejects = len(fixtures) - expected_keeps
+    retained = expected_keeps - len(false_negatives)
+    rejected = expected_rejects - len(false_positives)
+    if retained < 36 or rejected < 42:
+        raise RuntimeError(
+            "Generated Luxury policy failed regression: "
+            f"retained {retained}/{expected_keeps}, rejected {rejected}/{expected_rejects}; "
+            f"false positives={false_positives[:5]}, false negatives={false_negatives[:5]}"
+        )
+    print(
+        f"Luxury policy regression passed: retained {retained}/{expected_keeps}, "
+        f"rejected {rejected}/{expected_rejects}"
+    )
 
 
 def main():
@@ -330,6 +430,7 @@ def main():
         if (
             str(record.get("weighting_status", "")).strip().lower() == "complete"
             and record.get("scoring_policy")
+            and str(record.get("weighting_model", "")).strip() == KEYWORD_MODEL_ID
         ):
             continue
         selected.append((index, record, keywords))
@@ -341,7 +442,7 @@ def main():
         print("No topic keyword weights require generation")
         return
 
-    model, tokenizer = load_model()
+    model = load_keyword_model()
     for row_index, record, keywords in selected:
         try:
             topic_name = str(record.get("topic_name", "")).strip()
@@ -352,11 +453,11 @@ def main():
             )
             policy = generate_policy(
                 model=model,
-                tokenizer=tokenizer,
                 topic_name=topic_name,
                 keywords=keywords,
                 summary_prompt=summary_prompt,
             )
+            validate_policy_against_fixture(topic_name, keywords, policy)
             weights = {
                 keyword: item["weight"]
                 for keyword, item in policy["keyword_policies"].items()
@@ -373,7 +474,11 @@ def main():
                 row_index, columns["high_weight_threshold"], policy["high_weight_threshold"]
             )
             worksheet.update_cell(row_index, columns["weighting_status"], "complete")
-            worksheet.update_cell(row_index, columns["weighting_model"], PITCH_MODEL_NAME)
+            worksheet.update_cell(
+                row_index,
+                columns["weighting_model"],
+                KEYWORD_MODEL_ID,
+            )
             worksheet.update_cell(row_index, columns["updated"], datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         except Exception:
             worksheet.update_cell(row_index, columns["weighting_status"], "failed")
