@@ -68,6 +68,11 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
 
+      - name: Install keyword weighting runtime
+        if: steps.uk-time.outputs.should_run == 'true'
+        working-directory: backend
+        run: pip install 'llama-cpp-python>=0.2.90,<1'
+
       - name: Backfill pending topic keyword weights
         if: steps.uk-time.outputs.should_run == 'true'
         working-directory: backend

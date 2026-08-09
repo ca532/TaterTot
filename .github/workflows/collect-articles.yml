@@ -66,6 +66,10 @@ jobs:
           cd backend
           echo '${{ secrets.GOOGLE_CREDENTIALS }}' > credentials.json
 
+      - name: Install keyword weighting runtime
+        working-directory: backend
+        run: pip install 'llama-cpp-python>=0.2.90,<1'
+
       - name: Generate topic keyword weights when needed
         working-directory: backend
         env:
