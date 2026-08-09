@@ -111,7 +111,11 @@ class GoogleSheetsDB:
                 self.articles_sheet.update_cell(1, 9, 'published_date')
             if len(headers) < 10 or not headers[9]:
                 self.articles_sheet.update_cell(1, 10, 'run_id')
-            audit_headers = ('published_date_source', 'matched_keywords', 'canonical_url', 'topic')
+            audit_headers = (
+                'published_date_source', 'matched_keywords', 'canonical_url', 'topic',
+                'classifier_relevant', 'classifier_category',
+                'classifier_evidence', 'classifier_reason',
+            )
             for column, header in enumerate(audit_headers, start=11):
                 if len(headers) < column or not headers[column - 1]:
                     self.articles_sheet.update_cell(1, column, header)
@@ -135,6 +139,10 @@ class GoogleSheetsDB:
                 article.get('matched_keywords', ''),
                 article.get('canonical_url', article.get('url', '')),
                 article.get('topic', ''),
+                article.get('classifier_relevant', False),
+                article.get('classifier_category', ''),
+                article.get('classifier_evidence', '[]'),
+                article.get('classifier_reason', ''),
             ])
         
         # Append to sheet (keeps history)

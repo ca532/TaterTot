@@ -31,6 +31,7 @@ from article_quality import (
     validate_title,
     within_lookback,
 )
+from article_relevance_classifier import ArticleRelevanceClassifier
 
 # Import extract_author from AgentSumm
 try:
@@ -71,6 +72,10 @@ class ArticleCandidate:
     candidate_source: str = "unknown"
     published_date_source: str = "unavailable"
     canonical_url: str = ""
+    classifier_relevant: bool = False
+    classifier_category: str = ""
+    classifier_evidence: List[str] = None
+    classifier_reason: str = ""
 
 class CustomArticleCollector:
     def __init__(self, topic: str = "", source_list_name: str = None):
@@ -523,6 +528,21 @@ class CustomArticleCollector:
             3,
         )
         self.post_cap_buffer = 0
+        topic_key = (self.source_list_name or self.topic).strip().lower()
+        self.article_classifier = (
+            ArticleRelevanceClassifier() if topic_key == "luxury" else None
+        )
+        if (
+            self.article_classifier
+            and os.getenv("RUN_CLASSIFIER_EVAL", "true").lower() == "true"
+        ):
+            try:
+                self.article_classifier.evaluate_fixture(self.active_keywords)
+            except Exception as exc:
+                print(
+                    "[CLASSIFIER_EVAL_WARNING] evaluation could not complete; "
+                    f"pipeline will continue: {str(exc)[:300]}"
+                )
         # Stop wasting attempts on a source if it keeps returning 401.
         self.max_401_per_source = 5
         self.max_403_per_source = 8
@@ -944,6 +964,37 @@ class CustomArticleCollector:
         return not self.relevance_gate_reason(
             score, matched_keywords, anchor_keywords, title, anchor_text
         )
+
+    def classify_candidate(self, candidate: ArticleCandidate) -> bool:
+        if not self.article_classifier:
+            return True
+        anchor_text = f"{candidate.title} {candidate.full_content[:1000]}"
+        entity_matches = self._topic_signal_matches(anchor_text, self.topic_entities)
+        concept_matches = self._topic_signal_matches(
+            anchor_text, self.supporting_concepts
+        )
+        decision = self.article_classifier.classify(
+            title=candidate.title,
+            publication=candidate.publication,
+            article_text=candidate.full_content,
+            matched_keywords=candidate.keywords_found,
+            matched_entities=entity_matches,
+            matched_concepts=concept_matches,
+        )
+        candidate.classifier_relevant = decision.relevant
+        candidate.classifier_category = decision.category
+        candidate.classifier_evidence = decision.luxury_evidence
+        candidate.classifier_reason = decision.reason
+        print(
+            "[ARTICLE_CLASSIFICATION] "
+            f"relevant={decision.relevant} category={decision.category} "
+            f"title={candidate.title!r} evidence={decision.luxury_evidence} "
+            f"reason={decision.reason}"
+        )
+        if not decision.relevant:
+            self.source_fail_counts["classifier_rejected"] += 1
+            return False
+        return True
 
     def _topic_signal_matches(self, text: str, signals: List[str]) -> List[str]:
         normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
@@ -1711,7 +1762,7 @@ class CustomArticleCollector:
                             candidate.title,
                             f"{candidate.title} {candidate.full_content[:1000]}",
                         )
-                    ):
+                    ) and self.classify_candidate(candidate):
                         return candidate
                 return None
             
@@ -1777,6 +1828,9 @@ class CustomArticleCollector:
             )
             if rejection_reason:
                 self.source_fail_counts[rejection_reason] += 1
+                return None
+
+            if not self.classify_candidate(candidate):
                 return None
 
             # Extract author using AgentSumm if available, otherwise fallback
@@ -1849,6 +1903,7 @@ class CustomArticleCollector:
                 "missing_core_keyword": 0,
                 "missing_early_anchor": 0,
                 "low_signal_intent": 0,
+                "classifier_rejected": 0,
                 "other_error": 0,
             }
             source_info = self.target_sources[publication]
@@ -2000,6 +2055,7 @@ class CustomArticleCollector:
                 f" low_score={fc['low_score']}, strong={fc['insufficient_strong_keywords']},"
                 f" core={fc['missing_core_keyword']},"
                 f" anchor={fc['missing_early_anchor']}, intent={fc['low_signal_intent']},"
+                f" classifier={fc['classifier_rejected']},"
                 f" other={fc['other_error']}"
             )
             

@@ -17,7 +17,7 @@ concurrency:
 jobs:
   weekly-email:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
 
     steps:
       - name: Check schedule gate
@@ -68,7 +68,7 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
 
-      - name: Install keyword weighting runtime
+      - name: Install keyword and classification runtime
         if: steps.uk-time.outputs.should_run == 'true'
         working-directory: backend
         run: pip install 'llama-cpp-python>=0.2.90,<1'
@@ -84,6 +84,15 @@ jobs:
           KEYWORD_MODEL_FILE: qwen2.5-3b-instruct-q4_k_m.gguf
         run: python -u run_topic_keyword_weighting.py
 
+      - name: Upload topic policy diagnostics
+        if: steps.uk-time.outputs.should_run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-topic-policy-diagnostics-${{ github.run_id }}
+          path: backend/output/policy-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Run Article Collection Pipeline
         if: steps.uk-time.outputs.should_run == 'true'
         shell: bash
@@ -94,7 +103,7 @@ jobs:
           for i in 1 2; do
             echo "Starting weekly pipeline attempt $i..."
             set +e
-            timeout 110m python -u pipeline_runner.py
+            timeout 230m python -u pipeline_runner.py
             exit_code=$?
             set -e
 
@@ -115,6 +124,7 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           SUMMARIZER_MODEL: google/flan-t5-base
+          RUN_CLASSIFIER_EVAL: "true"
 
       - name: Find PDF and Get Date
         if: steps.uk-time.outputs.should_run == 'true'

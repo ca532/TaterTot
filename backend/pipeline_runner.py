@@ -165,6 +165,13 @@ class PipelineRunner:
                     'author': author,      # Placeholder
                     'summary': '',            # Will be filled by summarizer
                     'score': round(score, 2),
+                    'classifier_relevant': getattr(article, 'classifier_relevant', False),
+                    'classifier_category': getattr(article, 'classifier_category', ''),
+                    'classifier_evidence': json.dumps(
+                        getattr(article, 'classifier_evidence', []) or [],
+                        ensure_ascii=False,
+                    ),
+                    'classifier_reason': getattr(article, 'classifier_reason', ''),
                 }
                 articles_data.append(article_dict)
             
