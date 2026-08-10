@@ -48,14 +48,13 @@ designer_or_runway: Designer fashion, couture, runway, fashion week, or signific
 royal_jewelry: Jewelry worn, owned, inherited, commissioned, or discussed in connection with royalty.
 royal_wardrobe: Specific clothing, designers, couture, uniforms, dress codes, or meaningful wardrobe choices involving royalty.
 luxury_market_trend: Market-wide or consumer trends involving luxury, jewelry, watches, gemstones, or designer goods.
-irrelevant: Generic celebrity news, generic royal news, entertainment, sports, politics, health, beauty, affordable shopping, or generic fashion without a clear luxury, designer, runway, jewelry, watch, gemstone, or luxury-business angle.
+irrelevant: Generic celebrity news, generic royal news, entertainment, sports, politics, health, beauty, affordable shopping, or luxury-business angle.
 
 Rules:
 - Classify by the article's main subject, not passing mentions.
 - Jewelry can be relevant even without a named luxury brand.
 - A royal person alone is not enough.
-- Royal homes, holidays, births, health, relationships, charity events, or general appearances are irrelevant unless specific jewelry or wardrobe coverage is central.
-- Generic celebrity outfits are irrelevant unless there is a clear luxury designer, runway, jewelry, or brand angle.
+- Royal homes, holidays, births, health, relationships, charity events.
 - If unsure, choose irrelevant.
 
 Return JSON only in this format:
