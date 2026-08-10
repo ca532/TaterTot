@@ -1,5 +1,7 @@
 import json
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 
 from article_relevance_classifier import ArticleRelevanceClassifier
 
@@ -18,10 +20,8 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
     def test_accepts_supported_luxury_category_with_evidence(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
-            "relevant": True,
             "category": "jewelry_product",
-            "luxury_evidence": ["Boucheron high-jewelry collection"],
-            "reason": "The launch is the primary subject.",
+            "evidence": ["Boucheron high-jewelry collection"],
         })
         decision = classifier.classify(
             title="Boucheron launches a high-jewelry collection",
@@ -30,19 +30,38 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         )
         self.assertTrue(decision.relevant)
         self.assertEqual("jewelry_product", decision.category)
+        self.assertEqual(
+            ["Boucheron high-jewelry collection"], decision.luxury_evidence
+        )
 
-    def test_rejects_boolean_claim_without_evidence(self):
+    def test_accepts_relevant_category_without_evidence_and_warns(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
-            "relevant": True,
             "category": "luxury_brand",
-            "luxury_evidence": [],
-            "reason": "Unsupported assertion.",
+            "evidence": [],
+        })
+        output = StringIO()
+        with redirect_stdout(output):
+            decision = classifier.classify(
+                title="Luxury brand announces a new creative director",
+                publication="Example",
+                article_text="A luxury house announced its appointment.",
+            )
+        self.assertTrue(decision.relevant)
+        self.assertEqual([], decision.luxury_evidence)
+        self.assertIn("[CLASSIFIER_EVIDENCE_WARNING]", output.getvalue())
+        self.assertIn("decision retained", output.getvalue())
+
+    def test_rejects_irrelevant_category(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "irrelevant",
+            "evidence": ["The article is about a royal holiday home."],
         })
         decision = classifier.classify(
-            title="Princess welcomes a baby",
+            title="Inside the royal family's holiday home",
             publication="Example",
-            article_text="A royal family announcement.",
+            article_text="The article describes a royal residence.",
         )
         self.assertFalse(decision.relevant)
 
