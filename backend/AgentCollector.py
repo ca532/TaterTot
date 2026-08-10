@@ -520,12 +520,12 @@ class CustomArticleCollector:
         self.max_articles_per_publication = topic_config["max_articles_per_publication"]
         self.require_keyword_in_url = topic_config["require_keyword_in_url"]
 
-        # Keep a strict maximum of three accepted articles per publication while
+        # Keep a strict maximum of five accepted articles per publication while
         # the generated relevance policy is being precision-tested.
         self.use_dynamic_caps = False
         self.max_articles_per_publication = min(
             self.max_articles_per_publication,
-            3,
+            5,
         )
         self.post_cap_buffer = 0
         topic_key = (self.source_list_name or self.topic).strip().lower()
@@ -2044,7 +2044,7 @@ class CustomArticleCollector:
                     print(f"  RSS fallback error: {str(e)[:60]}")
             
             publication_articles.sort(key=lambda x: x.relevance_score, reverse=True)
-            final_3 = publication_articles[:max_articles_per_publication]
+            final_articles = publication_articles[:max_articles_per_publication]
 
             fc = self.source_fail_counts
             print(
@@ -2059,13 +2059,13 @@ class CustomArticleCollector:
                 f" other={fc['other_error']}"
             )
             
-            if final_3:
-                scores = [f"{a.relevance_score:.1f}" for a in final_3]
-                print(f"  Collected: {len(final_3)} article(s) [scores: {', '.join(scores)}]\n")
+            if final_articles:
+                scores = [f"{a.relevance_score:.1f}" for a in final_articles]
+                print(f"  Collected: {len(final_articles)} article(s) [scores: {', '.join(scores)}]\n")
             else:
                 print(f"  Collected: 0 articles\n")
             
-            all_articles.extend(final_3)
+            all_articles.extend(final_articles)
             
             time.sleep(random.uniform(3, 6))
         
