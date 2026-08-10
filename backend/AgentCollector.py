@@ -520,14 +520,16 @@ class CustomArticleCollector:
         self.max_articles_per_publication = topic_config["max_articles_per_publication"]
         self.require_keyword_in_url = topic_config["require_keyword_in_url"]
 
-        # Keep a strict maximum of five accepted articles per publication while
-        # the generated relevance policy is being precision-tested.
-        self.use_dynamic_caps = False
+        # Start at five accepted articles per publication, then expand strong
+        # sources to eight or ten based on the first five extracted candidates.
+        self.use_dynamic_caps = True
         self.max_articles_per_publication = min(
             self.max_articles_per_publication,
             5,
         )
-        self.post_cap_buffer = 0
+        # Evaluate a few extra candidates before retaining the highest-scoring
+        # articles under the dynamically selected cap.
+        self.post_cap_buffer = 3
         topic_key = (self.source_list_name or self.topic).strip().lower()
         self.article_classifier = (
             ArticleRelevanceClassifier() if topic_key == "luxury" else None
