@@ -34,6 +34,7 @@ PyJWT==2.9.0
 # Anti-blocking (optional but recommended)
 cloudscraper==1.2.71
 curl-cffi>=0.5.0
+crawlee[playwright]==1.8.0
 scikit-learn==1.5.2
 bertopic==0.16.4
 sentence-transformers==3.0.1

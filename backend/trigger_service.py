@@ -16,11 +16,11 @@ import requests
 import jwt
 import gspread
 from fastapi import FastAPI, Header, HTTPException, Response, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
-from backend.client_coverage_scanner import run_coverage_scan
+from backend.client_coverage_search import run_keyword_coverage_report
 from backend.publication_metadata_pipeline import run_publication_metadata_pipeline
 
 app = FastAPI()
@@ -215,16 +215,14 @@ class SourceMetadataRunRequest(BaseModel):
     list_name: str
 
 
-class CoveragePublicationInput(BaseModel):
-    publication: str
-    publication_url: str
-
-
 class CoverageScanRequest(BaseModel):
-    client_name: str
-    author: Optional[str] = ""
-    keywords: Optional[str] = ""
-    publications: List[CoveragePublicationInput]
+    report_title: str
+    mention_terms: str
+    search_queries: str
+    date_from: Optional[str] = ""
+    date_to: Optional[str] = ""
+    backlink_domains: Optional[str] = ""
+    pages_per_query: Optional[int] = 1
 
 
 def _meta_job_set(job_id: str, **fields):
@@ -2119,40 +2117,45 @@ def get_latest_client_pitches(authorization: str = Header(default="")):
     return get_client_pitches_by_run(pitch_run_id=rid, authorization=authorization)
 
 
-@app.post("/coverage/scan/run")
-def run_client_coverage_scan(req: CoverageScanRequest, authorization: str = Header(default="")):
+@app.post("/coverage/search-report/run")
+def run_client_coverage_search_report(req: CoverageScanRequest, authorization: str = Header(default="")):
     _check_auth(authorization)
 
-    client_name = (req.client_name or "").strip()
-    if not client_name:
-        raise HTTPException(status_code=400, detail="client_name is required")
+    report_title = (req.report_title or "").strip()
+    if not report_title:
+        raise HTTPException(status_code=400, detail="report_title is required")
 
-    publications = [
-        {
-            "publication": p.publication.strip(),
-            "publication_url": p.publication_url.strip(),
-        }
-        for p in req.publications
-        if p.publication.strip() and p.publication_url.strip()
+    mention_terms = _split_keywords(req.mention_terms)
+    if not mention_terms:
+        raise HTTPException(status_code=400, detail="At least one mention term is required")
+
+    search_queries = [
+        line.strip()
+        for line in (req.search_queries or "").replace("\r", "\n").split("\n")
+        if line.strip()
     ]
-    if not publications:
-        raise HTTPException(status_code=400, detail="At least one publication is required")
+    if not search_queries:
+        raise HTTPException(status_code=400, detail="At least one search query is required")
 
-    keywords = _split_keywords(req.keywords)
-    author = (req.author or "").strip()
+    backlink_domains = _split_keywords(req.backlink_domains)
+    pages_per_query = max(1, min(int(req.pages_per_query or 1), 10))
     job_id = uuid.uuid4().hex
-    coverage_run_id = f"coverage-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    coverage_run_id = f"coverage-search-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    estimated_searches = len(search_queries) * pages_per_query
 
     _coverage_job_set(
         job_id,
         status="running",
         phase="initializing",
         current=0,
-        total=len(publications),
-        message="Starting coverage scan",
+        total=estimated_searches,
+        message="Starting coverage report",
         coverage_run_id=coverage_run_id,
+        estimated_searches=estimated_searches,
         summary=None,
         results=[],
+        highlights=None,
+        pdf_path=None,
         error=None,
     )
 
@@ -2168,11 +2171,14 @@ def run_client_coverage_scan(req: CoverageScanRequest, authorization: str = Head
                     message=message or "",
                 )
 
-            result = run_coverage_scan(
-                client_name=client_name,
-                publications=publications,
-                author=author,
-                keywords=keywords,
+            result = run_keyword_coverage_report(
+                report_title=report_title,
+                mention_terms=mention_terms,
+                search_queries=search_queries,
+                date_from=(req.date_from or "").strip(),
+                date_to=(req.date_to or "").strip(),
+                backlink_domains=backlink_domains,
+                pages_per_query=pages_per_query,
                 coverage_run_id=coverage_run_id,
                 progress_callback=_progress_cb,
             )
@@ -2180,19 +2186,25 @@ def run_client_coverage_scan(req: CoverageScanRequest, authorization: str = Head
                 job_id,
                 status="complete",
                 phase="complete",
-                current=len(publications),
-                total=len(publications),
-                message="Coverage scan complete",
+                current=estimated_searches,
+                total=estimated_searches,
+                message="Coverage report complete",
                 coverage_run_id=result.get("coverage_run_id", coverage_run_id),
-                summary=result.get("summary"),
+                summary={
+                    "total_coverage": result.get("count", 0),
+                    "searched_results": result.get("searched_results", 0),
+                    "estimated_searches": estimated_searches,
+                },
                 results=result.get("results", []),
+                highlights=result.get("highlights"),
+                pdf_path=result.get("pdf_path"),
             )
         except Exception as e:
             _coverage_job_set(
                 job_id,
                 status="failed",
                 phase="failed",
-                message=f"Coverage scan failed: {str(e)}",
+                message=f"Coverage report failed: {str(e)}",
                 error=str(e),
             )
 
@@ -2201,12 +2213,13 @@ def run_client_coverage_scan(req: CoverageScanRequest, authorization: str = Head
         "ok": True,
         "job_id": job_id,
         "coverage_run_id": coverage_run_id,
+        "estimated_searches": estimated_searches,
         "status": "running",
     }
 
 
-@app.get("/coverage/scan/progress")
-def get_client_coverage_scan_progress(job_id: str, authorization: str = Header(default="")):
+@app.get("/coverage/search-report/progress")
+def get_client_coverage_search_report_progress(job_id: str, authorization: str = Header(default="")):
     _check_auth(authorization)
     if not job_id:
         raise HTTPException(status_code=400, detail="job_id is required")
@@ -2260,6 +2273,26 @@ def get_client_coverage_report(coverage_run_id: str, authorization: str = Header
         "summary": summary,
         "results": scoped,
     }
+
+
+@app.get("/coverage/search-report/download")
+def download_client_coverage_search_report(job_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    if not job_id:
+        raise HTTPException(status_code=400, detail="job_id is required")
+
+    job = _coverage_job_get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.get("status") != "complete":
+        raise HTTPException(status_code=409, detail="Coverage report is not complete")
+
+    pdf_path = str(job.get("pdf_path") or "").strip()
+    if not pdf_path or not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    filename = f"{job.get('coverage_run_id', 'client-coverage-report')}.pdf"
+    return FileResponse(pdf_path, media_type="application/pdf", filename=filename)
 
 
 @app.post("/sources/lists")

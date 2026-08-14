@@ -517,9 +517,9 @@ class PipelineService {
     }
   }
 
-  async runClientCoverageScan(payload = {}) {
+  async runClientCoverageSearchReport(payload = {}) {
     try {
-      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/coverage/scan/run`, {
+      const res = await this.fetchWithAuthRetry(`${PIPELINE_API_BASE}/coverage/search-report/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -532,15 +532,42 @@ class PipelineService {
     }
   }
 
-  async getClientCoverageScanProgress(jobId) {
+  async getClientCoverageSearchReportProgress(jobId) {
     try {
       const res = await this.fetchWithAuthRetry(
-        `${PIPELINE_API_BASE}/coverage/scan/progress?job_id=${encodeURIComponent(jobId)}`,
+        `${PIPELINE_API_BASE}/coverage/search-report/progress?job_id=${encodeURIComponent(jobId)}`,
         { method: "GET" }
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
       return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async downloadClientCoverageSearchReport(jobId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/search-report/download?job_id=${encodeURIComponent(jobId)}`,
+        { method: "GET" }
+      );
+      if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        try {
+          const data = await res.json();
+          message = data.detail || message;
+        } catch {
+          // no-op
+        }
+        return { success: false, error: message };
+      }
+
+      const blob = await res.blob();
+      const contentDisposition = res.headers.get("content-disposition") || "";
+      const match = contentDisposition.match(/filename="([^"]+)"/i);
+      const filename = match?.[1] || "client-coverage-report.pdf";
+      return { success: true, blob, filename };
     } catch (err) {
       return { success: false, error: err.message };
     }
