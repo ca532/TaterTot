@@ -5,7 +5,7 @@ import os
 import re
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -39,12 +39,10 @@ except ImportError:
 SERPAPI_URL = "https://serpapi.com/search.json"
 SERPAPI_ACCOUNT_URL = "https://serpapi.com/account.json"
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")
-SERPAPI_GOOGLE_DOMAIN = os.getenv("SERPAPI_GOOGLE_DOMAIN", "google.com").strip()
-SERPAPI_LOCATION = os.getenv(
-    "SERPAPI_LOCATION",
-    "London, England, United Kingdom",
+SERPAPI_GOOGLE_DOMAIN = os.getenv(
+    "SERPAPI_GOOGLE_DOMAIN",
+    "google.com",
 ).strip()
-SERPAPI_GL = os.getenv("SERPAPI_GL", "uk").strip()
 SERPAPI_HL = os.getenv("SERPAPI_HL", "en").strip()
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
@@ -151,15 +149,22 @@ def get_serpapi_capacity() -> dict:
     }
 
 
-def build_serpapi_date_filter(date_from: str = "", date_to: str = "") -> str:
-    values = ["cdr:1"]
+def build_dated_query(
+    query: str,
+    date_from: str = "",
+    date_to: str = "",
+) -> str:
+    parts = [query.strip()]
+
     if date_from:
-        parsed_from = datetime.strptime(date_from, "%Y-%m-%d")
-        values.append(f"cd_min:{parsed_from.strftime('%m/%d/%Y')}")
+        start = datetime.strptime(date_from, "%Y-%m-%d")
+        parts.append(f"after:{(start - timedelta(days=1)):%Y-%m-%d}")
+
     if date_to:
-        parsed_to = datetime.strptime(date_to, "%Y-%m-%d")
-        values.append(f"cd_max:{parsed_to.strftime('%m/%d/%Y')}")
-    return ",".join(values) if len(values) > 1 else ""
+        end = datetime.strptime(date_to, "%Y-%m-%d")
+        parts.append(f"before:{(end + timedelta(days=1)):%Y-%m-%d}")
+
+    return " ".join(parts)
 
 
 def serpapi_search_all(
@@ -177,26 +182,27 @@ def serpapi_search_all(
 
     starting_capacity = get_serpapi_capacity()
     starting_budget = starting_capacity["monthly_left"]
-    date_filter = build_serpapi_date_filter(date_from, date_to)
     queue = deque()
 
     for query in queries:
+        dated_query = build_dated_query(
+            query,
+            date_from=date_from,
+            date_to=date_to,
+        )
         params = {
             "engine": "google",
-            "q": query.strip(),
+            "q": dated_query,
             "api_key": SERPAPI_API_KEY,
-            "num": 100,
+            "num": 10,
             "filter": "0",
             "google_domain": SERPAPI_GOOGLE_DOMAIN,
-            "location": SERPAPI_LOCATION,
-            "gl": SERPAPI_GL,
             "hl": SERPAPI_HL,
         }
-        if date_filter:
-            params["tbs"] = date_filter
 
         queue.append({
             "query": query.strip(),
+            "dated_query": dated_query,
             "params": params,
             "next_url": "",
             "visited_pages": set(),
@@ -273,6 +279,7 @@ def serpapi_search_all(
             "search_id": search_id,
             "status": search_status,
             "query": state["query"],
+            "dated_query": state["dated_query"],
             "query_displayed": information.get("query_displayed", ""),
             "organic_results_state": information.get("organic_results_state", ""),
             "organic_results_count": len(organic_results),

@@ -51,17 +51,23 @@ def main() -> None:
         shutil.copy2(result["pdf_path"], ARTIFACT_DIR / "report.pdf")
 
         searches_used = int(result.get("searches_used", 0) or 0)
+        searched_results = int(result.get("searched_results", 0) or 0)
+        completion_message = (
+            "Search returned no results"
+            if searched_results == 0
+            else "Coverage report complete"
+        )
         _write_result({
             "status": "complete",
             "phase": "complete",
             "current": searches_used,
             "total": searches_used,
-            "message": "Coverage report complete",
+            "message": completion_message,
             "coverage_run_id": coverage_run_id,
             "summary": {
                 "total_coverage": result.get("count", 0),
                 "needs_review": result.get("needs_review", 0),
-                "searched_results": result.get("searched_results", 0),
+                "searched_results": searched_results,
                 "searches_used": searches_used,
                 "searches_remaining": result.get("searches_remaining", 0),
                 "search_stop_reason": result.get("search_stop_reason", ""),
