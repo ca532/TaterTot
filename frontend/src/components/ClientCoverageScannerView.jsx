@@ -182,7 +182,7 @@ export default function ClientCoverageScannerView() {
             value={form.search_queries}
             onChange={(e) => updateForm("search_queries", e.target.value)}
           />
-          <p className="text-xs text-gray-500 mt-2">Each query is searched until Google has no more result pages or the available search limit is reached.</p>
+          <p className="text-xs text-gray-500 mt-2">Using one focused query gives us the best chance of searching all available result pages.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -204,10 +204,6 @@ export default function ClientCoverageScannerView() {
               onChange={(e) => updateForm("date_to", e.target.value)}
             />
           </label>
-        </div>
-
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <p className="text-sm font-semibold text-gray-800">All available Google result pages will be searched.</p>
         </div>
 
         {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</div>}
