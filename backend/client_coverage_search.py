@@ -269,6 +269,22 @@ def serpapi_search_all(
         search_error = str(data.get("error", "")).strip()
         search_id = str(metadata.get("id", "")).strip()
 
+        if search_error.lower() == "google hasn't returned any results for this query.":
+            diagnostics.append({
+                "search_id": search_id,
+                "status": search_status,
+                "query": state["query"],
+                "dated_query": state["dated_query"],
+                "query_displayed": information.get("query_displayed", ""),
+                "organic_results_state": information.get(
+                    "organic_results_state",
+                    "Fully empty",
+                ),
+                "organic_results_count": 0,
+                "pagination_complete": bool(state["next_url"]),
+            })
+            continue
+
         if search_error or search_status.lower() == "error":
             message = search_error or "SerpApi returned an unsuccessful search"
             identifier = f" ({search_id})" if search_id else ""
