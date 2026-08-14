@@ -2153,6 +2153,7 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         available_searches=available_searches,
         summary=None,
         results=[],
+        review_results=[],
         highlights=None,
         pdf_path=None,
         error=None,
@@ -2191,12 +2192,14 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
                 coverage_run_id=result.get("coverage_run_id", coverage_run_id),
                 summary={
                     "total_coverage": result.get("count", 0),
+                    "needs_review": result.get("needs_review", 0),
                     "searched_results": result.get("searched_results", 0),
                     "searches_used": searches_used,
                     "searches_remaining": result.get("searches_remaining", 0),
                     "search_stop_reason": result.get("search_stop_reason", ""),
                 },
                 results=result.get("results", []),
+                review_results=result.get("review_results", []),
                 highlights=result.get("highlights"),
                 pdf_path=result.get("pdf_path"),
             )

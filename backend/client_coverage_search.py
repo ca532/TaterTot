@@ -1,22 +1,36 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
 try:
-    from article_quality import canonicalize_url, clean_article_text, extract_page_metadata
+    from article_quality import (
+        canonicalize_url,
+        clean_article_text,
+        extract_page_metadata,
+        keyword_matches,
+        validate_article_content,
+    )
     from client_coverage_pdf import build_coverage_pdf
     from google_storage import GoogleSheetsDB
     from publication_traffic import lookup_hypestat_monthly_visits
 except ImportError:
-    from backend.article_quality import canonicalize_url, clean_article_text, extract_page_metadata
+    from backend.article_quality import (
+        canonicalize_url,
+        clean_article_text,
+        extract_page_metadata,
+        keyword_matches,
+        validate_article_content,
+    )
     from backend.client_coverage_pdf import build_coverage_pdf
     from backend.google_storage import GoogleSheetsDB
     from backend.publication_traffic import lookup_hypestat_monthly_visits
@@ -45,13 +59,35 @@ REPORT_HEADERS = [
     "monthly_visits_display",
     "traffic_source",
     "evidence_snippet",
+    "extraction_method",
+    "verification_status",
+    "verification_reason",
+    "matched_location",
+    "backlink_url",
 ]
+
+NON_CONTENT_PATH_PARTS = (
+    "/tag/", "/tags/", "/category/", "/categories/", "/author/",
+    "/authors/", "/search", "/archive/", "/archives/", "/topic/",
+    "/topics/", "/newsletter", "/subscribe",
+)
+ARTICLE_CONTAINER_SELECTORS = (
+    "[itemprop='articleBody']",
+    ".article-body",
+    ".article-content",
+    ".story-body",
+    ".story-content",
+    ".entry-content",
+    ".post-content",
+)
 
 
 def domain_from_url(url: str) -> str:
     raw = (url or "").strip()
     if not raw:
         return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
     host = urlparse(raw).netloc.lower()
     return host[4:] if host.startswith("www.") else host
 
@@ -234,7 +270,118 @@ def serpapi_search_all(
     }
 
 
+def validate_coverage_url(url: str) -> tuple[bool, str]:
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False, "invalid_url"
+    path = (parsed.path or "/").lower()
+    if path.rstrip("/") == "":
+        return False, "homepage"
+    if any(part in path for part in NON_CONTENT_PATH_PARTS):
+        return False, "non_content_url"
+    return True, ""
+
+
+def _json_ld_objects(value):
+    if isinstance(value, list):
+        for item in value:
+            yield from _json_ld_objects(item)
+    elif isinstance(value, dict):
+        yield value
+        if "@graph" in value:
+            yield from _json_ld_objects(value["@graph"])
+
+
+def _extract_json_ld_article_body(soup: BeautifulSoup) -> str:
+    candidates = []
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            value = json.loads(script.string or script.get_text() or "{}")
+        except Exception:
+            continue
+        for obj in _json_ld_objects(value):
+            article_type = str(obj.get("@type", "")).lower()
+            body = clean_article_text(str(obj.get("articleBody", "")))
+            if body and ("article" in article_type or "news" in article_type):
+                candidates.append(body)
+    return max(candidates, key=len, default="")
+
+
+def _find_article_container(soup: BeautifulSoup):
+    article_nodes = soup.find_all("article")
+    if article_nodes:
+        return max(article_nodes, key=lambda node: len(node.get_text(" ", strip=True))), "article"
+
+    for selector in ARTICLE_CONTAINER_SELECTORS:
+        nodes = soup.select(selector)
+        if nodes:
+            node = max(nodes, key=lambda item: len(item.get_text(" ", strip=True)))
+            if len(node.get_text(" ", strip=True)) >= 150:
+                return node, f"selector:{selector}"
+    return None, ""
+
+
+def _extract_newspaper_text(html_text: str, url: str) -> str:
+    try:
+        from newspaper import Article
+
+        article = Article(url=url)
+        article.set_html(html_text)
+        article.parse()
+        return clean_article_text(article.text)
+    except Exception:
+        return ""
+
+
+def _valid_article_text(text: str) -> bool:
+    valid, _ = validate_article_content(text)
+    return valid
+
+
+def _extract_subtitle(soup: BeautifulSoup) -> str:
+    selectors = (
+        "[class*='standfirst']",
+        "[class*='subheadline']",
+        "[class*='subtitle']",
+        "[class*='article-dek']",
+        "[class*='article__dek']",
+    )
+    for selector in selectors:
+        node = soup.select_one(selector)
+        text = clean_article_text(node.get_text(" ", strip=True)) if node else ""
+        if text:
+            return text
+
+    for attrs in ({"property": "og:description"}, {"name": "description"}):
+        node = soup.find("meta", attrs=attrs)
+        text = clean_article_text(str(node.get("content", ""))) if node else ""
+        if text:
+            return text
+    return ""
+
+
+def _extract_article_links(container, page_url: str) -> list[str]:
+    if container is None:
+        return []
+    links = []
+    seen = set()
+    for anchor in container.find_all("a", href=True):
+        absolute = urljoin(page_url, str(anchor.get("href", "")).strip())
+        parsed = urlparse(absolute)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        normalized = canonicalize_url(absolute)
+        if normalized not in seen:
+            seen.add(normalized)
+            links.append(normalized)
+    return links
+
+
 def fetch_page(url: str) -> dict:
+    valid_url, invalid_reason = validate_coverage_url(url)
+    if not valid_url:
+        return {"ok": False, "url": url, "error": invalid_reason}
+
     try:
         res = requests.get(
             url,
@@ -249,68 +396,145 @@ def fetch_page(url: str) -> dict:
 
     soup = BeautifulSoup(res.text, "html.parser")
     metadata = extract_page_metadata(res.text)
+    json_ld_body = _extract_json_ld_article_body(soup)
 
-    for tag in soup(["script", "style", "noscript"]):
+    for tag in soup(["script", "style", "noscript", "svg", "form", "nav", "footer", "aside"]):
         tag.decompose()
 
     html_title = soup.title.get_text(" ", strip=True) if soup.title else ""
-    text = clean_article_text(soup.get_text(" ", strip=True))
     canonical = metadata.get("canonical_url") or res.url or url
+    canonical = urljoin(res.url or url, canonical)
+    valid_canonical, invalid_reason = validate_coverage_url(canonical)
+    if not valid_canonical:
+        return {"ok": False, "url": canonical, "error": invalid_reason}
+
+    container, container_method = _find_article_container(soup)
+    container_text = clean_article_text(container.get_text(" ", strip=True)) if container else ""
+    newspaper_text = ""
+
+    if _valid_article_text(json_ld_body):
+        body_text = json_ld_body
+        extraction_method = "json_ld_article_body"
+        extraction_reliable = True
+    elif container_method == "article" and _valid_article_text(container_text):
+        body_text = container_text
+        extraction_method = "article_element"
+        extraction_reliable = True
+    else:
+        newspaper_text = _extract_newspaper_text(res.text, canonical)
+        if _valid_article_text(newspaper_text):
+            body_text = newspaper_text
+            extraction_method = "newspaper3k"
+            extraction_reliable = True
+        elif container and _valid_article_text(container_text):
+            body_text = container_text
+            extraction_method = container_method
+            extraction_reliable = True
+        else:
+            body_text = clean_article_text(soup.get_text(" ", strip=True))
+            extraction_method = "whole_page_fallback"
+            extraction_reliable = False
+
+    captions = []
+    if container:
+        captions = [
+            clean_article_text(node.get_text(" ", strip=True))
+            for node in container.find_all("figcaption")
+            if clean_article_text(node.get_text(" ", strip=True))
+        ]
 
     return {
         "ok": True,
         "url": canonicalize_url(canonical),
         "title": clean_article_text(metadata.get("title") or html_title),
-        "text": text[:12000],
+        "subtitle": _extract_subtitle(soup),
+        "body_text": body_text[:30000],
+        "captions": captions,
+        "extraction_method": extraction_method,
+        "extraction_reliable": extraction_reliable,
+        "has_article_container": container is not None,
+        "article_links": _extract_article_links(container, canonical),
         "published_date": metadata.get("published_date"),
         "domain": domain_from_url(canonical),
-        "html": res.text,
     }
 
 
+def _evidence_snippet(text: str, term: str) -> str:
+    match = re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text or "", flags=re.IGNORECASE)
+    if not match:
+        return ""
+    start = max(0, match.start() - 180)
+    end = min(len(text), match.end() + 220)
+    return clean_article_text(text[start:end])
+
+
 def extract_evidence(page: dict, mention_terms: list[str], backlink_domains: list[str] | None = None) -> dict:
-    backlink_domains = backlink_domains or []
-    page_text = page.get("text", "")
-    lowered = page_text.lower()
-    html_lowered = (page.get("html", "") or "").lower()
-
-    matched_terms = [
-        term for term in mention_terms
-        if term and term.lower() in lowered
-    ]
-    quote_markers = (
-        "said", "says", "told", "explained", "according to",
-        "expert", "specialist", "predicts", "estimates", "quoted",
+    locations = (
+        ("title", page.get("title", "")),
+        ("subtitle", page.get("subtitle", "")),
+        ("body", page.get("body_text", "")),
+        ("caption", " ".join(page.get("captions", []) or [])),
     )
-    has_quote_context = any(marker in lowered for marker in quote_markers) and bool(matched_terms)
-    has_backlink = any(domain.lower() in html_lowered for domain in backlink_domains if domain)
+    matched_terms = []
+    matched_locations = []
+    evidence_snippet = ""
+    for location, text in locations:
+        location_matches = keyword_matches(text, mention_terms)
+        if location_matches:
+            matched_locations.append(location)
+        for term in location_matches:
+            if term not in matched_terms:
+                matched_terms.append(term)
+            if not evidence_snippet:
+                evidence_snippet = _evidence_snippet(text, term)
 
-    snippet = ""
-    for term in matched_terms:
-        idx = lowered.find(term.lower())
-        if idx >= 0:
-            start = max(0, idx - 180)
-            end = min(len(page_text), idx + len(term) + 220)
-            snippet = page_text[start:end].strip()
-            break
+    target_domains = {
+        domain_from_url(domain)
+        for domain in (backlink_domains or [])
+        if domain_from_url(domain)
+    }
+    backlink_urls = []
+    for link in page.get("article_links", []) or []:
+        host = domain_from_url(link)
+        if any(host == domain or host.endswith(f".{domain}") for domain in target_domains):
+            backlink_urls.append(link)
+    backlink_urls = list(dict.fromkeys(backlink_urls))
+    has_backlink = bool(backlink_urls)
 
-    if has_quote_context and has_backlink:
-        coverage_type = "quote + backlink"
-    elif has_quote_context:
-        coverage_type = "quote"
-    elif has_backlink:
-        coverage_type = "backlink"
+    trusted_locations = {"title", "subtitle"}
+    if page.get("has_article_container"):
+        trusted_locations.add("caption")
+    trusted_match = page.get("extraction_reliable") or any(
+        location in trusted_locations for location in matched_locations
+    )
+
+    if matched_terms and trusted_match:
+        verification_status = "confirmed + backlink" if has_backlink else "confirmed"
+        verification_reason = f"Exact approved term found in {', '.join(matched_locations)}"
     elif matched_terms:
-        coverage_type = "mention"
+        verification_status = "needs_review"
+        verification_reason = "Term found only in whole-page fallback text"
+    elif page.get("extraction_reliable"):
+        verification_status = "not_found"
+        verification_reason = "No approved term found in article-owned content"
     else:
-        coverage_type = "not_relevant"
+        verification_status = "needs_review"
+        verification_reason = "Reliable article-body extraction was unavailable"
 
     return {
         "matched_terms": matched_terms,
         "has_backlink": has_backlink,
-        "coverage_type": coverage_type,
-        "evidence_snippet": snippet,
-        "is_relevant": bool(matched_terms or has_backlink),
+        "backlink_urls": backlink_urls,
+        "coverage_type": (
+            "needs_review"
+            if verification_status == "needs_review"
+            else "mention + backlink" if has_backlink else "mention"
+        ),
+        "evidence_snippet": evidence_snippet,
+        "matched_locations": matched_locations,
+        "verification_status": verification_status,
+        "verification_reason": verification_reason,
+        "is_relevant": verification_status.startswith("confirmed"),
     }
 
 
@@ -332,11 +556,19 @@ def ensure_report_sheet(db: GoogleSheetsDB):
     except Exception:
         ws = db.spreadsheet.add_worksheet(title=REPORT_SHEET, rows=3000, cols=len(REPORT_HEADERS))
 
+    if ws.col_count < len(REPORT_HEADERS):
+        ws.resize(cols=len(REPORT_HEADERS))
+
     values = ws.get_all_values()
     if not values:
         ws.append_row(REPORT_HEADERS)
     elif values[0] != REPORT_HEADERS:
-        ws.update("A1:Q1", [REPORT_HEADERS])
+        column = len(REPORT_HEADERS)
+        end_column = ""
+        while column:
+            column, remainder = divmod(column - 1, 26)
+            end_column = chr(65 + remainder) + end_column
+        ws.update(f"A1:{end_column}1", [REPORT_HEADERS])
     return ws
 
 
@@ -384,16 +616,35 @@ def run_keyword_coverage_report(
     ])
 
     confirmed = []
+    review_results = []
     total_results = len(unique_results)
     emit("verifying", 0, total_results, "Checking article mentions")
     for index, result in enumerate(unique_results, start=1):
         emit("verifying", index, total_results, f"Checking result {index} of {total_results}")
         page = fetch_page(result["article_url"])
         if not page.get("ok"):
-            continue
+            error = page.get("error", "extraction_failed")
+            if error in {"invalid_url", "homepage", "non_content_url", "http_404", "http_410"}:
+                continue
+            evidence = {
+                "matched_terms": [],
+                "has_backlink": False,
+                "backlink_urls": [],
+                "coverage_type": "needs_review",
+                "evidence_snippet": "",
+                "matched_locations": [],
+                "verification_status": "needs_review",
+                "verification_reason": f"Article extraction failed: {error}",
+                "is_relevant": False,
+            }
+        else:
+            evidence = extract_evidence(
+                page,
+                mention_terms=mention_terms,
+                backlink_domains=backlink_domains,
+            )
 
-        evidence = extract_evidence(page, mention_terms=mention_terms, backlink_domains=backlink_domains)
-        if not evidence["is_relevant"]:
+        if not evidence["is_relevant"] and evidence["verification_status"] != "needs_review":
             continue
 
         domain = page.get("domain") or result.get("domain", "")
@@ -401,7 +652,7 @@ def run_keyword_coverage_report(
         if hasattr(published, "strftime"):
             published = published.strftime("%Y-%m-%d")
 
-        confirmed.append({
+        row = {
             "coverage_run_id": run_id,
             "created_at": created_at,
             "report_title": report_title,
@@ -418,11 +669,21 @@ def run_keyword_coverage_report(
             "monthly_visits": "",
             "monthly_visits_display": "N/A",
             "traffic_source": "hypestat",
+            "extraction_method": page.get("extraction_method", "unavailable"),
+            "verification_status": evidence["verification_status"],
+            "verification_reason": evidence["verification_reason"],
+            "matched_location": ", ".join(evidence["matched_locations"]),
+            "backlink_url": ", ".join(evidence["backlink_urls"]),
             "evidence_snippet": evidence["evidence_snippet"],
             "link_note": "with link back" if evidence["has_backlink"] else "",
-        })
+        }
+        if evidence["is_relevant"]:
+            confirmed.append(row)
+        else:
+            review_results.append(row)
 
     confirmed = dedupe_results(confirmed)
+    review_results = dedupe_results(review_results)
     domains = sorted({row["domain"] for row in confirmed if row.get("domain")})
     emit("traffic", 0, len(domains), "Looking up publication traffic")
     traffic = lookup_hypestat_monthly_visits(domains)
@@ -432,8 +693,9 @@ def run_keyword_coverage_report(
         row["monthly_visits_display"] = data.get("monthly_visits_display") or "N/A"
         row["traffic_source"] = data.get("source") or "hypestat"
 
-    emit("saving", 0, len(confirmed), "Saving report")
-    save_report_rows(confirmed)
+    rows_to_save = confirmed + review_results
+    emit("saving", 0, len(rows_to_save), "Saving report")
+    save_report_rows(rows_to_save)
 
     countries = sorted({row["country"] for row in confirmed if row.get("country")})
     highlights = {
@@ -453,6 +715,8 @@ def run_keyword_coverage_report(
         "coverage_run_id": run_id,
         "count": len(confirmed),
         "results": confirmed,
+        "needs_review": len(review_results),
+        "review_results": review_results,
         "highlights": highlights,
         "pdf_path": pdf_path,
         "searched_results": total_results,

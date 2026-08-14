@@ -16,6 +16,7 @@ export default function ClientCoverageScannerView() {
   const [job, setJob] = useState(null);
   const [summary, setSummary] = useState(null);
   const [results, setResults] = useState([]);
+  const [reviewResults, setReviewResults] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -56,6 +57,7 @@ export default function ClientCoverageScannerView() {
         setLoading(false);
         setSummary(res.summary || null);
         setResults(res.results || []);
+        setReviewResults(res.review_results || []);
       }
 
       if (res.status === "failed") {
@@ -70,6 +72,7 @@ export default function ClientCoverageScannerView() {
     setError("");
     setSummary(null);
     setResults([]);
+    setReviewResults([]);
     setJob(null);
 
     if (!form.report_title.trim()) {
@@ -246,7 +249,7 @@ export default function ClientCoverageScannerView() {
       </div>
 
       {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <p className="text-sm text-gray-500">Coverage</p>
             <p className="text-2xl font-bold text-green-700">{summary.total_coverage || results.length || 0}</p>
@@ -262,6 +265,10 @@ export default function ClientCoverageScannerView() {
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <p className="text-sm text-gray-500">Searches Remaining</p>
             <p className="text-2xl font-bold text-gray-800">{summary.searches_remaining || 0}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <p className="text-sm text-gray-500">Needs Review</p>
+            <p className="text-2xl font-bold text-amber-700">{summary.needs_review || 0}</p>
           </div>
         </div>
       )}
@@ -312,6 +319,42 @@ export default function ClientCoverageScannerView() {
           </table>
         </div>
       </div>
+
+      {reviewResults.length > 0 && (
+        <div className="bg-white border border-amber-200 rounded-lg shadow-sm overflow-hidden mt-6">
+          <div className="p-4 border-b border-amber-200 bg-amber-50">
+            <h3 className="font-semibold text-gray-900">Needs Review</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="text-left p-3">Publication</th>
+                  <th className="text-left p-3">Article</th>
+                  <th className="text-left p-3">Reason</th>
+                  <th className="text-left p-3">Extraction</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reviewResults.map((row, index) => (
+                  <tr key={`${row.article_url || row.publication}-review-${index}`} className="border-t border-gray-100">
+                    <td className="p-3">{row.publication}</td>
+                    <td className="p-3">
+                      {row.article_url ? (
+                        <a href={row.article_url} target="_blank" rel="noreferrer" className="text-[#b8860b]">
+                          {row.article_title || row.article_url}
+                        </a>
+                      ) : "-"}
+                    </td>
+                    <td className="p-3 text-gray-600">{row.verification_reason}</td>
+                    <td className="p-3 text-gray-600">{row.extraction_method}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
