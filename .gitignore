@@ -32,6 +32,7 @@ service-account.json
 backend/output/
 backend/*.txt
 !backend/requirements.txt
+!backend/requirements-coverage.txt
 backend/*.pdf
 backend/*.json
 !backend/config/*.json

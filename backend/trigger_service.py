@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import re
 import threading
@@ -6,6 +7,7 @@ import time
 import asyncio
 import hashlib
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime, timezone
@@ -20,7 +22,6 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
-from backend.client_coverage_search import get_serpapi_capacity, run_keyword_coverage_report
 from backend.publication_metadata_pipeline import run_publication_metadata_pipeline
 
 app = FastAPI()
@@ -103,6 +104,7 @@ def debug_routes():
 GITHUB_OWNER = os.environ["GITHUB_OWNER"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 GITHUB_WORKFLOW = os.environ.get("GITHUB_WORKFLOW", "collect-articles.yml")
+COVERAGE_WORKFLOW = os.environ.get("COVERAGE_WORKFLOW", "client-coverage-report.yml")
 GITHUB_REF = os.environ["GITHUB_REF"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 APP_LOGIN_PASSWORD = os.environ["APP_LOGIN_PASSWORD"]
@@ -156,9 +158,6 @@ _META_CACHE = {"ts": 0.0, "data": {}}
 META_JOBS = {}
 META_JOBS_LOCK = threading.Lock()
 META_EXECUTOR = ThreadPoolExecutor(max_workers=2)
-COVERAGE_JOBS = {}
-COVERAGE_JOBS_LOCK = threading.Lock()
-COVERAGE_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
 class TriggerRequest(BaseModel):
@@ -234,18 +233,6 @@ def _meta_job_set(job_id: str, **fields):
 def _meta_job_get(job_id: str):
     with META_JOBS_LOCK:
         return dict(META_JOBS.get(job_id, {}))
-
-
-def _coverage_job_set(job_id: str, **fields):
-    with COVERAGE_JOBS_LOCK:
-        if job_id not in COVERAGE_JOBS:
-            COVERAGE_JOBS[job_id] = {}
-        COVERAGE_JOBS[job_id].update(fields)
-
-
-def _coverage_job_get(job_id: str):
-    with COVERAGE_JOBS_LOCK:
-        return dict(COVERAGE_JOBS.get(job_id, {}))
 
 
 class TrendTriggerRequest(BaseModel):
@@ -1180,6 +1167,92 @@ def _gh_request(method: str, url: str, **kwargs):
                 continue
             raise HTTPException(status_code=502, detail=f"GitHub request failed: {exc}") from exc
     raise HTTPException(status_code=502, detail=f"GitHub request failed: {last_exc}")
+
+
+def _find_coverage_run(job_id: str) -> Optional[dict]:
+    url = (
+        f"{GITHUB_API_BASE}/actions/workflows/{COVERAGE_WORKFLOW}/runs"
+        "?event=workflow_dispatch&per_page=100"
+    )
+    response = _gh_request("GET", url)
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub coverage status failed: {response.status_code}",
+        )
+
+    expected_title = f"coverage-{job_id}"
+    return next(
+        (
+            run
+            for run in response.json().get("workflow_runs", [])
+            if run.get("display_title") == expected_title
+        ),
+        None,
+    )
+
+
+def _get_coverage_artifact(run_id: int, job_id: str) -> Optional[dict]:
+    response = _gh_request(
+        "GET",
+        f"{GITHUB_API_BASE}/actions/runs/{run_id}/artifacts",
+    )
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub coverage artifacts failed: {response.status_code}",
+        )
+
+    expected_name = f"coverage-{job_id}"
+    return next(
+        (
+            artifact
+            for artifact in response.json().get("artifacts", [])
+            if artifact.get("name") == expected_name and not artifact.get("expired")
+        ),
+        None,
+    )
+
+
+def _download_coverage_artifact(
+    run_id: int,
+    job_id: str,
+    artifact: Optional[dict] = None,
+) -> zipfile.ZipFile:
+    artifact = artifact or _get_coverage_artifact(run_id, job_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Coverage artifact not found")
+
+    response = _gh_request("GET", artifact["archive_download_url"])
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Coverage artifact download failed: {response.status_code}",
+        )
+
+    try:
+        return zipfile.ZipFile(io.BytesIO(response.content))
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=502, detail="Coverage artifact is invalid") from exc
+
+
+def _read_coverage_result(run_id: int, job_id: str) -> Optional[dict]:
+    artifact = _get_coverage_artifact(run_id, job_id)
+    if not artifact:
+        return None
+
+    archive = _download_coverage_artifact(run_id, job_id, artifact=artifact)
+    result_name = next(
+        (name for name in archive.namelist() if name.endswith("result.json")),
+        None,
+    )
+    if not result_name:
+        raise HTTPException(status_code=502, detail="Coverage result is missing")
+
+    try:
+        return json.loads(archive.read(result_name).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="Coverage result is invalid") from exc
 
 
 def _ensure_state_file() -> None:
@@ -2136,88 +2209,37 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
     if not search_queries:
         raise HTTPException(status_code=400, detail="At least one search query is required")
 
-    backlink_domains = _split_keywords(req.backlink_domains)
-    capacity = get_serpapi_capacity()
-    available_searches = capacity["monthly_left"]
     job_id = uuid.uuid4().hex
-    coverage_run_id = f"coverage-search-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-
-    _coverage_job_set(
-        job_id,
-        status="running",
-        phase="initializing",
-        current=0,
-        total=available_searches,
-        message="Starting coverage report",
-        coverage_run_id=coverage_run_id,
-        available_searches=available_searches,
-        summary=None,
-        results=[],
-        review_results=[],
-        highlights=None,
-        pdf_path=None,
-        error=None,
+    coverage_run_id = f"coverage-search-{job_id}"
+    dispatch_body = {
+        "ref": GITHUB_REF,
+        "inputs": {
+            "job_id": job_id,
+            "report_title": report_title,
+            "mention_terms": req.mention_terms,
+            "search_queries": "\n".join(search_queries),
+            "date_from": (req.date_from or "").strip(),
+            "date_to": (req.date_to or "").strip(),
+            "backlink_domains": req.backlink_domains or "",
+        },
+    }
+    response = _gh_request(
+        "POST",
+        f"{GITHUB_API_BASE}/actions/workflows/{COVERAGE_WORKFLOW}/dispatches",
+        json=dispatch_body,
     )
+    if response.status_code not in {200, 204}:
+        detail = response.text[:500] if response.text else str(response.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub coverage dispatch failed: {detail}",
+        )
 
-    def _runner():
-        try:
-            def _progress_cb(phase: str, current: int, total: int, message: str):
-                _coverage_job_set(
-                    job_id,
-                    status="running",
-                    phase=phase or "running",
-                    current=int(current or 0),
-                    total=int(total or 0),
-                    message=message or "",
-                )
-
-            result = run_keyword_coverage_report(
-                report_title=report_title,
-                mention_terms=mention_terms,
-                search_queries=search_queries,
-                date_from=(req.date_from or "").strip(),
-                date_to=(req.date_to or "").strip(),
-                backlink_domains=backlink_domains,
-                coverage_run_id=coverage_run_id,
-                progress_callback=_progress_cb,
-            )
-            searches_used = int(result.get("searches_used", 0) or 0)
-            _coverage_job_set(
-                job_id,
-                status="complete",
-                phase="complete",
-                current=searches_used,
-                total=searches_used,
-                message="Coverage report complete",
-                coverage_run_id=result.get("coverage_run_id", coverage_run_id),
-                summary={
-                    "total_coverage": result.get("count", 0),
-                    "needs_review": result.get("needs_review", 0),
-                    "searched_results": result.get("searched_results", 0),
-                    "searches_used": searches_used,
-                    "searches_remaining": result.get("searches_remaining", 0),
-                    "search_stop_reason": result.get("search_stop_reason", ""),
-                },
-                results=result.get("results", []),
-                review_results=result.get("review_results", []),
-                highlights=result.get("highlights"),
-                pdf_path=result.get("pdf_path"),
-            )
-        except Exception as e:
-            _coverage_job_set(
-                job_id,
-                status="failed",
-                phase="failed",
-                message=f"Coverage report failed: {str(e)}",
-                error=str(e),
-            )
-
-    COVERAGE_EXECUTOR.submit(_runner)
     return {
         "ok": True,
         "job_id": job_id,
         "coverage_run_id": coverage_run_id,
-        "available_searches": available_searches,
+        "available_searches": 0,
         "status": "running",
     }
 
@@ -2227,10 +2249,44 @@ def get_client_coverage_search_report_progress(job_id: str, authorization: str =
     _check_auth(authorization)
     if not job_id:
         raise HTTPException(status_code=400, detail="job_id is required")
-    job = _coverage_job_get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    return {"ok": True, **job}
+    run = _find_coverage_run(job_id)
+    if not run:
+        return {
+            "ok": True,
+            "status": "running",
+            "phase": "queued",
+            "current": 0,
+            "total": 0,
+            "message": "Waiting for GitHub Actions to start",
+        }
+
+    if run.get("status") != "completed":
+        phase = "queued" if run.get("status") == "queued" else "running"
+        return {
+            "ok": True,
+            "status": "running",
+            "phase": phase,
+            "current": 0,
+            "total": 0,
+            "message": "Coverage report is running in GitHub Actions",
+            "actions_url": run.get("html_url"),
+        }
+
+    result = _read_coverage_result(int(run["id"]), job_id)
+    if result:
+        return {"ok": True, "actions_url": run.get("html_url"), **result}
+
+    return {
+        "ok": True,
+        "status": "failed",
+        "phase": "failed",
+        "message": "Coverage report artifact is unavailable",
+        "error": (
+            "The workflow completed without a readable artifact. "
+            "Open the Actions run for details."
+        ),
+        "actions_url": run.get("html_url"),
+    }
 
 
 @app.get("/coverage/report")
@@ -2285,18 +2341,26 @@ def download_client_coverage_search_report(job_id: str, authorization: str = Hea
     if not job_id:
         raise HTTPException(status_code=400, detail="job_id is required")
 
-    job = _coverage_job_get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    if job.get("status") != "complete":
+    run = _find_coverage_run(job_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Coverage workflow run not found")
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
         raise HTTPException(status_code=409, detail="Coverage report is not complete")
 
-    pdf_path = str(job.get("pdf_path") or "").strip()
-    if not pdf_path or not os.path.exists(pdf_path):
-        raise HTTPException(status_code=404, detail="PDF not found")
+    archive = _download_coverage_artifact(int(run["id"]), job_id)
+    pdf_name = next(
+        (name for name in archive.namelist() if name.lower().endswith(".pdf")),
+        None,
+    )
+    if not pdf_name:
+        raise HTTPException(status_code=404, detail="PDF not found in coverage artifact")
 
-    filename = f"{job.get('coverage_run_id', 'client-coverage-report')}.pdf"
-    return FileResponse(pdf_path, media_type="application/pdf", filename=filename)
+    filename = f"coverage-search-{job_id}.pdf"
+    return StreamingResponse(
+        io.BytesIO(archive.read(pdf_name)),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/sources/lists")

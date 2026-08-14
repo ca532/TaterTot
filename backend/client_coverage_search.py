@@ -39,6 +39,13 @@ except ImportError:
 SERPAPI_URL = "https://serpapi.com/search.json"
 SERPAPI_ACCOUNT_URL = "https://serpapi.com/account.json"
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")
+SERPAPI_GOOGLE_DOMAIN = os.getenv("SERPAPI_GOOGLE_DOMAIN", "google.com").strip()
+SERPAPI_LOCATION = os.getenv(
+    "SERPAPI_LOCATION",
+    "London, England, United Kingdom",
+).strip()
+SERPAPI_GL = os.getenv("SERPAPI_GL", "uk").strip()
+SERPAPI_HL = os.getenv("SERPAPI_HL", "en").strip()
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
 REPORT_HEADERS = [
@@ -144,6 +151,17 @@ def get_serpapi_capacity() -> dict:
     }
 
 
+def build_serpapi_date_filter(date_from: str = "", date_to: str = "") -> str:
+    values = ["cdr:1"]
+    if date_from:
+        parsed_from = datetime.strptime(date_from, "%Y-%m-%d")
+        values.append(f"cd_min:{parsed_from.strftime('%m/%d/%Y')}")
+    if date_to:
+        parsed_to = datetime.strptime(date_to, "%Y-%m-%d")
+        values.append(f"cd_max:{parsed_to.strftime('%m/%d/%Y')}")
+    return ",".join(values) if len(values) > 1 else ""
+
+
 def serpapi_search_all(
     queries: list[str],
     date_from: str = "",
@@ -159,23 +177,33 @@ def serpapi_search_all(
 
     starting_capacity = get_serpapi_capacity()
     starting_budget = starting_capacity["monthly_left"]
+    date_filter = build_serpapi_date_filter(date_from, date_to)
     queue = deque()
 
     for query in queries:
-        dated_query = query.strip()
-        if date_from:
-            dated_query += f" after:{date_from}"
-        if date_to:
-            dated_query += f" before:{date_to}"
+        params = {
+            "engine": "google",
+            "q": query.strip(),
+            "api_key": SERPAPI_API_KEY,
+            "num": 100,
+            "filter": "0",
+            "google_domain": SERPAPI_GOOGLE_DOMAIN,
+            "location": SERPAPI_LOCATION,
+            "gl": SERPAPI_GL,
+            "hl": SERPAPI_HL,
+        }
+        if date_filter:
+            params["tbs"] = date_filter
 
         queue.append({
-            "query": query,
-            "dated_query": dated_query,
+            "query": query.strip(),
+            "params": params,
             "next_url": "",
             "visited_pages": set(),
         })
 
     results = []
+    diagnostics = []
     searches_used = 0
     stop_reason = "all_pages_searched"
 
@@ -207,16 +235,11 @@ def serpapi_search_all(
                 timeout=30,
             )
         else:
-            request_key = state["dated_query"]
+            request_key = json.dumps(state["params"], sort_keys=True)
             state["visited_pages"].add(request_key)
             response = requests.get(
                 SERPAPI_URL,
-                params={
-                    "engine": "google",
-                    "q": state["dated_query"],
-                    "api_key": SERPAPI_API_KEY,
-                    "num": 100,
-                },
+                params=state["params"],
                 timeout=30,
             )
 
@@ -234,7 +257,26 @@ def serpapi_search_all(
         response.raise_for_status()
         data = response.json()
         searches_used += 1
+        metadata = data.get("search_metadata", {}) or {}
+        information = data.get("search_information", {}) or {}
+        search_status = str(metadata.get("status", "")).strip()
+        search_error = str(data.get("error", "")).strip()
+        search_id = str(metadata.get("id", "")).strip()
+
+        if search_error or search_status.lower() == "error":
+            message = search_error or "SerpApi returned an unsuccessful search"
+            identifier = f" ({search_id})" if search_id else ""
+            raise RuntimeError(f"SerpApi search failed{identifier}: {message}")
+
         organic_results = data.get("organic_results", []) or []
+        diagnostics.append({
+            "search_id": search_id,
+            "status": search_status,
+            "query": state["query"],
+            "query_displayed": information.get("query_displayed", ""),
+            "organic_results_state": information.get("organic_results_state", ""),
+            "organic_results_count": len(organic_results),
+        })
 
         for item in organic_results:
             link = item.get("link", "")
@@ -261,12 +303,16 @@ def serpapi_search_all(
             f"Searched {searches_used} Google pages",
         )
 
+    if searches_used and not results:
+        stop_reason = "no_google_results"
+
     final_capacity = get_serpapi_capacity()
     return {
         "results": results,
         "searches_used": searches_used,
         "searches_remaining": final_capacity["monthly_left"],
         "stop_reason": stop_reason,
+        "search_diagnostics": diagnostics,
     }
 
 
@@ -723,4 +769,5 @@ def run_keyword_coverage_report(
         "searches_used": search_run["searches_used"],
         "searches_remaining": search_run["searches_remaining"],
         "search_stop_reason": search_run["stop_reason"],
+        "search_diagnostics": search_run["search_diagnostics"],
     }

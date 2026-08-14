@@ -308,7 +308,11 @@ export default function ClientCoverageScannerView() {
               ))}
               {results.length === 0 && (
                 <tr>
-                  <td className="p-4 text-gray-500" colSpan={5}>No coverage results yet.</td>
+                  <td className="p-4 text-gray-500" colSpan={5}>
+                    {summary?.searched_results === 0
+                      ? "Google returned no organic results for this query and date range."
+                      : "No confirmed client mentions were found in the checked results."}
+                  </td>
                 </tr>
               )}
             </tbody>
