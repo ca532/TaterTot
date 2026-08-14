@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -22,6 +23,7 @@ except ImportError:
 
 
 SERPAPI_URL = "https://serpapi.com/search.json"
+SERPAPI_ACCOUNT_URL = "https://serpapi.com/account.json"
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
@@ -75,30 +77,130 @@ def split_csv_or_lines(raw: str) -> list[str]:
     return [part for part in parts if part]
 
 
-def serpapi_search(query: str, date_from: str = "", date_to: str = "", max_pages: int = 1) -> list[dict]:
+def get_serpapi_capacity() -> dict:
     if not SERPAPI_API_KEY:
         raise RuntimeError("SERPAPI_API_KEY is required")
 
-    dated_query = query.strip()
-    if date_from:
-        dated_query += f" after:{date_from}"
-    if date_to:
-        dated_query += f" before:{date_to}"
+    response = requests.get(
+        SERPAPI_ACCOUNT_URL,
+        params={"api_key": SERPAPI_API_KEY},
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    monthly_left_raw = data.get("total_searches_left")
+    if monthly_left_raw is None:
+        monthly_left_raw = data.get("plan_searches_left", 0)
+    monthly_left = int(monthly_left_raw or 0)
+    hourly_limit = int(data.get("account_rate_limit_per_hour") or 0)
+    hourly_used = int(data.get("this_hour_searches") or 0)
+
+    return {
+        "monthly_left": monthly_left,
+        "hourly_limit": hourly_limit,
+        "hourly_used": hourly_used,
+        "hourly_left": (
+            max(0, hourly_limit - hourly_used)
+            if hourly_limit
+            else monthly_left
+        ),
+    }
+
+
+def serpapi_search_all(
+    queries: list[str],
+    date_from: str = "",
+    date_to: str = "",
+    progress_callback=None,
+) -> dict:
+    def emit(phase: str, current: int, total: int, message: str):
+        if progress_callback:
+            try:
+                progress_callback(phase, current, total, message)
+            except Exception:
+                pass
+
+    starting_capacity = get_serpapi_capacity()
+    starting_budget = starting_capacity["monthly_left"]
+    queue = deque()
+
+    for query in queries:
+        dated_query = query.strip()
+        if date_from:
+            dated_query += f" after:{date_from}"
+        if date_to:
+            dated_query += f" before:{date_to}"
+
+        queue.append({
+            "query": query,
+            "dated_query": dated_query,
+            "next_url": "",
+            "visited_pages": set(),
+        })
 
     results = []
-    for page in range(max(1, min(int(max_pages or 1), 10))):
-        params = {
-            "engine": "google",
-            "q": dated_query,
-            "api_key": SERPAPI_API_KEY,
-            "num": 100,
-            "start": page * 100,
-        }
-        res = requests.get(SERPAPI_URL, params=params, timeout=30)
-        res.raise_for_status()
-        data = res.json()
+    searches_used = 0
+    stop_reason = "all_pages_searched"
 
-        for item in data.get("organic_results", []) or []:
+    while queue:
+        capacity = get_serpapi_capacity()
+        if capacity["monthly_left"] <= 0:
+            stop_reason = "monthly_limit_reached"
+            break
+
+        if capacity["hourly_limit"] and capacity["hourly_left"] <= 0:
+            emit(
+                "waiting",
+                searches_used,
+                starting_budget,
+                "Hourly search limit reached. Waiting to continue.",
+            )
+            time.sleep(60)
+            continue
+
+        state = queue.popleft()
+        if state["next_url"]:
+            request_key = state["next_url"]
+            if request_key in state["visited_pages"]:
+                continue
+            state["visited_pages"].add(request_key)
+            response = requests.get(
+                state["next_url"],
+                params={"api_key": SERPAPI_API_KEY},
+                timeout=30,
+            )
+        else:
+            request_key = state["dated_query"]
+            state["visited_pages"].add(request_key)
+            response = requests.get(
+                SERPAPI_URL,
+                params={
+                    "engine": "google",
+                    "q": state["dated_query"],
+                    "api_key": SERPAPI_API_KEY,
+                    "num": 100,
+                },
+                timeout=30,
+            )
+
+        if response.status_code == 429:
+            queue.appendleft(state)
+            emit(
+                "waiting",
+                searches_used,
+                starting_budget,
+                "SerpApi is temporarily at capacity. Waiting to continue.",
+            )
+            time.sleep(60)
+            continue
+
+        response.raise_for_status()
+        data = response.json()
+        searches_used += 1
+        organic_results = data.get("organic_results", []) or []
+
+        for item in organic_results:
             link = item.get("link", "")
             if not link:
                 continue
@@ -108,10 +210,28 @@ def serpapi_search(query: str, date_from: str = "", date_to: str = "", max_pages
                 "snippet": item.get("snippet", ""),
                 "date": item.get("date", ""),
                 "domain": domain_from_url(link),
-                "search_query": query,
+                "search_query": state["query"],
             })
 
-    return results
+        next_url = (data.get("serpapi_pagination", {}) or {}).get("next", "")
+        if organic_results and next_url:
+            state["next_url"] = next_url
+            queue.append(state)
+
+        emit(
+            "searching",
+            searches_used,
+            starting_budget,
+            f"Searched {searches_used} Google pages",
+        )
+
+    final_capacity = get_serpapi_capacity()
+    return {
+        "results": results,
+        "searches_used": searches_used,
+        "searches_remaining": final_capacity["monthly_left"],
+        "stop_reason": stop_reason,
+    }
 
 
 def fetch_page(url: str) -> dict:
@@ -236,7 +356,6 @@ def run_keyword_coverage_report(
     date_from: str = "",
     date_to: str = "",
     backlink_domains: list[str] | None = None,
-    pages_per_query: int = 1,
     coverage_run_id: str | None = None,
     progress_callback=None,
 ):
@@ -250,15 +369,14 @@ def run_keyword_coverage_report(
     backlink_domains = backlink_domains or []
     run_id = coverage_run_id or f"coverage-search-{int(time.time())}"
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    all_search_results = []
-    total_queries = len(search_queries)
-
-    emit("searching", 0, total_queries, "Searching Google")
-    for index, query in enumerate(search_queries, start=1):
-        emit("searching", index, total_queries, f"Searching query {index} of {total_queries}")
-        all_search_results.extend(
-            serpapi_search(query, date_from=date_from, date_to=date_to, max_pages=pages_per_query)
-        )
+    emit("searching", 0, 0, "Searching Google")
+    search_run = serpapi_search_all(
+        queries=search_queries,
+        date_from=date_from,
+        date_to=date_to,
+        progress_callback=progress_callback,
+    )
+    all_search_results = search_run["results"]
 
     unique_results = dedupe_results([
         {"article_url": item["url"], **item}
@@ -338,4 +456,7 @@ def run_keyword_coverage_report(
         "highlights": highlights,
         "pdf_path": pdf_path,
         "searched_results": total_results,
+        "searches_used": search_run["searches_used"],
+        "searches_remaining": search_run["searches_remaining"],
+        "search_stop_reason": search_run["stop_reason"],
     }

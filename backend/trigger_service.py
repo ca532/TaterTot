@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
-from backend.client_coverage_search import run_keyword_coverage_report
+from backend.client_coverage_search import get_serpapi_capacity, run_keyword_coverage_report
 from backend.publication_metadata_pipeline import run_publication_metadata_pipeline
 
 app = FastAPI()
@@ -222,7 +222,6 @@ class CoverageScanRequest(BaseModel):
     date_from: Optional[str] = ""
     date_to: Optional[str] = ""
     backlink_domains: Optional[str] = ""
-    pages_per_query: Optional[int] = 1
 
 
 def _meta_job_set(job_id: str, **fields):
@@ -2138,20 +2137,20 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         raise HTTPException(status_code=400, detail="At least one search query is required")
 
     backlink_domains = _split_keywords(req.backlink_domains)
-    pages_per_query = max(1, min(int(req.pages_per_query or 1), 10))
+    capacity = get_serpapi_capacity()
+    available_searches = capacity["monthly_left"]
     job_id = uuid.uuid4().hex
     coverage_run_id = f"coverage-search-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-    estimated_searches = len(search_queries) * pages_per_query
 
     _coverage_job_set(
         job_id,
         status="running",
         phase="initializing",
         current=0,
-        total=estimated_searches,
+        total=available_searches,
         message="Starting coverage report",
         coverage_run_id=coverage_run_id,
-        estimated_searches=estimated_searches,
+        available_searches=available_searches,
         summary=None,
         results=[],
         highlights=None,
@@ -2178,22 +2177,24 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
                 date_from=(req.date_from or "").strip(),
                 date_to=(req.date_to or "").strip(),
                 backlink_domains=backlink_domains,
-                pages_per_query=pages_per_query,
                 coverage_run_id=coverage_run_id,
                 progress_callback=_progress_cb,
             )
+            searches_used = int(result.get("searches_used", 0) or 0)
             _coverage_job_set(
                 job_id,
                 status="complete",
                 phase="complete",
-                current=estimated_searches,
-                total=estimated_searches,
+                current=searches_used,
+                total=searches_used,
                 message="Coverage report complete",
                 coverage_run_id=result.get("coverage_run_id", coverage_run_id),
                 summary={
                     "total_coverage": result.get("count", 0),
                     "searched_results": result.get("searched_results", 0),
-                    "estimated_searches": estimated_searches,
+                    "searches_used": searches_used,
+                    "searches_remaining": result.get("searches_remaining", 0),
+                    "search_stop_reason": result.get("search_stop_reason", ""),
                 },
                 results=result.get("results", []),
                 highlights=result.get("highlights"),
@@ -2213,7 +2214,7 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         "ok": True,
         "job_id": job_id,
         "coverage_run_id": coverage_run_id,
-        "estimated_searches": estimated_searches,
+        "available_searches": available_searches,
         "status": "running",
     }
 

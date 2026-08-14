@@ -10,7 +10,6 @@ export default function ClientCoverageScannerView() {
     date_from: "",
     date_to: "",
     backlink_domains: "",
-    pages_per_query: 2,
   });
   const [jobId, setJobId] = useState("");
   const [runId, setRunId] = useState("");
@@ -26,8 +25,6 @@ export default function ClientCoverageScannerView() {
     () => form.search_queries.split(/\r?\n/).map((q) => q.trim()).filter(Boolean),
     [form.search_queries]
   );
-  const estimatedSearches = searchQueries.length * Number(form.pages_per_query || 1);
-
   const stopPolling = () => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -90,10 +87,7 @@ export default function ClientCoverageScannerView() {
 
     setLoading(true);
     try {
-      const res = await githubAPI.runClientCoverageSearchReport({
-        ...form,
-        pages_per_query: Number(form.pages_per_query || 1),
-      });
+      const res = await githubAPI.runClientCoverageSearchReport(form);
 
       if (!res.success) {
         setError(res.error || "Coverage report failed to start.");
@@ -107,7 +101,7 @@ export default function ClientCoverageScannerView() {
         status: "running",
         phase: "initializing",
         current: 0,
-        total: res.estimated_searches || estimatedSearches,
+        total: res.available_searches || 0,
         message: "Starting coverage report",
       });
       pollProgress(res.job_id);
@@ -185,34 +179,32 @@ export default function ClientCoverageScannerView() {
             value={form.search_queries}
             onChange={(e) => updateForm("search_queries", e.target.value)}
           />
-          <p className="text-xs text-gray-500 mt-2">Fewer search queries means more pages per query.</p>
+          <p className="text-xs text-gray-500 mt-2">Each query is searched until Google has no more result pages or the available search limit is reached.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <input
-            type="date"
-            className="p-3 border border-gray-300 rounded-lg"
-            value={form.date_from}
-            onChange={(e) => updateForm("date_from", e.target.value)}
-          />
-          <input
-            type="date"
-            className="p-3 border border-gray-300 rounded-lg"
-            value={form.date_to}
-            onChange={(e) => updateForm("date_to", e.target.value)}
-          />
-          <input
-            type="number"
-            min="1"
-            max="10"
-            className="p-3 border border-gray-300 rounded-lg"
-            value={form.pages_per_query}
-            onChange={(e) => updateForm("pages_per_query", e.target.value)}
-          />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="space-y-2">
+            <span className="block text-sm font-semibold text-gray-700">From</span>
+            <input
+              type="date"
+              className="w-full p-3 border border-gray-300 rounded-lg"
+              value={form.date_from}
+              onChange={(e) => updateForm("date_from", e.target.value)}
+            />
+          </label>
+          <label className="space-y-2">
+            <span className="block text-sm font-semibold text-gray-700">To</span>
+            <input
+              type="date"
+              className="w-full p-3 border border-gray-300 rounded-lg"
+              value={form.date_to}
+              onChange={(e) => updateForm("date_to", e.target.value)}
+            />
+          </label>
         </div>
 
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <p className="text-sm font-semibold text-gray-800">Pages we can search: {estimatedSearches}</p>
+          <p className="text-sm font-semibold text-gray-800">All available Google result pages will be searched.</p>
         </div>
 
         {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</div>}
@@ -254,18 +246,22 @@ export default function ClientCoverageScannerView() {
       </div>
 
       {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <p className="text-sm text-gray-500">Coverage</p>
             <p className="text-2xl font-bold text-green-700">{summary.total_coverage || results.length || 0}</p>
           </div>
           <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Searches</p>
-            <p className="text-2xl font-bold text-gray-800">{summary.estimated_searches || estimatedSearches}</p>
+            <p className="text-sm text-gray-500">Google Pages Searched</p>
+            <p className="text-2xl font-bold text-gray-800">{summary.searches_used || 0}</p>
           </div>
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <p className="text-sm text-gray-500">Results Checked</p>
             <p className="text-2xl font-bold text-gray-800">{summary.searched_results || 0}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <p className="text-sm text-gray-500">Searches Remaining</p>
+            <p className="text-2xl font-bold text-gray-800">{summary.searches_remaining || 0}</p>
           </div>
         </div>
       )}
