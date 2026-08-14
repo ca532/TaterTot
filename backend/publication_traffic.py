@@ -84,6 +84,9 @@ async def _crawl_hypestat(domains: list[str]) -> dict[str, dict]:
     crawler = PlaywrightCrawler(
         headless=True,
         browser_type="chromium",
+        browser_launch_options={
+            "chromium_sandbox": False,
+        },
         concurrency_settings=ConcurrencySettings(
             desired_concurrency=1,
             max_concurrency=1,
