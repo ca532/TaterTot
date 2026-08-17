@@ -43,7 +43,13 @@ SERPAPI_GOOGLE_DOMAIN = os.getenv(
     "SERPAPI_GOOGLE_DOMAIN",
     "google.com",
 ).strip()
+SERPAPI_GL = os.getenv("SERPAPI_GL", "us").strip()
 SERPAPI_HL = os.getenv("SERPAPI_HL", "en").strip()
+SERPAPI_CONNECT_TIMEOUT = 10
+SERPAPI_READ_TIMEOUT = 90
+SERPAPI_NETWORK_RETRIES = 3
+SERPAPI_EMPTY_PAGE_RETRIES = 1
+SERPAPI_DATE_SLICE_DAYS = 7
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
 REPORT_HEADERS = [
@@ -167,6 +173,52 @@ def build_dated_query(
     return " ".join(parts)
 
 
+def build_date_windows(date_from: str, date_to: str) -> list[tuple[str, str]]:
+    if not date_from or not date_to:
+        return [(date_from, date_to)]
+
+    start = datetime.strptime(date_from, "%Y-%m-%d")
+    end = datetime.strptime(date_to, "%Y-%m-%d")
+    if start > end:
+        raise ValueError("From date cannot be after To date")
+
+    windows = []
+    cursor = start
+    while cursor <= end:
+        window_end = min(
+            cursor + timedelta(days=SERPAPI_DATE_SLICE_DAYS - 1),
+            end,
+        )
+        windows.append((
+            cursor.strftime("%Y-%m-%d"),
+            window_end.strftime("%Y-%m-%d"),
+        ))
+        cursor = window_end + timedelta(days=1)
+
+    return windows
+
+
+def request_serpapi(url: str, params: dict):
+    last_error = None
+
+    for attempt in range(1, SERPAPI_NETWORK_RETRIES + 1):
+        try:
+            return requests.get(
+                url,
+                params=params,
+                timeout=(SERPAPI_CONNECT_TIMEOUT, SERPAPI_READ_TIMEOUT),
+            )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_error = exc
+            if attempt < SERPAPI_NETWORK_RETRIES:
+                time.sleep(5 * attempt)
+
+    raise RuntimeError(
+        f"SerpApi remained unavailable after "
+        f"{SERPAPI_NETWORK_RETRIES} attempts: {last_error}"
+    ) from last_error
+
+
 def serpapi_search_all(
     queries: list[str],
     date_from: str = "",
@@ -185,28 +237,33 @@ def serpapi_search_all(
     queue = deque()
 
     for query in queries:
-        dated_query = build_dated_query(
-            query,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        params = {
-            "engine": "google",
-            "q": dated_query,
-            "api_key": SERPAPI_API_KEY,
-            "num": 10,
-            "filter": "0",
-            "google_domain": SERPAPI_GOOGLE_DOMAIN,
-            "hl": SERPAPI_HL,
-        }
+        for window_from, window_to in build_date_windows(date_from, date_to):
+            dated_query = build_dated_query(
+                query,
+                date_from=window_from,
+                date_to=window_to,
+            )
+            params = {
+                "engine": "google",
+                "q": dated_query,
+                "api_key": SERPAPI_API_KEY,
+                "num": 10,
+                "filter": "0",
+                "google_domain": SERPAPI_GOOGLE_DOMAIN,
+                "gl": SERPAPI_GL,
+                "hl": SERPAPI_HL,
+            }
 
-        queue.append({
-            "query": query.strip(),
-            "dated_query": dated_query,
-            "params": params,
-            "next_url": "",
-            "visited_pages": set(),
-        })
+            queue.append({
+                "query": query.strip(),
+                "dated_query": dated_query,
+                "window_from": window_from,
+                "window_to": window_to,
+                "params": params,
+                "next_url": "",
+                "visited_pages": set(),
+                "empty_page_retries": 0,
+            })
 
     results = []
     diagnostics = []
@@ -235,21 +292,20 @@ def serpapi_search_all(
             if request_key in state["visited_pages"]:
                 continue
             state["visited_pages"].add(request_key)
-            response = requests.get(
+            response = request_serpapi(
                 state["next_url"],
-                params={"api_key": SERPAPI_API_KEY},
-                timeout=30,
+                {"api_key": SERPAPI_API_KEY},
             )
         else:
             request_key = json.dumps(state["params"], sort_keys=True)
             state["visited_pages"].add(request_key)
-            response = requests.get(
+            response = request_serpapi(
                 SERPAPI_URL,
-                params=state["params"],
-                timeout=30,
+                state["params"],
             )
 
         if response.status_code == 429:
+            state["visited_pages"].discard(request_key)
             queue.appendleft(state)
             emit(
                 "waiting",
@@ -269,12 +325,30 @@ def serpapi_search_all(
         search_error = str(data.get("error", "")).strip()
         search_id = str(metadata.get("id", "")).strip()
 
-        if search_error.lower() == "google hasn't returned any results for this query.":
+        is_empty_error = (
+            search_error.lower()
+            == "google hasn't returned any results for this query."
+        )
+
+        if (
+            is_empty_error
+            and state["next_url"]
+            and state["empty_page_retries"] < SERPAPI_EMPTY_PAGE_RETRIES
+        ):
+            state["empty_page_retries"] += 1
+            state["visited_pages"].discard(request_key)
+            queue.appendleft(state)
+            time.sleep(5 * state["empty_page_retries"])
+            continue
+
+        if is_empty_error:
             diagnostics.append({
                 "search_id": search_id,
                 "status": search_status,
                 "query": state["query"],
                 "dated_query": state["dated_query"],
+                "window_from": state["window_from"],
+                "window_to": state["window_to"],
                 "query_displayed": information.get("query_displayed", ""),
                 "organic_results_state": information.get(
                     "organic_results_state",
@@ -291,11 +365,15 @@ def serpapi_search_all(
             raise RuntimeError(f"SerpApi search failed{identifier}: {message}")
 
         organic_results = data.get("organic_results", []) or []
+        if organic_results:
+            state["empty_page_retries"] = 0
         diagnostics.append({
             "search_id": search_id,
             "status": search_status,
             "query": state["query"],
             "dated_query": state["dated_query"],
+            "window_from": state["window_from"],
+            "window_to": state["window_to"],
             "query_displayed": information.get("query_displayed", ""),
             "organic_results_state": information.get("organic_results_state", ""),
             "organic_results_count": len(organic_results),
