@@ -219,6 +219,44 @@ def request_serpapi(url: str, params: dict):
     ) from last_error
 
 
+def log_serpapi_page(
+    state: dict,
+    data: dict,
+    organic_results: list[dict],
+    searches_used: int,
+    cumulative_links: int,
+    new_unique_links: int,
+) -> None:
+    parameters = data.get("search_parameters", {}) or {}
+    metadata = data.get("search_metadata", {}) or {}
+    pagination = data.get("serpapi_pagination", {}) or {}
+    page_links = [
+        str(item.get("link", "")).strip()
+        for item in organic_results
+        if str(item.get("link", "")).strip()
+    ]
+
+    payload = {
+        "search_id": metadata.get("id", ""),
+        "query": state["query"],
+        "dated_query": state["dated_query"],
+        "window_from": state["window_from"],
+        "window_to": state["window_to"],
+        "page_number": state["page_number"],
+        "start": parameters.get("start", 0),
+        "organic_results": len(organic_results),
+        "links_returned": len(page_links),
+        "unique_links_on_page": len(set(page_links)),
+        "new_unique_links": new_unique_links,
+        "cumulative_links": cumulative_links,
+        "has_next_page": bool(pagination.get("next")),
+        "empty_page_retry": state["empty_page_retries"],
+        "searches_used": searches_used,
+        "error": data.get("error", ""),
+    }
+    print("[SERPAPI_PAGE] " + json.dumps(payload, sort_keys=True), flush=True)
+
+
 def serpapi_search_all(
     queries: list[str],
     date_from: str = "",
@@ -263,10 +301,12 @@ def serpapi_search_all(
                 "next_url": "",
                 "visited_pages": set(),
                 "empty_page_retries": 0,
+                "page_number": 1,
             })
 
     results = []
     diagnostics = []
+    telemetry_seen_urls = set()
     searches_used = 0
     stop_reason = "all_pages_searched"
 
@@ -330,6 +370,16 @@ def serpapi_search_all(
             == "google hasn't returned any results for this query."
         )
 
+        if is_empty_error:
+            log_serpapi_page(
+                state=state,
+                data=data,
+                organic_results=[],
+                searches_used=searches_used,
+                cumulative_links=len(telemetry_seen_urls),
+                new_unique_links=0,
+            )
+
         if (
             is_empty_error
             and state["next_url"]
@@ -349,12 +399,21 @@ def serpapi_search_all(
                 "dated_query": state["dated_query"],
                 "window_from": state["window_from"],
                 "window_to": state["window_to"],
+                "page_number": state["page_number"],
+                "page_start": (data.get("search_parameters", {}) or {}).get(
+                    "start",
+                    0,
+                ),
                 "query_displayed": information.get("query_displayed", ""),
                 "organic_results_state": information.get(
                     "organic_results_state",
                     "Fully empty",
                 ),
                 "organic_results_count": 0,
+                "links_returned": 0,
+                "new_unique_links": 0,
+                "cumulative_unique_links": len(telemetry_seen_urls),
+                "has_next_page": False,
                 "pagination_complete": bool(state["next_url"]),
             })
             continue
@@ -367,6 +426,27 @@ def serpapi_search_all(
         organic_results = data.get("organic_results", []) or []
         if organic_results:
             state["empty_page_retries"] = 0
+        page_links = [
+            str(item.get("link", "")).strip()
+            for item in organic_results
+            if str(item.get("link", "")).strip()
+        ]
+        normalized_page_links = set()
+        for link in page_links:
+            normalized = canonicalize_url(link)
+            if normalized:
+                normalized_page_links.add(normalized)
+        new_page_links = normalized_page_links - telemetry_seen_urls
+        telemetry_seen_urls.update(normalized_page_links)
+
+        log_serpapi_page(
+            state=state,
+            data=data,
+            organic_results=organic_results,
+            searches_used=searches_used,
+            cumulative_links=len(telemetry_seen_urls),
+            new_unique_links=len(new_page_links),
+        )
         diagnostics.append({
             "search_id": search_id,
             "status": search_status,
@@ -374,9 +454,20 @@ def serpapi_search_all(
             "dated_query": state["dated_query"],
             "window_from": state["window_from"],
             "window_to": state["window_to"],
+            "page_number": state["page_number"],
+            "page_start": (data.get("search_parameters", {}) or {}).get(
+                "start",
+                0,
+            ),
             "query_displayed": information.get("query_displayed", ""),
             "organic_results_state": information.get("organic_results_state", ""),
             "organic_results_count": len(organic_results),
+            "links_returned": len(page_links),
+            "new_unique_links": len(new_page_links),
+            "cumulative_unique_links": len(telemetry_seen_urls),
+            "has_next_page": bool(
+                (data.get("serpapi_pagination", {}) or {}).get("next")
+            ),
         })
 
         for item in organic_results:
@@ -395,6 +486,7 @@ def serpapi_search_all(
         next_url = (data.get("serpapi_pagination", {}) or {}).get("next", "")
         if organic_results and next_url:
             state["next_url"] = next_url
+            state["page_number"] += 1
             queue.append(state)
 
         emit(
