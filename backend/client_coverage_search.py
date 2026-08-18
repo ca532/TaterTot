@@ -48,7 +48,6 @@ SERPAPI_HL = os.getenv("SERPAPI_HL", "en").strip()
 SERPAPI_CONNECT_TIMEOUT = 10
 SERPAPI_READ_TIMEOUT = 90
 SERPAPI_NETWORK_RETRIES = 3
-SERPAPI_EMPTY_PAGE_RETRIES = 2
 SERPAPI_DATE_SLICE_DAYS = 7
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
@@ -275,6 +274,12 @@ def log_serpapi_page(
         "cumulative_links": cumulative_links,
         "has_next_page": bool(pagination.get("next")),
         "empty_page_retry": state["empty_page_retries"],
+        "no_cache": state["empty_page_retries"] >= 1,
+        "offset_fallback": (
+            state["empty_page_retries"] >= 2
+            and state["page_number"] == 1
+            and state["search_source"] == "web"
+        ),
         "searches_used": searches_used,
         "error": data.get("error", ""),
     }
@@ -391,21 +396,45 @@ def serpapi_search_all(
             continue
 
         state = queue.popleft()
+        retry_stage = state["empty_page_retries"]
+        retry_params = {}
+        if retry_stage >= 1:
+            retry_params["no_cache"] = "true"
+        if (
+            retry_stage >= 2
+            and state["page_number"] == 1
+            and state["search_source"] == "web"
+        ):
+            retry_params["start"] = 1
+
         if state["next_url"]:
-            request_key = state["next_url"]
+            request_params = {
+                "api_key": SERPAPI_API_KEY,
+                **retry_params,
+            }
+            request_key = json.dumps({
+                "url": state["next_url"],
+                **request_params,
+            }, sort_keys=True)
             if request_key in state["visited_pages"]:
                 continue
             state["visited_pages"].add(request_key)
             response = request_serpapi(
                 state["next_url"],
-                {"api_key": SERPAPI_API_KEY},
+                request_params,
             )
         else:
-            request_key = json.dumps(state["params"], sort_keys=True)
+            request_params = {
+                **state["params"],
+                **retry_params,
+            }
+            request_key = json.dumps(request_params, sort_keys=True)
+            if request_key in state["visited_pages"]:
+                continue
             state["visited_pages"].add(request_key)
             response = request_serpapi(
                 SERPAPI_URL,
-                state["params"],
+                request_params,
             )
 
         if response.status_code == 429:
@@ -450,14 +479,21 @@ def serpapi_search_all(
                 new_unique_links=0,
             )
 
-        if (
+        next_retry_stage = None
+        if is_empty_page and state["empty_page_retries"] == 0:
+            next_retry_stage = 1
+        elif (
             is_empty_page
-            and state["empty_page_retries"] < SERPAPI_EMPTY_PAGE_RETRIES
+            and state["empty_page_retries"] == 1
+            and state["page_number"] == 1
+            and state["search_source"] == "web"
         ):
-            state["empty_page_retries"] += 1
-            state["visited_pages"].discard(request_key)
+            next_retry_stage = 2
+
+        if next_retry_stage is not None:
+            state["empty_page_retries"] = next_retry_stage
             queue.appendleft(state)
-            time.sleep(5 * state["empty_page_retries"])
+            time.sleep(2 ** next_retry_stage)
             continue
 
         if is_empty_page:
@@ -496,8 +532,6 @@ def serpapi_search_all(
             identifier = f" ({search_id})" if search_id else ""
             raise RuntimeError(f"SerpApi search failed{identifier}: {message}")
 
-        if page_results:
-            state["empty_page_retries"] = 0
         page_links = [
             str(item.get("link", "")).strip()
             for item in page_results
@@ -569,6 +603,7 @@ def serpapi_search_all(
             })
 
         next_url = (data.get("serpapi_pagination", {}) or {}).get("next", "")
+        state["empty_page_retries"] = 0
         if page_results and next_url:
             state["next_url"] = next_url
             state["page_number"] += 1
