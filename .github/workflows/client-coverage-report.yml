@@ -63,9 +63,7 @@ jobs:
 
       - name: Install dependencies
         timeout-minutes: 15
-        run: |
-          pip install -r backend/requirements-coverage.txt
-          python -m playwright install chromium
+        run: pip install -r backend/requirements-coverage.txt
 
       - name: Generate coverage report
         env:
@@ -77,6 +75,7 @@ jobs:
           COVERAGE_DATE_TO: ${{ inputs.date_to }}
           COVERAGE_BACKLINK_DOMAINS: ${{ inputs.backlink_domains }}
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
+          ZENROWS_API_KEY: ${{ secrets.ZENROWS_API_KEY }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python -u backend/run_client_coverage_report.py

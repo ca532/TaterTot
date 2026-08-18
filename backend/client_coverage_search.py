@@ -22,7 +22,7 @@ try:
     )
     from client_coverage_pdf import build_coverage_pdf
     from google_storage import GoogleSheetsDB
-    from publication_traffic import lookup_hypestat_monthly_visits
+    from publication_traffic import lookup_publication_traffic
 except ImportError:
     from backend.article_quality import (
         canonicalize_url,
@@ -33,7 +33,7 @@ except ImportError:
     )
     from backend.client_coverage_pdf import build_coverage_pdf
     from backend.google_storage import GoogleSheetsDB
-    from backend.publication_traffic import lookup_hypestat_monthly_visits
+    from backend.publication_traffic import lookup_publication_traffic
 
 
 SERPAPI_URL = "https://serpapi.com/search.json"
@@ -1010,7 +1010,7 @@ def run_keyword_coverage_report(
     review_results = dedupe_results(review_results)
     domains = sorted({row["domain"] for row in confirmed if row.get("domain")})
     emit("traffic", 0, len(domains), "Looking up publication traffic")
-    traffic = lookup_hypestat_monthly_visits(domains)
+    traffic = lookup_publication_traffic(domains)
     for row in confirmed:
         data = traffic.get(row["domain"], {})
         row["monthly_visits"] = data.get("monthly_visits") or ""

@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-import asyncio
+import json
 import os
-import random
 import re
-from urllib.parse import unquote, urlparse
+import time
+from urllib.parse import urlparse
 
-from crawlee import ConcurrencySettings
-from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
+import requests
+from bs4 import BeautifulSoup
 
 
 HYPESTAT_BASE_URL = "https://hypestat.com/info"
-HYPESTAT_MIN_DELAY_SECONDS = float(os.getenv("HYPESTAT_MIN_DELAY_SECONDS", "2"))
-HYPESTAT_MAX_DELAY_SECONDS = float(os.getenv("HYPESTAT_MAX_DELAY_SECONDS", "4"))
+ZENROWS_API_URL = "https://api.zenrows.com/v1/"
+ZENROWS_API_KEY = os.getenv("ZENROWS_API_KEY", "").strip()
+ZENROWS_WAIT_MS = os.getenv("ZENROWS_WAIT_MS", "3000")
+ZENROWS_MAX_RETRIES = int(os.getenv("ZENROWS_MAX_RETRIES", "2"))
+ZENROWS_TIMEOUT_SECONDS = int(os.getenv("ZENROWS_TIMEOUT_SECONDS", "150"))
+BLOCKED_MARKERS = (
+    "verify you are human",
+    "access denied",
+    "captcha",
+    "checking your browser",
+    "cloudflare ray id",
+)
 
 
 def domain_from_url(value: str) -> str:
@@ -23,14 +33,6 @@ def domain_from_url(value: str) -> str:
         raw = f"https://{raw}"
     host = urlparse(raw).netloc.lower()
     return host[4:] if host.startswith("www.") else host
-
-
-def domain_from_hypestat_url(url: str) -> str:
-    path = unquote(urlparse(url).path)
-    marker = "/info/"
-    if marker not in path:
-        return ""
-    return domain_from_url(path.split(marker, 1)[1].strip("/"))
 
 
 def parse_visit_count(value: str) -> int | None:
@@ -74,65 +76,82 @@ def default_result(error: str) -> dict:
     return {
         "monthly_visits": None,
         "monthly_visits_display": "N/A",
-        "source": "hypestat",
+        "source": "hypestat_via_zenrows",
         "error": error,
     }
 
 
-async def _crawl_hypestat(domains: list[str]) -> dict[str, dict]:
-    results: dict[str, dict] = {}
-    crawler = PlaywrightCrawler(
-        headless=True,
-        browser_type="chromium",
-        browser_launch_options={
-            "chromium_sandbox": False,
-        },
-        concurrency_settings=ConcurrencySettings(
-            desired_concurrency=1,
-            max_concurrency=1,
-        ),
-        max_request_retries=2,
-        max_requests_per_crawl=len(domains),
+def _log_lookup(
+    domain: str,
+    status: str,
+    visits: int | None = None,
+    error: str = "",
+) -> None:
+    print(
+        "[TRAFFIC_LOOKUP] "
+        + json.dumps({
+            "domain": domain,
+            "source": "hypestat_via_zenrows",
+            "status": status,
+            "monthly_visits": visits,
+            "error": error,
+        }, sort_keys=True),
+        flush=True,
     )
 
-    @crawler.router.default_handler
-    async def request_handler(context: PlaywrightCrawlingContext) -> None:
-        domain = domain_from_hypestat_url(context.request.url)
+
+def _lookup_domain(domain: str) -> dict:
+    params = {
+        "apikey": ZENROWS_API_KEY,
+        "url": f"{HYPESTAT_BASE_URL}/{domain}",
+        "js_render": "true",
+        "premium_proxy": "true",
+        "wait": ZENROWS_WAIT_MS,
+    }
+    last_error = "request_failed"
+
+    for attempt in range(ZENROWS_MAX_RETRIES + 1):
         try:
-            body_text = await context.page.locator("body").inner_text(timeout=20_000)
-            lowered = body_text.lower()
-            blocked_markers = (
-                "verify you are human",
-                "access denied",
-                "captcha",
-                "checking your browser",
-                "cloudflare ray id",
+            response = requests.get(
+                ZENROWS_API_URL,
+                params=params,
+                timeout=(10, ZENROWS_TIMEOUT_SECONDS),
             )
-            if any(marker in lowered for marker in blocked_markers):
-                raise RuntimeError("hypestat_blocked")
+        except requests.RequestException as exc:
+            last_error = type(exc).__name__
+        else:
+            if response.status_code == 429 or response.status_code >= 500:
+                last_error = f"zenrows_http_{response.status_code}"
+            elif response.status_code >= 400:
+                last_error = f"zenrows_http_{response.status_code}"
+                break
+            else:
+                page_text = BeautifulSoup(
+                    response.text,
+                    "html.parser",
+                ).get_text(" ", strip=True)
+                if any(marker in page_text.lower() for marker in BLOCKED_MARKERS):
+                    last_error = "hypestat_blocked"
+                else:
+                    visits = extract_monthly_visits(page_text)
+                    status = "success" if visits is not None else "not_found"
+                    error = "" if visits is not None else "monthly_visits_not_found"
+                    _log_lookup(domain, status, visits, error)
+                    return {
+                        "monthly_visits": visits,
+                        "monthly_visits_display": format_visits(visits),
+                        "source": "hypestat_via_zenrows",
+                        "error": error,
+                    }
 
-            visits = extract_monthly_visits(body_text)
-            results[domain] = {
-                "monthly_visits": visits,
-                "monthly_visits_display": format_visits(visits),
-                "source": "hypestat",
-                "error": "" if visits is not None else "not_found",
-            }
-        finally:
-            delay = random.uniform(
-                HYPESTAT_MIN_DELAY_SECONDS,
-                HYPESTAT_MAX_DELAY_SECONDS,
-            )
-            await asyncio.sleep(delay)
+        if attempt < ZENROWS_MAX_RETRIES:
+            time.sleep(2 ** attempt)
 
-    await crawler.run([f"{HYPESTAT_BASE_URL}/{domain}" for domain in domains])
-
-    for domain in domains:
-        results.setdefault(domain, default_result("crawl_failed"))
-    return results
+    _log_lookup(domain, "failed", error=last_error)
+    return default_result(last_error)
 
 
-def lookup_hypestat_monthly_visits(domains: list[str]) -> dict[str, dict]:
+def lookup_publication_traffic(domains: list[str]) -> dict[str, dict]:
     targets = sorted({
         normalized
         for domain in domains
@@ -140,9 +159,7 @@ def lookup_hypestat_monthly_visits(domains: list[str]) -> dict[str, dict]:
     })
     if not targets:
         return {}
+    if not ZENROWS_API_KEY:
+        raise RuntimeError("ZENROWS_API_KEY is required")
 
-    try:
-        return asyncio.run(_crawl_hypestat(targets))
-    except Exception as exc:
-        error = type(exc).__name__
-        return {domain: default_result(error) for domain in targets}
+    return {domain: _lookup_domain(domain) for domain in targets}
