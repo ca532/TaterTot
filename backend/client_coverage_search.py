@@ -48,7 +48,7 @@ SERPAPI_HL = os.getenv("SERPAPI_HL", "en").strip()
 SERPAPI_CONNECT_TIMEOUT = 10
 SERPAPI_READ_TIMEOUT = 90
 SERPAPI_NETWORK_RETRIES = 3
-SERPAPI_EMPTY_PAGE_RETRIES = 1
+SERPAPI_EMPTY_PAGE_RETRIES = 2
 SERPAPI_DATE_SLICE_DAYS = 7
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
@@ -173,6 +173,22 @@ def build_dated_query(
     return " ".join(parts)
 
 
+def build_news_tbs(date_from: str = "", date_to: str = "") -> str:
+    filters = []
+    if date_from and date_to:
+        start = datetime.strptime(date_from, "%Y-%m-%d")
+        end = datetime.strptime(date_to, "%Y-%m-%d")
+        filters.extend([
+            "cdr:1",
+            f"cd_min:{start:%m/%d/%Y}",
+            f"cd_max:{end:%m/%d/%Y}",
+        ])
+
+    # Sort by date and include similar syndicated news results.
+    filters.extend(["sbd:1", "nsd:1"])
+    return ",".join(filters)
+
+
 def build_date_windows(date_from: str, date_to: str) -> list[tuple[str, str]]:
     if not date_from or not date_to:
         return [(date_from, date_to)]
@@ -222,7 +238,7 @@ def request_serpapi(url: str, params: dict):
 def log_serpapi_page(
     state: dict,
     data: dict,
-    organic_results: list[dict],
+    page_results: list[dict],
     searches_used: int,
     cumulative_links: int,
     new_unique_links: int,
@@ -232,7 +248,7 @@ def log_serpapi_page(
     pagination = data.get("serpapi_pagination", {}) or {}
     page_links = [
         str(item.get("link", "")).strip()
-        for item in organic_results
+        for item in page_results
         if str(item.get("link", "")).strip()
     ]
 
@@ -240,12 +256,19 @@ def log_serpapi_page(
         "search_id": metadata.get("id", ""),
         "query": state["query"],
         "dated_query": state["dated_query"],
+        "search_source": state["search_source"],
         "search_scope": state["search_scope"],
         "window_from": state["window_from"],
         "window_to": state["window_to"],
         "page_number": state["page_number"],
         "start": parameters.get("start", 0),
-        "organic_results": len(organic_results),
+        "results_returned": len(page_results),
+        "organic_results": (
+            len(page_results) if state["search_source"] == "web" else 0
+        ),
+        "news_results": (
+            len(page_results) if state["search_source"] == "news" else 0
+        ),
         "links_returned": len(page_links),
         "unique_links_on_page": len(set(page_links)),
         "new_unique_links": new_unique_links,
@@ -291,29 +314,59 @@ def serpapi_search_all(
                 date_from=window_from,
                 date_to=window_to,
             )
-            params = {
-                "engine": "google",
-                "q": dated_query,
+            common_params = {
                 "api_key": SERPAPI_API_KEY,
                 "num": 10,
-                "filter": "0",
                 "google_domain": SERPAPI_GOOGLE_DOMAIN,
                 "gl": SERPAPI_GL,
                 "hl": SERPAPI_HL,
             }
+            news_query = (
+                query.strip()
+                if window_from and window_to
+                else dated_query
+            )
+            source_params = (
+                (
+                    "news",
+                    "news_results",
+                    news_query,
+                    {
+                        **common_params,
+                        "engine": "google",
+                        "tbm": "nws",
+                        "q": news_query,
+                        "tbs": build_news_tbs(window_from, window_to),
+                    },
+                ),
+                (
+                    "web",
+                    "organic_results",
+                    dated_query,
+                    {
+                        **common_params,
+                        "engine": "google",
+                        "q": dated_query,
+                        "filter": "0",
+                    },
+                ),
+            )
 
-            queue.append({
-                "query": query.strip(),
-                "dated_query": dated_query,
-                "search_scope": search_scope,
-                "window_from": window_from,
-                "window_to": window_to,
-                "params": params,
-                "next_url": "",
-                "visited_pages": set(),
-                "empty_page_retries": 0,
-                "page_number": 1,
-            })
+            for search_source, result_key, displayed_query, params in source_params:
+                queue.append({
+                    "query": query.strip(),
+                    "dated_query": displayed_query,
+                    "search_source": search_source,
+                    "result_key": result_key,
+                    "search_scope": search_scope,
+                    "window_from": window_from,
+                    "window_to": window_to,
+                    "params": params,
+                    "next_url": "",
+                    "visited_pages": set(),
+                    "empty_page_retries": 0,
+                    "page_number": 1,
+                })
 
     results = []
     diagnostics = []
@@ -375,25 +428,30 @@ def serpapi_search_all(
         search_status = str(metadata.get("status", "")).strip()
         search_error = str(data.get("error", "")).strip()
         search_id = str(metadata.get("id", "")).strip()
+        page_results = data.get(state["result_key"], []) or []
 
         is_empty_error = (
-            search_error.lower()
-            == "google hasn't returned any results for this query."
+            "hasn't returned any results for this query"
+            in search_error.lower()
+        )
+        is_empty_page = is_empty_error or (
+            not search_error
+            and search_status.lower() != "error"
+            and not page_results
         )
 
-        if is_empty_error:
+        if is_empty_page:
             log_serpapi_page(
                 state=state,
                 data=data,
-                organic_results=[],
+                page_results=[],
                 searches_used=searches_used,
                 cumulative_links=len(telemetry_seen_urls),
                 new_unique_links=0,
             )
 
         if (
-            is_empty_error
-            and state["next_url"]
+            is_empty_page
             and state["empty_page_retries"] < SERPAPI_EMPTY_PAGE_RETRIES
         ):
             state["empty_page_retries"] += 1
@@ -402,12 +460,13 @@ def serpapi_search_all(
             time.sleep(5 * state["empty_page_retries"])
             continue
 
-        if is_empty_error:
+        if is_empty_page:
             diagnostics.append({
                 "search_id": search_id,
                 "status": search_status,
                 "query": state["query"],
                 "dated_query": state["dated_query"],
+                "search_source": state["search_source"],
                 "search_scope": state["search_scope"],
                 "window_from": state["window_from"],
                 "window_to": state["window_to"],
@@ -422,6 +481,8 @@ def serpapi_search_all(
                     "Fully empty",
                 ),
                 "organic_results_count": 0,
+                "news_results_count": 0,
+                "results_count": 0,
                 "links_returned": 0,
                 "new_unique_links": 0,
                 "cumulative_unique_links": len(telemetry_seen_urls),
@@ -435,12 +496,11 @@ def serpapi_search_all(
             identifier = f" ({search_id})" if search_id else ""
             raise RuntimeError(f"SerpApi search failed{identifier}: {message}")
 
-        organic_results = data.get("organic_results", []) or []
-        if organic_results:
+        if page_results:
             state["empty_page_retries"] = 0
         page_links = [
             str(item.get("link", "")).strip()
-            for item in organic_results
+            for item in page_results
             if str(item.get("link", "")).strip()
         ]
         normalized_page_links = set()
@@ -454,7 +514,7 @@ def serpapi_search_all(
         log_serpapi_page(
             state=state,
             data=data,
-            organic_results=organic_results,
+            page_results=page_results,
             searches_used=searches_used,
             cumulative_links=len(telemetry_seen_urls),
             new_unique_links=len(new_page_links),
@@ -464,6 +524,7 @@ def serpapi_search_all(
             "status": search_status,
             "query": state["query"],
             "dated_query": state["dated_query"],
+            "search_source": state["search_source"],
             "search_scope": state["search_scope"],
             "window_from": state["window_from"],
             "window_to": state["window_to"],
@@ -474,7 +535,13 @@ def serpapi_search_all(
             ),
             "query_displayed": information.get("query_displayed", ""),
             "organic_results_state": information.get("organic_results_state", ""),
-            "organic_results_count": len(organic_results),
+            "organic_results_count": (
+                len(page_results) if state["search_source"] == "web" else 0
+            ),
+            "news_results_count": (
+                len(page_results) if state["search_source"] == "news" else 0
+            ),
+            "results_count": len(page_results),
             "links_returned": len(page_links),
             "new_unique_links": len(new_page_links),
             "cumulative_unique_links": len(telemetry_seen_urls),
@@ -483,7 +550,7 @@ def serpapi_search_all(
             ),
         })
 
-        for item in organic_results:
+        for item in page_results:
             link = item.get("link", "")
             if not link:
                 continue
@@ -491,13 +558,18 @@ def serpapi_search_all(
                 "title": item.get("title", ""),
                 "url": link,
                 "snippet": item.get("snippet", ""),
-                "date": item.get("date", ""),
+                "date": (
+                    item.get("published_at")
+                    or item.get("iso_date")
+                    or item.get("date", "")
+                ),
                 "domain": domain_from_url(link),
                 "search_query": state["query"],
+                "search_source": state["search_source"],
             })
 
         next_url = (data.get("serpapi_pagination", {}) or {}).get("next", "")
-        if organic_results and next_url:
+        if page_results and next_url:
             state["next_url"] = next_url
             state["page_number"] += 1
             queue.append(state)
@@ -506,7 +578,7 @@ def serpapi_search_all(
             "searching",
             searches_used,
             starting_budget,
-            f"Searched {searches_used} Google pages",
+            f"Searched {searches_used} Google result pages",
         )
 
     if searches_used and not results:
