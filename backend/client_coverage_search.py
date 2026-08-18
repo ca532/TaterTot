@@ -240,6 +240,7 @@ def log_serpapi_page(
         "search_id": metadata.get("id", ""),
         "query": state["query"],
         "dated_query": state["dated_query"],
+        "search_scope": state["search_scope"],
         "window_from": state["window_from"],
         "window_to": state["window_to"],
         "page_number": state["page_number"],
@@ -275,7 +276,16 @@ def serpapi_search_all(
     queue = deque()
 
     for query in queries:
-        for window_from, window_to in build_date_windows(date_from, date_to):
+        weekly_windows = build_date_windows(date_from, date_to)
+        search_windows = [("full_range", date_from, date_to)]
+
+        if weekly_windows != [(date_from, date_to)]:
+            search_windows.extend(
+                ("weekly", window_from, window_to)
+                for window_from, window_to in weekly_windows
+            )
+
+        for search_scope, window_from, window_to in search_windows:
             dated_query = build_dated_query(
                 query,
                 date_from=window_from,
@@ -295,6 +305,7 @@ def serpapi_search_all(
             queue.append({
                 "query": query.strip(),
                 "dated_query": dated_query,
+                "search_scope": search_scope,
                 "window_from": window_from,
                 "window_to": window_to,
                 "params": params,
@@ -397,6 +408,7 @@ def serpapi_search_all(
                 "status": search_status,
                 "query": state["query"],
                 "dated_query": state["dated_query"],
+                "search_scope": state["search_scope"],
                 "window_from": state["window_from"],
                 "window_to": state["window_to"],
                 "page_number": state["page_number"],
@@ -452,6 +464,7 @@ def serpapi_search_all(
             "status": search_status,
             "query": state["query"],
             "dated_query": state["dated_query"],
+            "search_scope": state["search_scope"],
             "window_from": state["window_from"],
             "window_to": state["window_to"],
             "page_number": state["page_number"],
