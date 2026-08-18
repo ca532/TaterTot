@@ -62,9 +62,10 @@ jobs:
           cache-dependency-path: backend/requirements-coverage.txt
 
       - name: Install dependencies
+        timeout-minutes: 15
         run: |
           pip install -r backend/requirements-coverage.txt
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
 
       - name: Generate coverage report
         env:
