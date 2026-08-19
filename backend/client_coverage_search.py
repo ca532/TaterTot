@@ -48,6 +48,7 @@ SERPAPI_HL = os.getenv("SERPAPI_HL", "en").strip()
 SERPAPI_CONNECT_TIMEOUT = 10
 SERPAPI_READ_TIMEOUT = 90
 SERPAPI_NETWORK_RETRIES = 3
+SERPAPI_RESULTS_PER_PAGE = 10
 SERPAPI_DATE_SLICE_DAYS = 7
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
@@ -241,6 +242,7 @@ def log_serpapi_page(
     searches_used: int,
     cumulative_links: int,
     new_unique_links: int,
+    new_source_links: int,
 ) -> None:
     parameters = data.get("search_parameters", {}) or {}
     metadata = data.get("search_metadata", {}) or {}
@@ -271,6 +273,7 @@ def log_serpapi_page(
         "links_returned": len(page_links),
         "unique_links_on_page": len(set(page_links)),
         "new_unique_links": new_unique_links,
+        "new_source_links": new_source_links,
         "cumulative_links": cumulative_links,
         "has_next_page": bool(pagination.get("next")),
         "empty_page_retry": state["empty_page_retries"],
@@ -280,6 +283,10 @@ def log_serpapi_page(
             and state["page_number"] == 1
             and state["search_source"] == "web"
         ),
+        "forced_pagination": state["forced_pagination"],
+        "consecutive_duplicate_pages": state[
+            "consecutive_duplicate_pages"
+        ],
         "searches_used": searches_used,
         "error": data.get("error", ""),
     }
@@ -321,7 +328,7 @@ def serpapi_search_all(
             )
             common_params = {
                 "api_key": SERPAPI_API_KEY,
-                "num": 10,
+                "num": SERPAPI_RESULTS_PER_PAGE,
                 "google_domain": SERPAPI_GOOGLE_DOMAIN,
                 "gl": SERPAPI_GL,
                 "hl": SERPAPI_HL,
@@ -371,6 +378,10 @@ def serpapi_search_all(
                     "visited_pages": set(),
                     "empty_page_retries": 0,
                     "page_number": 1,
+                    "forced_start": None,
+                    "forced_pagination": False,
+                    "seen_result_urls": set(),
+                    "consecutive_duplicate_pages": 0,
                 })
 
     results = []
@@ -406,6 +417,8 @@ def serpapi_search_all(
             and state["search_source"] == "web"
         ):
             retry_params["start"] = 1
+        elif state["forced_start"] is not None:
+            retry_params["start"] = state["forced_start"]
 
         if state["next_url"]:
             request_params = {
@@ -477,6 +490,7 @@ def serpapi_search_all(
                 searches_used=searches_used,
                 cumulative_links=len(telemetry_seen_urls),
                 new_unique_links=0,
+                new_source_links=0,
             )
 
         next_retry_stage = None
@@ -521,9 +535,14 @@ def serpapi_search_all(
                 "results_count": 0,
                 "links_returned": 0,
                 "new_unique_links": 0,
+                "new_source_links": 0,
                 "cumulative_unique_links": len(telemetry_seen_urls),
                 "has_next_page": False,
                 "pagination_complete": bool(state["next_url"]),
+                "forced_pagination": state["forced_pagination"],
+                "consecutive_duplicate_pages": state[
+                    "consecutive_duplicate_pages"
+                ],
             })
             continue
 
@@ -542,6 +561,13 @@ def serpapi_search_all(
             normalized = canonicalize_url(link)
             if normalized:
                 normalized_page_links.add(normalized)
+        new_source_links = normalized_page_links - state["seen_result_urls"]
+        state["seen_result_urls"].update(normalized_page_links)
+        if new_source_links:
+            state["consecutive_duplicate_pages"] = 0
+        elif page_results:
+            state["consecutive_duplicate_pages"] += 1
+
         new_page_links = normalized_page_links - telemetry_seen_urls
         telemetry_seen_urls.update(normalized_page_links)
 
@@ -552,6 +578,7 @@ def serpapi_search_all(
             searches_used=searches_used,
             cumulative_links=len(telemetry_seen_urls),
             new_unique_links=len(new_page_links),
+            new_source_links=len(new_source_links),
         )
         diagnostics.append({
             "search_id": search_id,
@@ -578,10 +605,15 @@ def serpapi_search_all(
             "results_count": len(page_results),
             "links_returned": len(page_links),
             "new_unique_links": len(new_page_links),
+            "new_source_links": len(new_source_links),
             "cumulative_unique_links": len(telemetry_seen_urls),
             "has_next_page": bool(
                 (data.get("serpapi_pagination", {}) or {}).get("next")
             ),
+            "forced_pagination": state["forced_pagination"],
+            "consecutive_duplicate_pages": state[
+                "consecutive_duplicate_pages"
+            ],
         })
 
         for item in page_results:
@@ -603,9 +635,26 @@ def serpapi_search_all(
             })
 
         next_url = (data.get("serpapi_pagination", {}) or {}).get("next", "")
+        duplicate_limit_reached = (
+            state["consecutive_duplicate_pages"] >= 2
+        )
+        full_page = len(page_results) >= SERPAPI_RESULTS_PER_PAGE
         state["empty_page_retries"] = 0
-        if page_results and next_url:
+
+        if duplicate_limit_reached:
+            pass
+        elif page_results and next_url:
             state["next_url"] = next_url
+            state["forced_start"] = None
+            state["forced_pagination"] = False
+            state["page_number"] += 1
+            queue.append(state)
+        elif full_page:
+            state["next_url"] = ""
+            state["forced_start"] = (
+                state["page_number"] * SERPAPI_RESULTS_PER_PAGE
+            )
+            state["forced_pagination"] = True
             state["page_number"] += 1
             queue.append(state)
 
