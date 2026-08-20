@@ -5,6 +5,7 @@ from article_quality import (
     has_low_signal_intent,
     keyword_matches,
     normalize_publication_name,
+    prepare_article_for_classification,
     resolve_published_date,
     validate_article_content,
     validate_author,
@@ -96,6 +97,18 @@ class ArticleQualityTests(unittest.TestCase):
                 keywords,
             ),
         )
+
+    def test_prepares_classifier_text_without_page_debris(self):
+        cleaned = prepare_article_for_classification(
+            "Boucheron launched a high-jewelry collection. "
+            "Click here to subscribe. "
+            "The pieces feature diamonds and rock crystal. "
+            "All Rights Reserved."
+        )
+        self.assertIn("Boucheron launched", cleaned)
+        self.assertIn("diamonds and rock crystal", cleaned)
+        self.assertNotIn("Click here", cleaned)
+        self.assertNotIn("All Rights Reserved", cleaned)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from article_quality import keyword_matches
+from article_quality import keyword_matches, prepare_article_for_classification
 
 
 MODEL_REPO = os.getenv(
@@ -16,6 +16,7 @@ MODEL_FILE = os.getenv(
 
 RELEVANT_CATEGORIES = {
     "jewelry_product",
+    "luxury_product",
     "luxury_brand",
     "luxury_business",
     "designer_or_runway",
@@ -30,6 +31,7 @@ You classify articles for a luxury and fine-jewelry PR roundup.
 
 Choose exactly one category:
 - jewelry_product
+- luxury_product
 - luxury_brand
 - luxury_business
 - designer_or_runway
@@ -38,24 +40,57 @@ Choose exactly one category:
 - luxury_market_trend
 - irrelevant
 
-Use irrelevant unless the article's main subject is clearly related to jewelry, watches, gemstones, luxury brands, luxury business, designer fashion/runway, or material royal jewelry/wardrobe coverage.
+Select a relevant category when the corresponding subject is either:
+1. the article's main subject; or
+2. a substantial recurring angle that provides useful design, cultural,
+   commercial, retail, market, trend, craftsmanship, or PR insight.
+
+A passing, incidental, metaphorical, or unsupported mention is not enough.
 
 Category guide:
-jewelry_product: Jewelry, watches, gemstones, jewelry collections, launches, design, craftsmanship, engagement rings, or jewelry trends.
-luxury_brand: A recognized luxury brand, its products, leadership, strategy, performance, or cultural impact.
-luxury_business: Business news about luxury companies, revenue, acquisitions, tariffs, leadership, retail, manufacturing, or trade.
-designer_or_runway: Designer fashion, couture, runway, fashion week, or significant designer work.
-royal_jewelry: Jewelry worn, owned, inherited, commissioned, or discussed in connection with royalty.
-royal_wardrobe: Specific clothing, designers, couture, uniforms, dress codes, or meaningful wardrobe choices involving royalty.
-luxury_market_trend: Market-wide or consumer trends involving luxury, jewelry, watches, gemstones, or designer goods.
-irrelevant: Generic celebrity news, generic royal news, entertainment, sports, politics, health, beauty, affordable shopping, or luxury-business angle.
+jewelry_product: Jewelry, watches, gemstones, collections, launches, design,
+craftsmanship, engagement rings, jewelry trends, jewelry retail, merchandising,
+or noteworthy product selections. A named luxury brand is not required.
+luxury_product: Material coverage of luxury bags, footwear, fragrance, clothing,
+accessories, hospitality products, or other premium goods. It must substantially
+discuss a recognized luxury brand, designer, collection, craftsmanship, product
+development, or commercially meaningful luxury trend.
+luxury_brand: A recognized luxury brand, its products, leadership, strategy,
+performance, creative direction, retail presence, hospitality, or cultural impact.
+luxury_business: Material business news involving luxury companies, revenue,
+acquisitions, tariffs, leadership, retail, manufacturing, expansion, investment,
+appointments, departures, influential industry figures, or trade.
+designer_or_runway: Designer fashion, couture, runway collections, fashion week,
+or substantial coverage of significant designer work.
+royal_jewelry: Jewelry worn, owned, inherited, commissioned, designed, or
+materially discussed in connection with royalty.
+royal_wardrobe: Specific clothing, designers, couture, uniforms, dress codes, or
+meaningful wardrobe choices involving royalty. The wardrobe coverage must be
+concrete and substantial.
+luxury_market_trend: Market-wide, retail, or consumer trends involving luxury,
+jewelry, watches, gemstones, designer goods, or luxury hospitality.
+irrelevant: Use when no relevant category is materially supported.
 
 Rules:
-- Classify by the article's main subject, not passing mentions.
-- Jewelry can be relevant even without a named luxury brand.
-- A royal person alone is not enough.
-- Royal homes, holidays, births, health, relationships, charity events.
-- If unsure, choose irrelevant.
+- Choose the most specific materially supported category.
+- Jewelry can be relevant without a named luxury brand. Jewelry retail,
+  merchandising, market reporting, and editorial product selections may qualify.
+- A royal person or royal property alone is never enough.
+- Generic royal births, pregnancy, health, relationships, naming, family news,
+  homes, palaces, castles, holidays, travel, charity events, and general
+  appearances are irrelevant unless specific jewelry or wardrobe coverage is central.
+- Generic celebrity relationships, parties, appearances, and outfits are
+  irrelevant unless a luxury product, designer, runway, jewelry, or brand angle
+  is concrete and substantial.
+- Affordable or high-street shopping is irrelevant without a material luxury or
+  jewelry angle.
+- Generic beauty and fashion are irrelevant without meaningful luxury, designer,
+  runway, jewelry, watch, gemstone, or luxury-business coverage.
+- Treat diamond, gold, silver, pearl, and aquamarine as irrelevant when used only
+  as names, colours, metaphors, entertainment titles, or unrelated terms.
+- Evidence must contain 1-3 concise article-specific facts. Do not return isolated
+  keywords, category definitions, or wording copied from these instructions.
+- Do not invent evidence.
 
 Return JSON only in this format:
 
@@ -134,6 +169,52 @@ class ArticleRelevanceClassifier:
             reason="; ".join(evidence)[:500],
         )
 
+    @staticmethod
+    def _apply_evidence_policy(decision, title):
+        evidence_text = " ".join(decision.luxury_evidence).lower()
+        weak_evidence = (
+            not decision.luxury_evidence
+            or all(len(item.split()) <= 2 for item in decision.luxury_evidence)
+            or "generic celebrity news" in evidence_text
+            or "generic royal news" in evidence_text
+        )
+        if weak_evidence:
+            print(
+                "[CLASSIFIER_WEAK_EVIDENCE] "
+                f"category={decision.category} title={title!r}; decision retained"
+            )
+
+        required_terms = {
+            "royal_jewelry": {
+                "jewel", "jewelry", "jewellery", "diamond", "gemstone",
+                "tiara", "brooch", "necklace", "earring", "bracelet", "ring",
+                "crown", "regalia", "sapphire", "emerald", "ruby", "pearl",
+            },
+            "royal_wardrobe": {
+                "dress", "gown", "coat", "jacket", "suit", "skirt", "trouser",
+                "jeans", "tie", "tartan", "kilt", "uniform", "couture",
+                "designer", "wardrobe", "outfit", "clothing", "garment",
+            },
+        }
+        terms = required_terms.get(decision.category)
+        if decision.relevant and decision.luxury_evidence and terms:
+            if not keyword_matches(evidence_text, terms):
+                print(
+                    "[CLASSIFIER_POLICY_VETO] "
+                    f"category={decision.category} rule=missing_concrete_evidence "
+                    f"title={title!r}"
+                )
+                return RelevanceDecision(
+                    relevant=False,
+                    category="irrelevant",
+                    luxury_evidence=decision.luxury_evidence,
+                    reason=(
+                        f"Rejected unsupported {decision.category}: "
+                        + "; ".join(decision.luxury_evidence)
+                    )[:500],
+                )
+        return decision
+
     def classify(
         self,
         title,
@@ -151,10 +232,11 @@ class ArticleRelevanceClassifier:
                 reason=self.disabled_reason,
             )
 
+        cleaned_article = prepare_article_for_classification(article_text)
         payload = {
             "title": str(title or "").strip(),
             "publication": str(publication or "").strip(),
-            "article_excerpt": str(article_text or "")[:2000],
+            "article_excerpt": cleaned_article[:4000],
             "matched_keywords": list(matched_keywords or []),
             "matched_entities": list(matched_entities or []),
             "matched_concepts": list(matched_concepts or []),
@@ -173,7 +255,8 @@ class ArticleRelevanceClassifier:
                     response_format={"type": "json_object"},
                 )
                 content = response["choices"][0]["message"]["content"]
-                return self._decision_from_result(self._parse_json(content))
+                decision = self._decision_from_result(self._parse_json(content))
+                return self._apply_evidence_policy(decision, payload["title"])
             except Exception as exc:
                 last_error = str(exc)
                 print(

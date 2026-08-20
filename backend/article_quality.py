@@ -26,6 +26,11 @@ BLOCKED_CONTENT_MARKERS = (
     "sign up to receive emails", "click here to subscribe",
     "this area is reserved", "privacy policy and terms of service",
 )
+CLASSIFIER_INPUT_DEBRIS = (
+    "click here", "shop now", "shop today", "all rights reserved",
+    "stacked from", "method=", "sign up", "subscribe", "related stories",
+    "related articles", "read more", "newsletter", "advertisement",
+)
 GENERIC_TITLES = {
     "analysis", "advertising", "ai", "a smarter way", "above and beyond",
     "featured articles", "jewels club", "home", "latest news",
@@ -104,6 +109,27 @@ def clean_article_text(text: str) -> str:
     return value.strip()
 
 
+def prepare_article_for_classification(text: str) -> str:
+    """Remove obvious page debris before sending article text to the model."""
+    cleaned = clean_article_text(text)
+    parts = []
+    seen = set()
+    for block in re.split(r"[\r\n]+", cleaned):
+        for part in re.split(r"(?<=[.!?])\s+", block.strip()):
+            part = part.strip()
+            if not part:
+                continue
+            lowered = part.lower()
+            if any(marker in lowered for marker in CLASSIFIER_INPUT_DEBRIS):
+                continue
+            normalized = re.sub(r"\s+", " ", lowered)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            parts.append(part)
+    return " ".join(parts).strip()
+
+
 def validate_article_content(text: str) -> tuple[bool, str]:
     cleaned = clean_article_text(text)
     lowered = cleaned.lower()
@@ -177,8 +203,8 @@ def relevance_gate_reason(
 
     if any(pattern in clean_article_text(title).lower() for pattern in NON_ARTICLE_TITLE_PATTERNS):
         return "low_signal_intent"
-    # Curated/generated entities are specific brands, companies, products, or
-    # people and can establish relevance despite otherwise broad title wording.
+    # Curated/generated entities are specific retrieval signals. Final semantic
+    # acceptance is still decided by the article-level classifier.
     if entity_matches:
         return ""
     if low_signal:

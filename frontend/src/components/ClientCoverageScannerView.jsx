@@ -284,6 +284,7 @@ export default function ClientCoverageScannerView() {
             <thead className="bg-gray-50 text-gray-600">
               <tr>
                 <th className="text-left p-3">Publication</th>
+                <th className="text-left p-3">Country</th>
                 <th className="text-left p-3">Article</th>
                 <th className="text-left p-3">Type</th>
                 <th className="text-left p-3">Visits</th>
@@ -294,6 +295,7 @@ export default function ClientCoverageScannerView() {
               {results.map((row, index) => (
                 <tr key={`${row.article_url || row.publication}-${index}`} className="border-t border-gray-100">
                   <td className="p-3">{row.publication}</td>
+                  <td className="p-3">{row.country || "N/A"}</td>
                   <td className="p-3">
                     {row.article_url ? (
                       <a href={row.article_url} target="_blank" rel="noreferrer" className="text-[#b8860b]">
@@ -308,7 +310,7 @@ export default function ClientCoverageScannerView() {
               ))}
               {results.length === 0 && (
                 <tr>
-                  <td className="p-4 text-gray-500" colSpan={5}>
+                  <td className="p-4 text-gray-500" colSpan={6}>
                     {summary?.searched_results === 0
                       ? "Google returned no organic results for this query and date range."
                       : "No confirmed client mentions were found in the checked results."}

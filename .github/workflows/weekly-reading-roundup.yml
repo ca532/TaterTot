@@ -124,7 +124,7 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           SUMMARIZER_MODEL: google/flan-t5-base
-          RUN_CLASSIFIER_EVAL: "true"
+          RUN_CLASSIFIER_EVAL: "false"
 
       - name: Find PDF and Get Date
         if: steps.uk-time.outputs.should_run == 'true'

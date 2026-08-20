@@ -18,7 +18,7 @@ CORE_KEYWORDS = {
     "diamond", "engagement ring", "wedding ring", "lab grown diamonds",
     "diamond price", "jewels", "cartier", "tiffany", "bulgari", "chanel",
     "dior", "van cleef", "graff", "harry winston", "chopard", "piaget",
-    "boucheron",
+    "boucheron", "gucci", "handbag", "luxury bag", "perfume", "fragrance",
 }
 SUPPORTING_KEYWORDS = {
     "necklace", "bracelet", "earrings", "pendant", "brooch", "gold",
@@ -40,6 +40,7 @@ TOPIC_ENTITIES = {
     "tiffany", "bulgari", "lvmh", "vhernier", "graff", "carolina herrera",
     "ferragamo", "tom ford", "ralph lauren", "coach", "david webb",
     "swarovski", "diamonds factory", "kering", "richard mille", "chaumet",
+    "gucci", "marc jacobs", "mathilde favier",
 }
 SUPPORTING_CONCEPTS = {
     "copenhagen fashion week", "runway", "royal wardrobe", "dress code",
@@ -90,8 +91,8 @@ class LuxuryRelevanceRegressionTests(unittest.TestCase):
         policy = _policy_map()
         expected_keep = [item for item in fixtures if item["expected"] == "keep"]
         expected_reject = [item for item in fixtures if item["expected"] == "reject"]
-        self.assertEqual(39, len(expected_keep))
-        self.assertEqual(45, len(expected_reject))
+        self.assertEqual(41, len(expected_keep))
+        self.assertEqual(48, len(expected_reject))
 
         false_negatives = []
         false_positives = []
@@ -124,13 +125,13 @@ class LuxuryRelevanceRegressionTests(unittest.TestCase):
         rejected = len(expected_reject) - len(false_positives)
         self.assertGreaterEqual(
             retained,
-            36,
-            f"Retained {retained}/39; false negatives: {false_negatives}",
+            38,
+            f"Retained {retained}/41; false negatives: {false_negatives}",
         )
         self.assertGreaterEqual(
             rejected,
-            42,
-            f"Rejected {rejected}/45; false positives: {false_positives}",
+            45,
+            f"Rejected {rejected}/48; false positives: {false_positives}",
         )
 
 

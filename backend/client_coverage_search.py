@@ -22,6 +22,10 @@ try:
     )
     from client_coverage_pdf import build_coverage_pdf
     from google_storage import GoogleSheetsDB
+    from publication_country import (
+        enrich_publication_countries,
+        extract_metadata_country,
+    )
     from publication_traffic import lookup_publication_traffic
 except ImportError:
     from backend.article_quality import (
@@ -33,6 +37,10 @@ except ImportError:
     )
     from backend.client_coverage_pdf import build_coverage_pdf
     from backend.google_storage import GoogleSheetsDB
+    from backend.publication_country import (
+        enrich_publication_countries,
+        extract_metadata_country,
+    )
     from backend.publication_traffic import lookup_publication_traffic
 
 
@@ -75,6 +83,9 @@ REPORT_HEADERS = [
     "verification_reason",
     "matched_location",
     "backlink_url",
+    "country_source",
+    "country_confidence",
+    "country_lookup_key",
 ]
 
 NON_CONTENT_PATH_PARTS = (
@@ -804,6 +815,7 @@ def fetch_page(url: str) -> dict:
 
     soup = BeautifulSoup(res.text, "html.parser")
     metadata = extract_page_metadata(res.text)
+    country_hint = extract_metadata_country(soup)
     json_ld_body = _extract_json_ld_article_body(soup)
 
     for tag in soup(["script", "style", "noscript", "svg", "form", "nav", "footer", "aside"]):
@@ -864,6 +876,7 @@ def fetch_page(url: str) -> dict:
         "article_links": _extract_article_links(container, canonical),
         "published_date": metadata.get("published_date"),
         "domain": domain_from_url(canonical),
+        "country_hint": country_hint,
     }
 
 
@@ -980,10 +993,13 @@ def ensure_report_sheet(db: GoogleSheetsDB):
     return ws
 
 
-def save_report_rows(rows: list[dict]) -> None:
+def save_report_rows(
+    rows: list[dict],
+    db: GoogleSheetsDB | None = None,
+) -> None:
     if not rows:
         return
-    db = GoogleSheetsDB()
+    db = db or GoogleSheetsDB()
     ws = ensure_report_sheet(db)
     payload = [[row.get(header, "") for header in REPORT_HEADERS] for row in rows]
     ws.append_rows(payload, value_input_option="USER_ENTERED")
@@ -1084,6 +1100,10 @@ def run_keyword_coverage_report(
             "backlink_url": ", ".join(evidence["backlink_urls"]),
             "evidence_snippet": evidence["evidence_snippet"],
             "link_note": "with link back" if evidence["has_backlink"] else "",
+            "country_source": "",
+            "country_confidence": "",
+            "country_lookup_key": "",
+            "_country_hint": page.get("country_hint"),
         }
         if evidence["is_relevant"]:
             confirmed.append(row)
@@ -1092,6 +1112,24 @@ def run_keyword_coverage_report(
 
     confirmed = dedupe_results(confirmed)
     review_results = dedupe_results(review_results)
+    db = GoogleSheetsDB()
+    emit(
+        "countries",
+        0,
+        len(confirmed),
+        "Resolving publication countries",
+    )
+    country_stats = enrich_publication_countries(
+        confirmed,
+        db=db,
+        serpapi_api_key=SERPAPI_API_KEY,
+        google_domain=SERPAPI_GOOGLE_DOMAIN,
+        gl=SERPAPI_GL,
+        hl=SERPAPI_HL,
+        google_budget=search_run["searches_remaining"],
+    )
+    for row in review_results:
+        row.pop("_country_hint", None)
     domains = sorted({row["domain"] for row in confirmed if row.get("domain")})
     emit("traffic", 0, len(domains), "Looking up publication traffic")
     traffic = lookup_publication_traffic(domains)
@@ -1103,7 +1141,7 @@ def run_keyword_coverage_report(
 
     rows_to_save = confirmed + review_results
     emit("saving", 0, len(rows_to_save), "Saving report")
-    save_report_rows(rows_to_save)
+    save_report_rows(rows_to_save, db=db)
 
     countries = sorted({row["country"] for row in confirmed if row.get("country")})
     highlights = {
@@ -1119,6 +1157,7 @@ def run_keyword_coverage_report(
     build_coverage_pdf(pdf_path, report_title, highlights, confirmed)
 
     emit("complete", len(confirmed), len(confirmed), "Coverage report complete")
+    final_capacity = get_serpapi_capacity()
     return {
         "coverage_run_id": run_id,
         "count": len(confirmed),
@@ -1129,7 +1168,8 @@ def run_keyword_coverage_report(
         "pdf_path": pdf_path,
         "searched_results": total_results,
         "searches_used": search_run["searches_used"],
-        "searches_remaining": search_run["searches_remaining"],
+        "searches_remaining": final_capacity["monthly_left"],
         "search_stop_reason": search_run["stop_reason"],
         "search_diagnostics": search_run["search_diagnostics"],
+        "country_stats": country_stats,
     }

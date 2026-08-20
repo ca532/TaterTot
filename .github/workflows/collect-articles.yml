@@ -128,7 +128,7 @@ jobs:
           TOPIC: ${{ github.event.inputs.topic }}
           SOURCE_LIST_NAME: ${{ github.event.inputs.list_name }}
           SUMMARIZER_MODEL: google/flan-t5-base
-          RUN_CLASSIFIER_EVAL: "true"
+          RUN_CLASSIFIER_EVAL: "false"
 
 
       - name: Find PDF and Get Date

@@ -71,11 +71,15 @@ def main() -> None:
                 "searches_used": searches_used,
                 "searches_remaining": result.get("searches_remaining", 0),
                 "search_stop_reason": result.get("search_stop_reason", ""),
+                "country_google_searches_used": result.get(
+                    "country_stats", {}
+                ).get("google_searches_used", 0),
             },
             "results": result.get("results", []),
             "review_results": result.get("review_results", []),
             "search_diagnostics": result.get("search_diagnostics", []),
             "highlights": result.get("highlights", {}),
+            "country_stats": result.get("country_stats", {}),
         })
     except Exception as exc:
         _write_result({

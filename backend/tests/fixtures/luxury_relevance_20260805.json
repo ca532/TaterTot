@@ -87,8 +87,8 @@
     "publication": "Harper's Bazaar",
     "title": "Did Gigi Hadid and Bradley Cooper Secretly Get Married?",
     "summary": "We may have a new celebrity wedding on the horizon—or we may have already missed it. Today. Gigi Hadid and Bradley Cooper stepped out for a casual walk around Paris, holding hands and looking so in love. They seemed to be going to a workout, as they wore athleisure. But the best part: Each was also wearing a gold ring on that finger. Cooper wore a classic gold band, while Hadid wore...",
-    "expected": "keep",
-    "reason": "luxury or jewellery editorial relevance"
+    "expected": "reject",
+    "reason": "celebrity relationship speculation with only incidental jewelry"
   },
   {
     "publication": "Harper's Bazaar",
@@ -332,8 +332,8 @@
     "publication": "Tatler",
     "title": "Off to the races! What happened when I took Callie Coles to present the coveted Tatler Cup at Glorious Goodwood",
     "summary": "The Duke and Duchess of Richmond have welcomed the Prince and Princess of Wales to the Tatler British EBF Maiden Fillies Stakes Cup in sartorially stylish splendour this year, eh? - PA Images/Getty Images She is, of course, a seasoned dame of the event. She raced in the ranks back in 2021 and has since been an insider-onlooker on numerous occasions. (Indeed, her unmatched knowledge of the flat-racing scene has inspired her new book, Tangled Webs). She also comes with arm candy. Her husband is famed former trainer-turned-businessman Toby Coles and together they have become a sort of Posh ‘n’ Becks type duo of the haughty horse scene.",
-    "expected": "keep",
-    "reason": "luxury or jewellery editorial relevance"
+    "expected": "reject",
+    "reason": "generic society and racing coverage without a material luxury angle"
   },
   {
     "publication": "The Cut",
@@ -586,5 +586,40 @@
     "summary": "Bottoni By Terry Tea to Tan, a lightweight bronzing spray that serves as a secret weapon for a luminous, realistic glow in seconds. It comes highly recommended to instantly warm up a pale complexion without the commitment of self-tanner or sun exposure. TikTok content The hydrating mist is made with 97 per cent naturally derived ingredients that feel lightweight and refreshing on the complexion – yet it is also long-wearing and transfer-resistant.",
     "expected": "reject",
     "reason": "outside the luxury monitoring brief"
+  },
+  {
+    "publication": "Harper's Bazaar",
+    "title": "This Fall's Best Bag Trends Really Mean Business",
+    "summary": "The report examines fall luxury bag trends, including Chanel accessories and the craftsmanship, silhouettes, and commercial direction shaping the season.",
+    "expected": "keep",
+    "reason": "material luxury product and market-trend coverage"
+  },
+  {
+    "publication": "Harper's Bazaar",
+    "title": "Olivia Dean Is a Picture of Old Hollywood Glamour in This Gucci Evening Gown",
+    "summary": "Olivia Dean wore a Gucci evening gown whose design and collection details form the central fashion angle of the article.",
+    "expected": "keep",
+    "reason": "specific luxury designer product coverage"
+  },
+  {
+    "publication": "Vanity Fair",
+    "title": "Chanel Jackets and Hair Clips: A Look at Marc Jacobs's Signature Style",
+    "summary": "The article examines Marc Jacobs's signature style through Chanel jackets, hair accessories, and the designer references that shape his fashion identity.",
+    "expected": "keep",
+    "reason": "substantial designer and luxury-brand analysis"
+  },
+  {
+    "publication": "Vanity Fair",
+    "title": "Beloved French Fashion Executive Mathilde Favier Dies Unexpectedly",
+    "summary": "The obituary examines former Dior public relations director Mathilde Favier's career, influence on the luxury house, and impact on the French fashion industry.",
+    "expected": "keep",
+    "reason": "material luxury-industry and PR leadership coverage"
+  },
+  {
+    "publication": "Harper's Bazaar",
+    "title": "Queen Camilla Embarks on a Rare Girls' Shopping Trip With Her Granddaughter",
+    "summary": "Queen Camilla spent an afternoon shopping with her granddaughter, but the article provides no concrete designer, garment, jewelry, or material wardrobe analysis.",
+    "expected": "reject",
+    "reason": "generic royal shopping story without concrete wardrobe evidence"
   }
 ]
