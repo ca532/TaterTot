@@ -5,7 +5,7 @@ on:
   schedule:
     # Mondays at 9:00 AM UTC.
     # During BST this is 10:00 AM UK time.
-    - cron: "0 18 * * 4"
+    - cron: "0 9 * * 1"
 
 permissions:
   contents: read
