@@ -390,6 +390,7 @@ def serpapi_search_all(
                 "google_domain": SERPAPI_GOOGLE_DOMAIN,
                 "gl": SERPAPI_GL,
                 "hl": SERPAPI_HL,
+                "filter": "0",
             }
             news_query = (
                 query.strip()
@@ -417,7 +418,6 @@ def serpapi_search_all(
                         **common_params,
                         "engine": "google",
                         "q": dated_query,
-                        "filter": "0",
                     },
                 ),
             )
