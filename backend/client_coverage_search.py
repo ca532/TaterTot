@@ -678,6 +678,9 @@ def serpapi_search_all(
             link = normalize_coverage_url(item.get("link", ""))
             if not link:
                 continue
+            publication_hint = item.get("source", "")
+            if isinstance(publication_hint, dict):
+                publication_hint = publication_hint.get("name", "")
             results.append({
                 "title": item.get("title", ""),
                 "url": link,
@@ -690,6 +693,7 @@ def serpapi_search_all(
                 "domain": domain_from_url(link),
                 "search_query": state["query"],
                 "search_source": state["search_source"],
+                "publication_hint": str(publication_hint or ""),
             })
 
         next_url = (data.get("serpapi_pagination", {}) or {}).get("next", "")
@@ -1183,6 +1187,7 @@ def run_keyword_coverage_report(
             "country_confidence": "",
             "country_lookup_key": "",
             "_country_hint": page.get("country_hint"),
+            "_publication_hint": result.get("publication_hint", ""),
         }
         if evidence["is_relevant"]:
             confirmed.append(row)
@@ -1212,11 +1217,16 @@ def run_keyword_coverage_report(
             google_budget=search_run["searches_remaining"],
         )
     except Exception as exc:
+        print(
+            "[COUNTRY_ENRICHMENT] "
+            f"status=failed error={type(exc).__name__}: {exc}"
+        )
         warnings.append(
-            f"Country enrichment failed: {type(exc).__name__}"
+            f"Country enrichment failed: {type(exc).__name__}: {exc}"
         )
     for row in confirmed + review_results:
         row.pop("_country_hint", None)
+        row.pop("_publication_hint", None)
 
     domains = sorted({row["domain"] for row in confirmed if row.get("domain")})
     emit("traffic", 0, len(domains), "Looking up publication traffic")

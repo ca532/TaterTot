@@ -11,6 +11,7 @@ import requests
 
 COUNTRY_SHEET = "Publication Country Registry"
 GOOGLE_FALLBACK_LIMIT = 20
+COUNTRY_RESOLVER_VERSION = "v2"
 WIKIDATA_URL = "https://query.wikidata.org/sparql"
 SERPAPI_URL = "https://serpapi.com/search.json"
 COUNTRY_HEADERS = [
@@ -245,17 +246,30 @@ def lookup_google_country(
     )
     response.raise_for_status()
     data = response.json()
-    for source, payload in (
+    sources = [
         ("serpapi_knowledge_graph", data.get("knowledge_graph", {})),
         ("serpapi_ai_overview", data.get("ai_overview", {})),
-    ):
-        country = country_from_text(json.dumps(payload))
+        ("serpapi_answer_box", data.get("answer_box", {})),
+    ]
+    organic_text = " ".join(
+        " ".join(
+            str(item.get(field, ""))
+            for field in ("title", "snippet", "source")
+        )
+        for item in data.get("organic_results", [])[:5]
+    )
+    sources.append(("serpapi_organic_results", organic_text))
+
+    search_id = data.get("search_metadata", {}).get("id", "")
+    for source, payload in sources:
+        serialized = payload if isinstance(payload, str) else json.dumps(payload)
+        country = country_from_text(serialized)
         if country:
             return {
                 **country,
                 "source": source,
                 "confidence": "medium",
-                "source_reference": data.get("search_metadata", {}).get("id", ""),
+                "source_reference": search_id,
             }
     return None
 
@@ -289,37 +303,81 @@ def enrich_publication_countries(
         stored = registry.get(key)
         result = None
         used_registry = False
-        if stored:
-            retry_after = str(stored.get("retry_after", "")).strip()
+        write_record = True
+        unresolved_is_fresh = False
+        first = matching_rows[0]
+
+        try:
+            manual = (
+                str((stored or {}).get("manual_override", "")).upper()
+                == "TRUE"
+            )
+            retry_after = str((stored or {}).get("retry_after", "")).strip()
             unresolved_is_fresh = (
-                stored.get("status") == "unresolved"
+                bool(stored)
+                and stored.get("status") == "unresolved"
+                and stored.get("source_reference") == COUNTRY_RESOLVER_VERSION
                 and retry_after
                 and retry_after > today.strftime("%Y-%m-%d")
             )
-            manual = str(stored.get("manual_override", "")).upper() == "TRUE"
-            if stored.get("country") or unresolved_is_fresh or manual:
+
+            if manual:
                 result = {
                     "country": stored.get("country", ""),
                     "country_code": stored.get("country_code", ""),
-                    "source": stored.get("source", "registry"),
-                    "confidence": stored.get("confidence", ""),
+                    "source": "manual",
+                    "confidence": "high",
                 }
                 used_registry = True
+            else:
+                metadata_hint = next(
+                    (
+                        row.get("_country_hint")
+                        for row in matching_rows
+                        if row.get("_country_hint")
+                    ),
+                    None,
+                )
+                publication_hint = next(
+                    (
+                        row.get("_publication_hint")
+                        for row in matching_rows
+                        if row.get("_publication_hint")
+                    ),
+                    "",
+                )
+                label_country = country_from_text(publication_hint)
+                if label_country:
+                    label_country.update({
+                        "source": "search_source_label",
+                        "confidence": "medium",
+                        "source_reference": publication_hint,
+                    })
 
-        first = matching_rows[0]
-        if result is None:
-            metadata_hint = next(
-                (row.get("_country_hint") for row in matching_rows if row.get("_country_hint")),
-                None,
-            )
-            result = (
-                country_from_url(first.get("article_url", ""))
-                or metadata_hint
-                or lookup_wikidata_country(first.get("domain", ""))
-            )
+                result = (
+                    country_from_url(first.get("article_url", ""))
+                    or metadata_hint
+                    or label_country
+                )
+                if result is None and stored and stored.get("country"):
+                    result = {
+                        "country": stored.get("country", ""),
+                        "country_code": stored.get("country_code", ""),
+                        "source": stored.get("source", "registry"),
+                        "confidence": stored.get("confidence", ""),
+                    }
+                    used_registry = True
 
-        if result is None and google_searches < google_limit and serpapi_api_key:
-            try:
+            if result is None and not unresolved_is_fresh:
+                result = lookup_wikidata_country(first.get("domain", ""))
+
+            if (
+                result is None
+                and not unresolved_is_fresh
+                and google_searches < google_limit
+                and serpapi_api_key
+            ):
+                google_searches += 1
                 result = lookup_google_country(
                     first.get("publication", ""),
                     key,
@@ -328,9 +386,15 @@ def enrich_publication_countries(
                     gl,
                     hl,
                 )
-                google_searches += 1
-            except requests.RequestException:
-                result = None
+
+        except Exception as exc:
+            print(
+                "[COUNTRY_LOOKUP] "
+                f"key={key!r} status=failed "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            result = None
+            write_record = False
 
         unresolved = result is None
         if unresolved:
@@ -339,9 +403,10 @@ def enrich_publication_countries(
                 "country_code": "",
                 "source": "unresolved",
                 "confidence": "low",
+                "source_reference": COUNTRY_RESOLVER_VERSION,
             }
 
-        if not used_registry:
+        if not used_registry and write_record and not unresolved_is_fresh:
             new_records.append([
                 key,
                 first.get("publication", ""),
@@ -362,6 +427,16 @@ def enrich_publication_countries(
             row["country_confidence"] = result["confidence"]
             row["country_lookup_key"] = key
             row.pop("_country_hint", None)
+            row.pop("_publication_hint", None)
+
+        print(json.dumps({
+            "event": "COUNTRY_LOOKUP",
+            "lookup_key": key,
+            "country": result["country"],
+            "source": result["source"],
+            "cached": used_registry,
+            "unresolved_cache_hit": unresolved_is_fresh,
+        }, sort_keys=True))
 
     if new_records:
         ws.append_rows(new_records, value_input_option="RAW")
