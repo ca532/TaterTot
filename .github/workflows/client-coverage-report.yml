@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       search_queries:
-        description: "One Google search query per line"
+        description: "Google queries separated by ||"
         required: true
         type: string
       date_from:

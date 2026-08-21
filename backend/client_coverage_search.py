@@ -174,6 +174,23 @@ def split_lines(raw: str) -> list[str]:
     ]
 
 
+def split_search_queries(raw: str) -> list[str]:
+    queries = []
+    seen = set()
+
+    for part in re.split(r"\r\n?|\n|\|\|", raw or ""):
+        query = part.strip()
+        key = query.casefold()
+
+        if not query or key in seen:
+            continue
+
+        seen.add(key)
+        queries.append(query)
+
+    return queries
+
+
 def split_csv_or_lines(raw: str) -> list[str]:
     value = (raw or "").replace("\r", "\n")
     parts = []

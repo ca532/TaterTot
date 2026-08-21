@@ -9,13 +9,13 @@ try:
     from client_coverage_search import (
         run_keyword_coverage_report,
         split_csv_or_lines,
-        split_lines,
+        split_search_queries,
     )
 except ImportError:
     from backend.client_coverage_search import (
         run_keyword_coverage_report,
         split_csv_or_lines,
-        split_lines,
+        split_search_queries,
     )
 
 
@@ -38,7 +38,9 @@ def main() -> None:
         result = run_keyword_coverage_report(
             report_title=os.environ["COVERAGE_REPORT_TITLE"],
             mention_terms=split_csv_or_lines(os.environ["COVERAGE_MENTION_TERMS"]),
-            search_queries=split_lines(os.environ["COVERAGE_SEARCH_QUERIES"]),
+            search_queries=split_search_queries(
+                os.environ["COVERAGE_SEARCH_QUERIES"]
+            ),
             date_from=os.getenv("COVERAGE_DATE_FROM", ""),
             date_to=os.getenv("COVERAGE_DATE_TO", ""),
             backlink_domains=split_csv_or_lines(
