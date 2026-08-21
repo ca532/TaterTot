@@ -546,6 +546,26 @@ class PipelineService {
     }
   }
 
+  async setClientCoverageCountryOverride(payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/country-override`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.detail || `HTTP ${res.status}` };
+      }
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   async downloadClientCoverageSearchReport(jobId) {
     try {
       const res = await this.fetchWithAuthRetry(

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, RefreshCw, Search } from "lucide-react";
+import { Check, Download, Pencil, RefreshCw, Search, X } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 
 export default function ClientCoverageScannerView() {
@@ -20,6 +20,8 @@ export default function ClientCoverageScannerView() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [countryEdit, setCountryEdit] = useState(null);
+  const [savingCountry, setSavingCountry] = useState(false);
   const pollRef = useRef(null);
 
   const searchQueries = useMemo(
@@ -74,6 +76,7 @@ export default function ClientCoverageScannerView() {
     setResults([]);
     setReviewResults([]);
     setJob(null);
+    setCountryEdit(null);
 
     if (!form.report_title.trim()) {
       setError("Report title is required.");
@@ -135,6 +138,64 @@ export default function ClientCoverageScannerView() {
       URL.revokeObjectURL(url);
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const beginCountryEdit = (row, rowIndex) => {
+    setError("");
+    const lookupKey = (row.country_lookup_key || row.domain || "").trim().toLowerCase();
+    if (!lookupKey) {
+      setError("This result does not have a publication key for saving its country.");
+      return;
+    }
+    setCountryEdit({
+      row_index: rowIndex,
+      article_url: row.article_url || "",
+      lookup_key: lookupKey,
+      publication: row.publication || "",
+      country: "",
+      country_code: "",
+    });
+  };
+
+  const saveCountryOverride = async () => {
+    const country = countryEdit?.country?.trim();
+    if (!country) {
+      setError("Country is required.");
+      return;
+    }
+
+    setSavingCountry(true);
+    setError("");
+    try {
+      const res = await githubAPI.setClientCoverageCountryOverride({
+        article_url: countryEdit.article_url,
+        lookup_key: countryEdit.lookup_key,
+        publication: countryEdit.publication,
+        country,
+        country_code: countryEdit.country_code.trim().toUpperCase(),
+        coverage_run_id: runId,
+      });
+      if (!res.success) {
+        setError(res.error || "Failed to save country.");
+        return;
+      }
+
+      setResults((current) => current.map((row) => {
+        const key = (row.country_lookup_key || row.domain || "").trim().toLowerCase();
+        if (key !== res.lookup_key) return row;
+        return {
+          ...row,
+          country: res.country,
+          country_source: "manual",
+          country_confidence: "high",
+        };
+      }));
+      setCountryEdit(null);
+    } catch (err) {
+      setError(err.message || "Failed to save country.");
+    } finally {
+      setSavingCountry(false);
     }
   };
 
@@ -295,7 +356,70 @@ export default function ClientCoverageScannerView() {
               {results.map((row, index) => (
                 <tr key={`${row.article_url || row.publication}-${index}`} className="border-t border-gray-100">
                   <td className="p-3">{row.publication}</td>
-                  <td className="p-3">{row.country || "N/A"}</td>
+                  <td className="p-3 min-w-48">
+                    {countryEdit?.row_index === index ? (
+                      <form
+                        className="flex items-center gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          saveCountryOverride();
+                        }}
+                      >
+                        <input
+                          className="w-28 border border-gray-300 rounded p-2"
+                          aria-label="Country"
+                          placeholder="Country"
+                          value={countryEdit.country}
+                          onChange={(event) => setCountryEdit((current) => ({
+                            ...current,
+                            country: event.target.value,
+                          }))}
+                        />
+                        <input
+                          className="w-14 border border-gray-300 rounded p-2 uppercase"
+                          aria-label="Country code"
+                          placeholder="US"
+                          maxLength={2}
+                          value={countryEdit.country_code}
+                          onChange={(event) => setCountryEdit((current) => ({
+                            ...current,
+                            country_code: event.target.value,
+                          }))}
+                        />
+                        <button
+                          type="submit"
+                          title="Save country"
+                          disabled={savingCountry}
+                          className="p-2 text-green-700 disabled:opacity-50"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Cancel"
+                          onClick={() => setCountryEdit(null)}
+                          disabled={savingCountry}
+                          className="p-2 text-gray-500 disabled:opacity-50"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </form>
+                    ) : row.country ? (
+                      row.country
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span>N/A</span>
+                        <button
+                          type="button"
+                          title="Add country"
+                          onClick={() => beginCountryEdit(row, index)}
+                          className="p-1 text-[#b8860b]"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </td>
                   <td className="p-3">
                     {row.article_url ? (
                       <a href={row.article_url} target="_blank" rel="noreferrer" className="text-[#b8860b]">

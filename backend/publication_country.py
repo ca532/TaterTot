@@ -134,11 +134,16 @@ def extract_metadata_country(soup) -> dict | None:
     }
 
 
-def ensure_country_sheet(db):
+def ensure_country_sheet(db_or_spreadsheet):
+    spreadsheet = getattr(
+        db_or_spreadsheet,
+        "spreadsheet",
+        db_or_spreadsheet,
+    )
     try:
-        ws = db.spreadsheet.worksheet(COUNTRY_SHEET)
+        ws = spreadsheet.worksheet(COUNTRY_SHEET)
     except Exception:
-        ws = db.spreadsheet.add_worksheet(
+        ws = spreadsheet.add_worksheet(
             title=COUNTRY_SHEET,
             rows=1000,
             cols=len(COUNTRY_HEADERS),

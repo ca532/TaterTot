@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
+from backend.publication_country import COUNTRY_HEADERS, ensure_country_sheet
 from backend.publication_metadata_pipeline import run_publication_metadata_pipeline
 
 app = FastAPI()
@@ -221,6 +222,15 @@ class CoverageScanRequest(BaseModel):
     date_from: Optional[str] = ""
     date_to: Optional[str] = ""
     backlink_domains: Optional[str] = ""
+
+
+class CountryOverrideRequest(BaseModel):
+    lookup_key: str
+    publication: Optional[str] = ""
+    article_url: Optional[str] = ""
+    coverage_run_id: Optional[str] = ""
+    country: str
+    country_code: Optional[str] = ""
 
 
 def _meta_job_set(job_id: str, **fields):
@@ -2187,6 +2197,156 @@ def get_latest_client_pitches(authorization: str = Header(default="")):
     if not rid:
         return {"pitch_run_id": None, "count": 0, "pitches": []}
     return get_client_pitches_by_run(pitch_run_id=rid, authorization=authorization)
+
+
+def _update_coverage_report_country(
+    coverage_run_id: str,
+    lookup_key: str,
+    article_url: str,
+    country: str,
+) -> int:
+    if not coverage_run_id:
+        return 0
+
+    spreadsheet = _load_main_spreadsheet()
+    try:
+        ws = spreadsheet.worksheet(
+            os.environ.get(
+                "CLIENT_COVERAGE_REPORT_SHEET",
+                "Client Coverage Reports",
+            )
+        )
+    except Exception:
+        return 0
+
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    columns = {
+        name: index + 1
+        for index, name in enumerate(values[0])
+    }
+    required = {
+        "coverage_run_id",
+        "article_url",
+        "country",
+        "country_source",
+        "country_confidence",
+        "country_lookup_key",
+    }
+    if not required.issubset(columns):
+        return 0
+
+    updates = []
+    rows_updated = 0
+    for row_index, row in enumerate(values[1:], start=2):
+        def value(column_name):
+            index = columns[column_name] - 1
+            return row[index].strip() if index < len(row) else ""
+
+        if value("coverage_run_id") != coverage_run_id:
+            continue
+        same_publication = (
+            value("country_lookup_key").lower() == lookup_key
+            or (article_url and value("article_url") == article_url)
+        )
+        if not same_publication:
+            continue
+
+        for column_name, new_value in (
+            ("country", country),
+            ("country_source", "manual"),
+            ("country_confidence", "high"),
+            ("country_lookup_key", lookup_key),
+        ):
+            updates.append({
+                "range": gspread.utils.rowcol_to_a1(
+                    row_index,
+                    columns[column_name],
+                ),
+                "values": [[new_value]],
+            })
+        rows_updated += 1
+
+    if updates:
+        ws.batch_update(updates, value_input_option="RAW")
+    return rows_updated
+
+
+@app.post("/coverage/country-override")
+def set_coverage_country_override(
+    req: CountryOverrideRequest,
+    authorization: str = Header(default=""),
+):
+    _check_auth(authorization)
+
+    lookup_key = (req.lookup_key or "").strip().lower()
+    publication = (req.publication or "").strip()
+    country = (req.country or "").strip()
+    country_code = (req.country_code or "").strip().upper()
+
+    if not re.fullmatch(r"[a-z0-9.-]+(?:/[a-z0-9._-]+)?", lookup_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid publication lookup key",
+        )
+    if not country or len(country) > 100:
+        raise HTTPException(status_code=400, detail="Country is required")
+    if country_code and not re.fullmatch(r"[A-Z]{2}", country_code):
+        raise HTTPException(
+            status_code=400,
+            detail="Country code must contain two letters",
+        )
+
+    ws = ensure_country_sheet(_load_main_spreadsheet())
+    values = ws.get_all_values()
+    target_row = None
+    for row_index, row in enumerate(values[1:], start=2):
+        existing_key = row[0].strip().lower() if row else ""
+        if existing_key == lookup_key:
+            target_row = row_index
+
+    payload = [
+        lookup_key,
+        publication,
+        country,
+        country_code,
+        "manual",
+        "high",
+        "TRUE",
+        "resolved",
+        "ui_override",
+        datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "",
+    ]
+    if len(payload) != len(COUNTRY_HEADERS):
+        raise HTTPException(status_code=500, detail="Country registry schema mismatch")
+
+    if target_row:
+        ws.update(
+            f"A{target_row}:K{target_row}",
+            [payload],
+            value_input_option="RAW",
+        )
+    else:
+        ws.append_row(payload, value_input_option="RAW")
+
+    report_rows_updated = _update_coverage_report_country(
+        coverage_run_id=(req.coverage_run_id or "").strip(),
+        lookup_key=lookup_key,
+        article_url=(req.article_url or "").strip(),
+        country=country,
+    )
+    return {
+        "ok": True,
+        "lookup_key": lookup_key,
+        "country": country,
+        "country_code": country_code,
+        "country_source": "manual",
+        "country_confidence": "high",
+        "report_rows_updated": report_rows_updated,
+    }
 
 
 @app.post("/coverage/search-report/run")
