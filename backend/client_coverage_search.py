@@ -7,14 +7,13 @@ import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
 
 try:
     from article_quality import (
-        canonicalize_url,
         clean_article_text,
         extract_page_metadata,
         keyword_matches,
@@ -29,7 +28,6 @@ try:
     from publication_traffic import lookup_publication_traffic
 except ImportError:
     from backend.article_quality import (
-        canonicalize_url,
         clean_article_text,
         extract_page_metadata,
         keyword_matches,
@@ -102,6 +100,49 @@ ARTICLE_CONTAINER_SELECTORS = (
     ".entry-content",
     ".post-content",
 )
+TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
+SKIPPED_HREF_PREFIXES = (
+    "#",
+    "javascript:",
+    "mailto:",
+    "tel:",
+    "data:",
+)
+MAX_ARTICLE_RESPONSE_BYTES = 5_000_000
+
+
+def normalize_coverage_url(value: str) -> str:
+    try:
+        parsed = urlparse((value or "").strip())
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return ""
+
+        host = (parsed.hostname or "").lower()
+        if not host or parsed.username or parsed.password:
+            return ""
+
+        host_text = f"[{host}]" if ":" in host else host
+        netloc = f"{host_text}:{parsed.port}" if parsed.port else host_text
+        path = re.sub(r"/{2,}", "/", parsed.path or "/").rstrip("/") or "/"
+        query = urlencode(sorted(
+            (key, item)
+            for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+            if not key.lower().startswith("utm_")
+            and key.lower() not in TRACKING_QUERY_KEYS
+        ))
+        return urlunparse((parsed.scheme.lower(), netloc, path, "", query, ""))
+    except (TypeError, ValueError, UnicodeError):
+        return ""
+
+
+def safe_urljoin(page_url: str, href: str) -> str:
+    raw = (href or "").strip()
+    if not raw or raw.lower().startswith(SKIPPED_HREF_PREFIXES):
+        return ""
+    try:
+        return normalize_coverage_url(urljoin(page_url, raw))
+    except (TypeError, ValueError, UnicodeError):
+        return ""
 
 
 def domain_from_url(url: str) -> str:
@@ -110,7 +151,13 @@ def domain_from_url(url: str) -> str:
         return ""
     if "://" not in raw:
         raw = f"https://{raw}"
-    host = urlparse(raw).netloc.lower()
+    normalized = normalize_coverage_url(raw)
+    if not normalized:
+        return ""
+    try:
+        host = (urlparse(normalized).hostname or "").lower()
+    except ValueError:
+        return ""
     return host[4:] if host.startswith("www.") else host
 
 
@@ -569,7 +616,7 @@ def serpapi_search_all(
         ]
         normalized_page_links = set()
         for link in page_links:
-            normalized = canonicalize_url(link)
+            normalized = normalize_coverage_url(link)
             if normalized:
                 normalized_page_links.add(normalized)
         new_source_links = normalized_page_links - state["seen_result_urls"]
@@ -628,7 +675,7 @@ def serpapi_search_all(
         })
 
         for item in page_results:
-            link = item.get("link", "")
+            link = normalize_coverage_url(item.get("link", ""))
             if not link:
                 continue
             results.append({
@@ -679,7 +726,12 @@ def serpapi_search_all(
     if searches_used and not results:
         stop_reason = "no_google_results"
 
-    final_capacity = get_serpapi_capacity()
+    try:
+        final_capacity = get_serpapi_capacity()
+    except (requests.RequestException, ValueError, TypeError):
+        final_capacity = {
+            "monthly_left": max(0, starting_budget - searches_used),
+        }
     return {
         "results": results,
         "searches_used": searches_used,
@@ -690,9 +742,10 @@ def serpapi_search_all(
 
 
 def validate_coverage_url(url: str) -> tuple[bool, str]:
-    parsed = urlparse((url or "").strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    normalized = normalize_coverage_url(url)
+    if not normalized:
         return False, "invalid_url"
+    parsed = urlparse(normalized)
     path = (parsed.path or "/").lower()
     if path.rstrip("/") == "":
         return False, "homepage"
@@ -785,14 +838,14 @@ def _extract_article_links(container, page_url: str) -> list[str]:
     links = []
     seen = set()
     for anchor in container.find_all("a", href=True):
-        absolute = urljoin(page_url, str(anchor.get("href", "")).strip())
-        parsed = urlparse(absolute)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        normalized = safe_urljoin(
+            page_url,
+            str(anchor.get("href", "")),
+        )
+        if not normalized or normalized in seen:
             continue
-        normalized = canonicalize_url(absolute)
-        if normalized not in seen:
-            seen.add(normalized)
-            links.append(normalized)
+        seen.add(normalized)
+        links.append(normalized)
     return links
 
 
@@ -813,6 +866,15 @@ def fetch_page(url: str) -> dict:
     except Exception as exc:
         return {"ok": False, "url": url, "error": type(exc).__name__}
 
+    content_type = res.headers.get("Content-Type", "").lower()
+    if content_type and not any(
+        allowed in content_type
+        for allowed in ("text/html", "application/xhtml+xml")
+    ):
+        return {"ok": False, "url": url, "error": "non_html_response"}
+    if len(res.content) > MAX_ARTICLE_RESPONSE_BYTES:
+        return {"ok": False, "url": url, "error": "response_too_large"}
+
     soup = BeautifulSoup(res.text, "html.parser")
     metadata = extract_page_metadata(res.text)
     country_hint = extract_metadata_country(soup)
@@ -822,8 +884,12 @@ def fetch_page(url: str) -> dict:
         tag.decompose()
 
     html_title = soup.title.get_text(" ", strip=True) if soup.title else ""
-    canonical = metadata.get("canonical_url") or res.url or url
-    canonical = urljoin(res.url or url, canonical)
+    canonical = safe_urljoin(
+        res.url or url,
+        metadata.get("canonical_url") or res.url or url,
+    )
+    if not canonical:
+        canonical = normalize_coverage_url(res.url or url)
     valid_canonical, invalid_reason = validate_coverage_url(canonical)
     if not valid_canonical:
         return {"ok": False, "url": canonical, "error": invalid_reason}
@@ -865,7 +931,7 @@ def fetch_page(url: str) -> dict:
 
     return {
         "ok": True,
-        "url": canonicalize_url(canonical),
+        "url": canonical,
         "title": clean_article_text(metadata.get("title") or html_title),
         "subtitle": _extract_subtitle(soup),
         "body_text": body_text[:30000],
@@ -963,7 +1029,7 @@ def dedupe_results(results: list[dict]) -> list[dict]:
     seen = set()
     deduped = []
     for row in results:
-        key = canonicalize_url(row.get("article_url", ""))
+        key = normalize_coverage_url(row.get("article_url", ""))
         if not key or key in seen:
             continue
         seen.add(key)
@@ -1002,7 +1068,7 @@ def save_report_rows(
     db = db or GoogleSheetsDB()
     ws = ensure_report_sheet(db)
     payload = [[row.get(header, "") for header in REPORT_HEADERS] for row in rows]
-    ws.append_rows(payload, value_input_option="USER_ENTERED")
+    ws.append_rows(payload, value_input_option="RAW")
 
 
 def run_keyword_coverage_report(
@@ -1045,7 +1111,20 @@ def run_keyword_coverage_report(
     emit("verifying", 0, total_results, "Checking article mentions")
     for index, result in enumerate(unique_results, start=1):
         emit("verifying", index, total_results, f"Checking result {index} of {total_results}")
-        page = fetch_page(result["article_url"])
+        try:
+            page = fetch_page(result["article_url"])
+        except Exception as exc:
+            print(
+                "[ARTICLE_ERROR] "
+                f"url={result['article_url']!r} "
+                f"error={type(exc).__name__}",
+                flush=True,
+            )
+            page = {
+                "ok": False,
+                "url": result["article_url"],
+                "error": f"unexpected_{type(exc).__name__}",
+            }
         if not page.get("ok"):
             error = page.get("error", "extraction_failed")
             if error in {"invalid_url", "homepage", "non_content_url", "http_404", "http_410"}:
@@ -1112,36 +1191,57 @@ def run_keyword_coverage_report(
 
     confirmed = dedupe_results(confirmed)
     review_results = dedupe_results(review_results)
-    db = GoogleSheetsDB()
+    warnings = []
+    db = None
+    country_stats = {}
     emit(
         "countries",
         0,
         len(confirmed),
         "Resolving publication countries",
     )
-    country_stats = enrich_publication_countries(
-        confirmed,
-        db=db,
-        serpapi_api_key=SERPAPI_API_KEY,
-        google_domain=SERPAPI_GOOGLE_DOMAIN,
-        gl=SERPAPI_GL,
-        hl=SERPAPI_HL,
-        google_budget=search_run["searches_remaining"],
-    )
-    for row in review_results:
+    try:
+        db = GoogleSheetsDB()
+        country_stats = enrich_publication_countries(
+            confirmed,
+            db=db,
+            serpapi_api_key=SERPAPI_API_KEY,
+            google_domain=SERPAPI_GOOGLE_DOMAIN,
+            gl=SERPAPI_GL,
+            hl=SERPAPI_HL,
+            google_budget=search_run["searches_remaining"],
+        )
+    except Exception as exc:
+        warnings.append(
+            f"Country enrichment failed: {type(exc).__name__}"
+        )
+    for row in confirmed + review_results:
         row.pop("_country_hint", None)
+
     domains = sorted({row["domain"] for row in confirmed if row.get("domain")})
     emit("traffic", 0, len(domains), "Looking up publication traffic")
-    traffic = lookup_publication_traffic(domains)
+    try:
+        traffic = lookup_publication_traffic(domains)
+    except Exception as exc:
+        traffic = {}
+        warnings.append(f"Traffic lookup failed: {type(exc).__name__}")
     for row in confirmed:
         data = traffic.get(row["domain"], {})
         row["monthly_visits"] = data.get("monthly_visits") or ""
         row["monthly_visits_display"] = data.get("monthly_visits_display") or "N/A"
-        row["traffic_source"] = data.get("source") or "hypestat"
+        row["traffic_source"] = data.get("source") or "unavailable"
 
     rows_to_save = confirmed + review_results
     emit("saving", 0, len(rows_to_save), "Saving report")
-    save_report_rows(rows_to_save, db=db)
+    if db is not None:
+        try:
+            save_report_rows(rows_to_save, db=db)
+        except Exception as exc:
+            warnings.append(
+                f"Google Sheets save failed: {type(exc).__name__}"
+            )
+    else:
+        warnings.append("Google Sheets save skipped: database unavailable")
 
     countries = sorted({row["country"] for row in confirmed if row.get("country")})
     highlights = {
@@ -1157,7 +1257,20 @@ def run_keyword_coverage_report(
     build_coverage_pdf(pdf_path, report_title, highlights, confirmed)
 
     emit("complete", len(confirmed), len(confirmed), "Coverage report complete")
-    final_capacity = get_serpapi_capacity()
+    try:
+        final_capacity = get_serpapi_capacity()
+    except (requests.RequestException, ValueError, TypeError):
+        country_searches = int(
+            country_stats.get("google_searches_used", 0) or 0
+        )
+        final_capacity = {
+            "monthly_left": max(
+                0,
+                int(search_run["searches_remaining"] or 0)
+                - country_searches,
+            ),
+        }
+        warnings.append("SerpApi capacity refresh failed; using local estimate")
     return {
         "coverage_run_id": run_id,
         "count": len(confirmed),
@@ -1172,4 +1285,5 @@ def run_keyword_coverage_report(
         "search_stop_reason": search_run["stop_reason"],
         "search_diagnostics": search_run["search_diagnostics"],
         "country_stats": country_stats,
+        "warnings": warnings,
     }

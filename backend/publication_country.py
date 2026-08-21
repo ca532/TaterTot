@@ -364,7 +364,7 @@ def enrich_publication_countries(
             row.pop("_country_hint", None)
 
     if new_records:
-        ws.append_rows(new_records, value_input_option="USER_ENTERED")
+        ws.append_rows(new_records, value_input_option="RAW")
     return {
         "publications_checked": len(grouped),
         "google_searches_used": google_searches,

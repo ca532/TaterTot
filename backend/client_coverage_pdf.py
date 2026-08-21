@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -54,15 +56,17 @@ def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: lis
     story = [
         Paragraph("CLAIRE ADLER", brand),
         Paragraph("L U X U R Y&nbsp;&nbsp;P R", small_brand),
-        Paragraph(title, subtitle),
+        Paragraph(escape(str(title or "")), subtitle),
         Paragraph("Coverage Highlights:", body),
         Spacer(1, 0.1 * inch),
     ]
 
     bullets = [
         f"{highlights.get('total_coverage', 0)} pieces of coverage",
-        f"{highlights.get('country_count', 0)} countries: {highlights.get('countries', '') or 'N/A'}",
-        f"Highlights include {highlights.get('highlight_publications', '') or 'N/A'}",
+        f"{highlights.get('country_count', 0)} countries: "
+        f"{escape(str(highlights.get('countries', '') or 'N/A'))}",
+        "Highlights include "
+        f"{escape(str(highlights.get('highlight_publications', '') or 'N/A'))}",
     ]
     for bullet in bullets:
         story.append(Paragraph(f"&bull;&nbsp;&nbsp;{bullet}", body))
@@ -70,11 +74,11 @@ def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: lis
     story.append(Spacer(1, 0.15 * inch))
 
     for idx, row in enumerate(rows, start=1):
-        publication = row.get("publication", "Publication")
-        article_url = row.get("article_url", "")
-        country = row.get("country", "")
-        visits = row.get("monthly_visits_display", "N/A")
-        link_note = row.get("link_note", "")
+        publication = escape(str(row.get("publication") or "Publication"))
+        article_url = escape(str(row.get("article_url") or ""), quote=True)
+        country = escape(str(row.get("country") or ""))
+        visits = escape(str(row.get("monthly_visits_display") or "N/A"))
+        link_note = escape(str(row.get("link_note") or ""))
 
         label = publication
         if article_url:

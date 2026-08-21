@@ -52,11 +52,12 @@ def main() -> None:
 
         searches_used = int(result.get("searches_used", 0) or 0)
         searched_results = int(result.get("searched_results", 0) or 0)
-        completion_message = (
-            "Search returned no results"
-            if searched_results == 0
-            else "Coverage report complete"
-        )
+        if searched_results == 0:
+            completion_message = "Search returned no results"
+        elif result.get("warnings"):
+            completion_message = "Coverage report complete with warnings"
+        else:
+            completion_message = "Coverage report complete"
         _write_result({
             "status": "complete",
             "phase": "complete",
@@ -80,6 +81,7 @@ def main() -> None:
             "search_diagnostics": result.get("search_diagnostics", []),
             "highlights": result.get("highlights", {}),
             "country_stats": result.get("country_stats", {}),
+            "warnings": result.get("warnings", []),
         })
     except Exception as exc:
         _write_result({
