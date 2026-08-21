@@ -161,18 +161,30 @@ def ensure_country_sheet(db_or_spreadsheet):
 
 
 def load_registry(ws) -> dict[str, dict]:
+    values = ws.get_all_values()
+    if len(values) <= 1:
+        return {}
+
+    headers = values[0]
     registry = {}
-    for record in ws.get_all_records():
+    for row in values[1:]:
+        record = {
+            header: row[index] if index < len(row) else ""
+            for index, header in enumerate(headers)
+        }
         key = str(record.get("lookup_key", "")).strip().lower()
         if not key:
             continue
+
         existing = registry.get(key)
         manual = str(record.get("manual_override", "")).upper() == "TRUE"
         existing_manual = (
             str((existing or {}).get("manual_override", "")).upper() == "TRUE"
         )
+
         if not existing or manual or not existing_manual:
             registry[key] = record
+
     return registry
 
 

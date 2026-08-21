@@ -14,6 +14,15 @@ class FakeWorksheet:
     def get_all_records(self):
         return self.records
 
+    def get_all_values(self):
+        return [publication_country.COUNTRY_HEADERS] + [
+            [
+                record.get(header, "")
+                for header in publication_country.COUNTRY_HEADERS
+            ]
+            for record in self.records
+        ]
+
     def append_rows(self, rows, value_input_option=None):
         self.appended_rows.extend(rows)
 
@@ -75,6 +84,17 @@ class PublicationCountryTests(unittest.TestCase):
         for url in urls:
             with self.subTest(url=url):
                 self.assertIsNone(publication_country.country_from_url(url))
+
+    def test_header_only_country_registry_loads_as_empty(self):
+        class HeaderOnlyWorksheet(FakeWorksheet):
+            def get_all_records(self):
+                raise IndexError("list index out of range")
+
+        worksheet = HeaderOnlyWorksheet()
+
+        registry = publication_country.load_registry(worksheet)
+
+        self.assertEqual(registry, {})
 
     @patch("backend.publication_country.requests.get")
     def test_google_fallback_reads_organic_result_snippets(self, mock_get):
