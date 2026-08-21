@@ -20,15 +20,61 @@ class FakeWorksheet:
 
 class PublicationCountryTests(unittest.TestCase):
     def test_country_from_url_supports_country_domains_and_editions(self):
-        uk = publication_country.country_from_url(
-            "https://www.thesun.co.uk/tvandshowbiz/story"
-        )
-        australia = publication_country.country_from_url(
-            "https://www.goal.com/en-au/lists/story"
+        for country in publication_country.pycountry.countries:
+            code = country.alpha_2
+
+            for edition in (code.lower(), f"en-{code.lower()}"):
+                with self.subTest(kind="edition", edition=edition):
+                    result = publication_country.country_from_url(
+                        f"https://example.com/{edition}/story"
+                    )
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result["country_code"], code)
+                    self.assertEqual(result["source"], "url_edition")
+
+            if code.lower() not in publication_country.GENERIC_CCTLDS:
+                with self.subTest(kind="domain", country_code=code):
+                    result = publication_country.country_from_url(
+                        f"https://publication.{code.lower()}/story"
+                    )
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result["country_code"], code)
+                    self.assertEqual(result["source"], "country_domain")
+
+    def test_country_from_url_supports_code_aliases(self):
+        cases = {
+            "https://www.thesun.co.uk/story": "GB",
+            "https://example.com/uk/story": "GB",
+            "https://news.example.com.au/story": "AU",
+            "https://news.example.co.nz/story": "NZ",
+        }
+
+        for url, expected_code in cases.items():
+            with self.subTest(url=url):
+                result = publication_country.country_from_url(url)
+                actual_code = result["country_code"] if result else None
+                self.assertEqual(actual_code, expected_code)
+
+    def test_country_from_url_ignores_ambiguous_and_non_country_urls(self):
+        urls = [
+            "https://example.com/story",
+            "https://facebook.com/publication/story",
+            "https://m.facebook.com/publication/story",
+            "https://instagram.com/publication/story",
+            "https://example.com/en-xx/story",
+            "https://example.com/usa/story",
+            "https://example.com/english-us/story",
+            "not-a-url",
+            "",
+        ]
+        urls.extend(
+            f"https://publisher.{suffix}/story"
+            for suffix in publication_country.GENERIC_CCTLDS
         )
 
-        self.assertEqual(uk["country_code"], "GB")
-        self.assertEqual(australia["country_code"], "AU")
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertIsNone(publication_country.country_from_url(url))
 
     @patch("backend.publication_country.requests.get")
     def test_google_fallback_reads_organic_result_snippets(self, mock_get):

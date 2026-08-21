@@ -1229,16 +1229,33 @@ def run_keyword_coverage_report(
         row.pop("_publication_hint", None)
 
     domains = sorted({row["domain"] for row in confirmed if row.get("domain")})
-    emit("traffic", 0, len(domains), "Looking up publication traffic")
-    try:
-        traffic = lookup_publication_traffic(domains)
-    except Exception as exc:
+    skip_traffic = os.getenv(
+        "SKIP_PUBLICATION_TRAFFIC",
+        "",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+    if skip_traffic:
+        emit(
+            "traffic",
+            len(domains),
+            len(domains),
+            "Skipping publication traffic lookup",
+        )
         traffic = {}
-        warnings.append(f"Traffic lookup failed: {type(exc).__name__}")
+    else:
+        emit("traffic", 0, len(domains), "Looking up publication traffic")
+        try:
+            traffic = lookup_publication_traffic(domains)
+        except Exception as exc:
+            traffic = {}
+            warnings.append(f"Traffic lookup failed: {type(exc).__name__}")
+
     for row in confirmed:
         data = traffic.get(row["domain"], {})
         row["monthly_visits"] = data.get("monthly_visits") or ""
-        row["monthly_visits_display"] = data.get("monthly_visits_display") or "N/A"
+        row["monthly_visits_display"] = (
+            data.get("monthly_visits_display") or "N/A"
+        )
         row["traffic_source"] = data.get("source") or "unavailable"
 
     rows_to_save = confirmed + review_results

@@ -35,6 +35,11 @@ on:
         required: false
         default: ""
         type: string
+      skip_traffic_lookup:
+        description: "Skip ZenRows publication traffic lookup"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -75,7 +80,8 @@ jobs:
           COVERAGE_DATE_TO: ${{ inputs.date_to }}
           COVERAGE_BACKLINK_DOMAINS: ${{ inputs.backlink_domains }}
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
-          ZENROWS_API_KEY: ${{ secrets.ZENROWS_API_KEY }}
+          SKIP_PUBLICATION_TRAFFIC: ${{ inputs.skip_traffic_lookup }}
+          ZENROWS_API_KEY: ${{ ! inputs.skip_traffic_lookup && secrets.ZENROWS_API_KEY || '' }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python -u backend/run_client_coverage_report.py
