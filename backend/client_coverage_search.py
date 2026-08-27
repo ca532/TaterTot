@@ -56,6 +56,11 @@ SERPAPI_READ_TIMEOUT = 90
 SERPAPI_NETWORK_RETRIES = 3
 SERPAPI_RESULTS_PER_PAGE = 10
 SERPAPI_DATE_SLICE_DAYS = 7
+SERPAPI_MAX_PAGES_PER_QUERY = max(
+    1,
+    int(os.getenv("SERPAPI_MAX_PAGES_PER_QUERY", "8")),
+)
+SERPAPI_GLOBAL_ZERO_NEW_LIMIT = 3
 SERPAPI_COUNTRY_RESERVE = max(
     0,
     int(os.getenv("SERPAPI_COUNTRY_RESERVE", "10")),
@@ -366,6 +371,9 @@ def log_serpapi_page(
         "consecutive_duplicate_pages": state[
             "consecutive_duplicate_pages"
         ],
+        "consecutive_global_zero_pages": state[
+            "consecutive_global_zero_pages"
+        ],
         "searches_used": searches_used,
         "error": data.get("error", ""),
     }
@@ -378,6 +386,7 @@ def serpapi_search_all(
     date_to: str = "",
     progress_callback=None,
     reserved_searches: int = 0,
+    known_urls: set[str] | None = None,
 ) -> dict:
     def emit(phase: str, current: int, total: int, message: str):
         if progress_callback:
@@ -394,7 +403,14 @@ def serpapi_search_all(
         weekly_windows = build_date_windows(date_from, date_to)
         search_windows = [("full_range", date_from, date_to)]
 
-        if weekly_windows != [(date_from, date_to)]:
+        range_days = 0
+        if date_from and date_to:
+            range_days = (
+                datetime.strptime(date_to, "%Y-%m-%d")
+                - datetime.strptime(date_from, "%Y-%m-%d")
+            ).days + 1
+
+        if range_days > 14 and weekly_windows != [(date_from, date_to)]:
             search_windows.extend(
                 ("weekly", window_from, window_to)
                 for window_from, window_to in weekly_windows
@@ -462,11 +478,17 @@ def serpapi_search_all(
                     "forced_pagination": False,
                     "seen_result_urls": set(),
                     "consecutive_duplicate_pages": 0,
+                    "consecutive_global_zero_pages": 0,
                 })
 
     results = []
     diagnostics = []
-    telemetry_seen_urls = set()
+    telemetry_seen_urls = {
+        normalized
+        for url in (known_urls or set())
+        if (normalized := normalize_coverage_url(url))
+    }
+    query_pages_used = {query.strip(): 0 for query in queries}
     searches_used = 0
     stop_reason = "all_pages_searched"
 
@@ -487,6 +509,8 @@ def serpapi_search_all(
             continue
 
         state = queue.popleft()
+        if query_pages_used.get(state["query"], 0) >= SERPAPI_MAX_PAGES_PER_QUERY:
+            continue
         retry_stage = state["empty_page_retries"]
         retry_params = {}
         if retry_stage >= 1:
@@ -545,6 +569,7 @@ def serpapi_search_all(
         response.raise_for_status()
         data = response.json()
         searches_used += 1
+        query_pages_used[state["query"]] = query_pages_used.get(state["query"], 0) + 1
         metadata = data.get("search_metadata", {}) or {}
         information = data.get("search_information", {}) or {}
         search_status = str(metadata.get("status", "")).strip()
@@ -623,6 +648,9 @@ def serpapi_search_all(
                 "consecutive_duplicate_pages": state[
                     "consecutive_duplicate_pages"
                 ],
+                "consecutive_global_zero_pages": state[
+                    "consecutive_global_zero_pages"
+                ],
             })
             continue
 
@@ -650,6 +678,10 @@ def serpapi_search_all(
 
         new_page_links = normalized_page_links - telemetry_seen_urls
         telemetry_seen_urls.update(normalized_page_links)
+        if new_page_links:
+            state["consecutive_global_zero_pages"] = 0
+        elif page_results:
+            state["consecutive_global_zero_pages"] += 1
 
         log_serpapi_page(
             state=state,
@@ -694,6 +726,9 @@ def serpapi_search_all(
             "consecutive_duplicate_pages": state[
                 "consecutive_duplicate_pages"
             ],
+            "consecutive_global_zero_pages": state[
+                "consecutive_global_zero_pages"
+            ],
         })
 
         for item in page_results:
@@ -720,12 +755,17 @@ def serpapi_search_all(
 
         next_url = (data.get("serpapi_pagination", {}) or {}).get("next", "")
         duplicate_limit_reached = (
-            state["consecutive_duplicate_pages"] >= 2
+            state["consecutive_global_zero_pages"]
+            >= SERPAPI_GLOBAL_ZERO_NEW_LIMIT
+        )
+        page_limit_reached = (
+            query_pages_used.get(state["query"], 0)
+            >= SERPAPI_MAX_PAGES_PER_QUERY
         )
         full_page = len(page_results) >= SERPAPI_RESULTS_PER_PAGE
         state["empty_page_retries"] = 0
 
-        if duplicate_limit_reached:
+        if duplicate_limit_reached or page_limit_reached:
             pass
         elif page_results and next_url:
             state["next_url"] = next_url

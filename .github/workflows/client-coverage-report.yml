@@ -1,45 +1,27 @@
 name: Client Coverage Report
-run-name: coverage-${{ inputs.job_id }}
+run-name: coverage-${{ inputs.job_id }}-${{ inputs.action }}
 
 on:
   workflow_dispatch:
     inputs:
       job_id:
-        description: "Unique coverage job id"
+        description: "Persistent coverage job id"
         required: true
         type: string
-      report_title:
-        description: "Client-facing report title"
+      action:
+        description: "Coverage stage"
         required: true
-        type: string
-      mention_terms:
-        description: "Comma-separated client mention terms"
-        required: true
-        type: string
+        default: discover
+        type: choice
+        options:
+          - discover
+          - verify
+          - country
+          - finalize
       search_queries:
-        description: "Google queries separated by ||"
-        required: true
-        type: string
-      date_from:
-        description: "Optional start date (YYYY-MM-DD)"
+        description: "Queries for this discovery pass, separated by ||"
         required: false
-        default: ""
         type: string
-      date_to:
-        description: "Optional end date (YYYY-MM-DD)"
-        required: false
-        default: ""
-        type: string
-      backlink_domains:
-        description: "Optional comma-separated backlink domains"
-        required: false
-        default: ""
-        type: string
-      skip_traffic_lookup:
-        description: "Skip ZenRows publication traffic lookup"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -49,48 +31,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  coverage:
+  generate:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements-coverage.txt
 
       - name: Install dependencies
-        timeout-minutes: 15
         run: pip install -r backend/requirements-coverage.txt
 
-      - name: Generate coverage report
+      - name: Run coverage stage
         env:
           COVERAGE_JOB_ID: ${{ inputs.job_id }}
-          COVERAGE_REPORT_TITLE: ${{ inputs.report_title }}
-          COVERAGE_MENTION_TERMS: ${{ inputs.mention_terms }}
+          COVERAGE_ACTION: ${{ inputs.action }}
           COVERAGE_SEARCH_QUERIES: ${{ inputs.search_queries }}
-          COVERAGE_DATE_FROM: ${{ inputs.date_from }}
-          COVERAGE_DATE_TO: ${{ inputs.date_to }}
-          COVERAGE_BACKLINK_DOMAINS: ${{ inputs.backlink_domains }}
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
-          SKIP_PUBLICATION_TRAFFIC: ${{ inputs.skip_traffic_lookup }}
-          ZENROWS_API_KEY: ${{ ! inputs.skip_traffic_lookup && secrets.ZENROWS_API_KEY || '' }}
+          ZENROWS_API_KEY: ${{ inputs.action == 'finalize' && secrets.ZENROWS_API_KEY || '' }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python -u backend/run_client_coverage_report.py
 
-      - name: Upload report
+      - name: Upload stage result
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ inputs.job_id }}
+          name: coverage-${{ inputs.job_id }}-${{ inputs.action }}
           path: output/client_coverage_artifact/
           if-no-files-found: warn
           retention-days: 90

@@ -532,11 +532,97 @@ class PipelineService {
     }
   }
 
-  async getClientCoverageSearchReportProgress(jobId) {
+  async getClientCoverageSearchReportProgress(jobId, action = "") {
     try {
       const res = await this.fetchWithAuthRetry(
-        `${PIPELINE_API_BASE}/coverage/search-report/progress?job_id=${encodeURIComponent(jobId)}`,
+        `${PIPELINE_API_BASE}/coverage/search-report/progress?job_id=${encodeURIComponent(jobId)}&action=${encodeURIComponent(action)}`,
         { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async getCoverageJob(jobId) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/jobs/${encodeURIComponent(jobId)}`,
+        { method: "GET" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async runCoverageJobAction(jobId, action, payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/jobs/${encodeURIComponent(jobId)}/actions/${encodeURIComponent(action)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}`, status: res.status };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async reviewCoverageCandidates(jobId, decisions = []) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/jobs/${encodeURIComponent(jobId)}/review`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ decisions }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async updateCoveragePublication(jobId, payload = {}) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/jobs/${encodeURIComponent(jobId)}/publication`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };
+      return { success: true, ...data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async confirmCoverageCountries(jobId, lookupKeys = []) {
+    try {
+      const res = await this.fetchWithAuthRetry(
+        `${PIPELINE_API_BASE}/coverage/jobs/${encodeURIComponent(jobId)}/country-review`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lookup_keys: lookupKeys }),
+        }
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { success: false, error: data.detail || `HTTP ${res.status}` };

@@ -520,6 +520,7 @@ def enrich_publication_countries(
 
         for row in matching_rows:
             row["country"] = result["country"]
+            row["country_code"] = result.get("country_code", "")
             row["country_source"] = result["source"]
             row["country_confidence"] = result["confidence"]
             row["country_lookup_key"] = key

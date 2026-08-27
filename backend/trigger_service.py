@@ -24,6 +24,11 @@ from jwt import ExpiredSignatureError, PyJWTError
 from google.oauth2.service_account import Credentials
 from backend.publication_country import COUNTRY_HEADERS, ensure_country_sheet
 from backend.publication_metadata_pipeline import run_publication_metadata_pipeline
+from backend.coverage_actions import job_payload
+from backend.coverage_job_store import (
+    CoverageJobStore,
+    CoverageRunInProgress,
+)
 
 app = FastAPI()
 
@@ -158,6 +163,7 @@ GH_TERMINAL_CACHE = {
 _META_CACHE = {"ts": 0.0, "data": {}}
 META_JOBS = {}
 META_JOBS_LOCK = threading.Lock()
+COVERAGE_ACTION_LOCK = threading.Lock()
 META_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
@@ -231,6 +237,30 @@ class CountryOverrideRequest(BaseModel):
     coverage_run_id: Optional[str] = ""
     country: str
     country_code: Optional[str] = ""
+    job_id: Optional[str] = ""
+    not_applicable: Optional[bool] = False
+
+
+class CoverageActionRequest(BaseModel):
+    search_queries: Optional[str] = ""
+
+
+class CoverageReviewDecision(BaseModel):
+    url_key: str
+    decision: Literal["approved", "rejected"]
+
+
+class CoverageReviewRequest(BaseModel):
+    decisions: List[CoverageReviewDecision]
+
+
+class CoveragePublicationRequest(BaseModel):
+    url_key: str
+    publication: str
+
+
+class CoverageCountryReviewRequest(BaseModel):
+    lookup_keys: List[str]
 
 
 def _meta_job_set(job_id: str, **fields):
@@ -1179,7 +1209,11 @@ def _gh_request(method: str, url: str, **kwargs):
     raise HTTPException(status_code=502, detail=f"GitHub request failed: {last_exc}")
 
 
-def _find_coverage_run(job_id: str) -> Optional[dict]:
+def _find_coverage_run(
+    job_id: str,
+    action: str = "",
+    created_after: str = "",
+) -> Optional[dict]:
     url = (
         f"{GITHUB_API_BASE}/actions/workflows/{COVERAGE_WORKFLOW}/runs"
         "?event=workflow_dispatch&per_page=100"
@@ -1192,11 +1226,38 @@ def _find_coverage_run(job_id: str) -> Optional[dict]:
         )
 
     expected_title = f"coverage-{job_id}"
+    if action:
+        expected_title += f"-{action}"
+    runs = (
+        run
+        for run in response.json().get("workflow_runs", [])
+        if (
+            run.get("display_title") == expected_title
+            if action
+            else (
+                run.get("display_title") == expected_title
+                or str(run.get("display_title", "")).startswith(
+                    f"{expected_title}-"
+                )
+            )
+        )
+    )
+    if created_after:
+        try:
+            threshold = datetime.fromisoformat(created_after.replace("Z", "+00:00"))
+            runs = (
+                run
+                for run in runs
+                if datetime.fromisoformat(
+                    str(run.get("created_at", "")).replace("Z", "+00:00")
+                ) >= threshold
+            )
+        except (TypeError, ValueError):
+            pass
     return next(
         (
             run
-            for run in response.json().get("workflow_runs", [])
-            if run.get("display_title") == expected_title
+            for run in runs
         ),
         None,
     )
@@ -1213,7 +1274,16 @@ def _get_coverage_artifact(run_id: int, job_id: str) -> Optional[dict]:
             detail=f"GitHub coverage artifacts failed: {response.status_code}",
         )
 
-    expected_name = f"coverage-{job_id}"
+    run_response = _gh_request(
+        "GET",
+        f"{GITHUB_API_BASE}/actions/runs/{run_id}",
+    )
+    display_title = ""
+    if run_response.status_code == 200:
+        display_title = str(run_response.json().get("display_title", ""))
+    prefix = f"coverage-{job_id}-"
+    action = display_title.removeprefix(prefix) if display_title.startswith(prefix) else ""
+    expected_name = f"coverage-{job_id}-{action}" if action else f"coverage-{job_id}"
     return next(
         (
             artifact
@@ -1263,6 +1333,33 @@ def _read_coverage_result(run_id: int, job_id: str) -> Optional[dict]:
         return json.loads(archive.read(result_name).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=502, detail="Coverage result is invalid") from exc
+
+
+def _require_coverage_job_idle(store: CoverageJobStore, job_id: str) -> dict:
+    job = store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Coverage job not found")
+    if str(job.get("active_action", "")).strip():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A coverage run is already in progress. "
+                "Wait for it to finish before starting another run."
+            ),
+        )
+    return job
+
+
+def _acquire_coverage_action(
+    store: CoverageJobStore,
+    job_id: str,
+    action: str,
+) -> None:
+    with COVERAGE_ACTION_LOCK:
+        try:
+            store.acquire_action(job_id, action)
+        except CoverageRunInProgress as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _ensure_state_file() -> None:
@@ -2291,13 +2388,21 @@ def set_coverage_country_override(
             status_code=400,
             detail="Invalid publication lookup key",
         )
-    if not country or len(country) > 100:
+    if not req.not_applicable and (not country or len(country) > 100):
         raise HTTPException(status_code=400, detail="Country is required")
     if country_code and not re.fullmatch(r"[A-Z]{2}", country_code):
         raise HTTPException(
             status_code=400,
             detail="Country code must contain two letters",
         )
+
+    persistent_job_id = (req.job_id or "").strip()
+    if not persistent_job_id and (req.coverage_run_id or "").startswith("coverage-search-"):
+        persistent_job_id = req.coverage_run_id.removeprefix("coverage-search-")
+    persistent_store = None
+    if persistent_job_id:
+        persistent_store = CoverageJobStore(_load_main_spreadsheet())
+        _require_coverage_job_idle(persistent_store, persistent_job_id)
 
     ws = ensure_country_sheet(_load_main_spreadsheet())
     values = ws.get_all_values()
@@ -2307,30 +2412,31 @@ def set_coverage_country_override(
         if existing_key == lookup_key:
             target_row = row_index
 
-    payload = [
-        lookup_key,
-        publication,
-        country,
-        country_code,
-        "manual",
-        "high",
-        "TRUE",
-        "resolved",
-        "ui_override",
-        datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "",
-    ]
-    if len(payload) != len(COUNTRY_HEADERS):
-        raise HTTPException(status_code=500, detail="Country registry schema mismatch")
+    if not req.not_applicable:
+        payload = [
+            lookup_key,
+            publication,
+            country,
+            country_code,
+            "manual",
+            "high",
+            "TRUE",
+            "resolved",
+            "ui_override",
+            datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "",
+        ]
+        if len(payload) != len(COUNTRY_HEADERS):
+            raise HTTPException(status_code=500, detail="Country registry schema mismatch")
 
-    if target_row:
-        ws.update(
-            f"A{target_row}:K{target_row}",
-            [payload],
-            value_input_option="RAW",
-        )
-    else:
-        ws.append_row(payload, value_input_option="RAW")
+        if target_row:
+            ws.update(
+                f"A{target_row}:K{target_row}",
+                [payload],
+                value_input_option="RAW",
+            )
+        else:
+            ws.append_row(payload, value_input_option="RAW")
 
     report_rows_updated = _update_coverage_report_country(
         coverage_run_id=(req.coverage_run_id or "").strip(),
@@ -2338,12 +2444,20 @@ def set_coverage_country_override(
         article_url=(req.article_url or "").strip(),
         country=country,
     )
+    if persistent_store:
+        persistent_store.apply_country_override(
+            persistent_job_id,
+            lookup_key,
+            country,
+            country_code,
+            not_applicable=bool(req.not_applicable),
+        )
     return {
         "ok": True,
         "lookup_key": lookup_key,
         "country": country,
         "country_code": country_code,
-        "country_source": "manual",
+        "country_source": "not_applicable" if req.not_applicable else "manual",
         "country_confidence": "high",
         "report_rows_updated": report_rows_updated,
     }
@@ -2362,25 +2476,33 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         raise HTTPException(status_code=400, detail="At least one mention term is required")
 
     search_queries = [
-        line.strip()
-        for line in (req.search_queries or "").replace("\r", "\n").split("\n")
-        if line.strip()
+        query.strip()
+        for query in re.split(r"\r\n?|\n|\|\|", req.search_queries or "")
+        if query.strip()
     ]
     if not search_queries:
         raise HTTPException(status_code=400, detail="At least one search query is required")
 
     job_id = uuid.uuid4().hex
     coverage_run_id = f"coverage-search-{job_id}"
+    store = CoverageJobStore(_load_main_spreadsheet())
+    store.create_job({
+        "job_id": job_id,
+        "status": "draft",
+        "report_title": report_title,
+        "mention_terms": mention_terms,
+        "search_queries": search_queries,
+        "date_from": (req.date_from or "").strip(),
+        "date_to": (req.date_to or "").strip(),
+        "backlink_domains": _split_keywords(req.backlink_domains or ""),
+    })
+    _acquire_coverage_action(store, job_id, "discover")
     dispatch_body = {
         "ref": GITHUB_REF,
         "inputs": {
             "job_id": job_id,
-            "report_title": report_title,
-            "mention_terms": req.mention_terms,
+            "action": "discover",
             "search_queries": "\n".join(search_queries),
-            "date_from": (req.date_from or "").strip(),
-            "date_to": (req.date_to or "").strip(),
-            "backlink_domains": req.backlink_domains or "",
         },
     }
     response = _gh_request(
@@ -2389,6 +2511,12 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         json=dispatch_body,
     )
     if response.status_code not in {200, 204}:
+        store.release_action(
+            job_id,
+            status="failed",
+            error="GitHub workflow dispatch failed",
+            action="discover",
+        )
         detail = response.text[:500] if response.text else str(response.status_code)
         raise HTTPException(
             status_code=502,
@@ -2401,15 +2529,136 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         "coverage_run_id": coverage_run_id,
         "available_searches": 0,
         "status": "running",
+        "action": "discover",
     }
 
 
+@app.post("/coverage/jobs/{job_id}/actions/{action}")
+def run_coverage_job_action(
+    job_id: str,
+    action: Literal["discover", "verify", "country", "finalize"],
+    req: CoverageActionRequest,
+    authorization: str = Header(default=""),
+):
+    _check_auth(authorization)
+    store = CoverageJobStore(_load_main_spreadsheet())
+    if not store.get_job(job_id):
+        raise HTTPException(status_code=404, detail="Coverage job not found")
+    _acquire_coverage_action(store, job_id, action)
+
+    queries = [
+        query.strip()
+        for query in re.split(r"\r\n?|\n|\|\|", req.search_queries or "")
+        if query.strip()
+    ]
+    response = _gh_request(
+        "POST",
+        f"{GITHUB_API_BASE}/actions/workflows/{COVERAGE_WORKFLOW}/dispatches",
+        json={
+            "ref": GITHUB_REF,
+            "inputs": {
+                "job_id": job_id,
+                "action": action,
+                "search_queries": "\n".join(queries),
+            },
+        },
+    )
+    if response.status_code not in {200, 204}:
+        store.release_action(
+            job_id,
+            status="failed",
+            error="GitHub workflow dispatch failed",
+            action=action,
+        )
+        raise HTTPException(status_code=502, detail="GitHub coverage dispatch failed")
+    return {"ok": True, "job_id": job_id, "status": "running", "action": action}
+
+
+@app.get("/coverage/jobs/{job_id}")
+def get_coverage_job(job_id: str, authorization: str = Header(default="")):
+    _check_auth(authorization)
+    store = CoverageJobStore(_load_main_spreadsheet())
+    try:
+        return {"ok": True, **job_payload(store, job_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Coverage job not found") from exc
+
+
+@app.patch("/coverage/jobs/{job_id}/review")
+def review_coverage_candidates(
+    job_id: str,
+    req: CoverageReviewRequest,
+    authorization: str = Header(default=""),
+):
+    _check_auth(authorization)
+    store = CoverageJobStore(_load_main_spreadsheet())
+    _require_coverage_job_idle(store, job_id)
+    store.set_review_decisions(
+        job_id,
+        [decision.dict() for decision in req.decisions],
+    )
+    payload = job_payload(store, job_id)
+    if not payload["summary"]["needs_review"]:
+        store.update_job(job_id, status="verified")
+        payload = job_payload(store, job_id)
+    return {"ok": True, **payload}
+
+
+@app.patch("/coverage/jobs/{job_id}/publication")
+def update_coverage_publication(
+    job_id: str,
+    req: CoveragePublicationRequest,
+    authorization: str = Header(default=""),
+):
+    _check_auth(authorization)
+    publication = req.publication.strip()
+    if not publication:
+        raise HTTPException(status_code=400, detail="Publication is required")
+    store = CoverageJobStore(_load_main_spreadsheet())
+    _require_coverage_job_idle(store, job_id)
+    store.update_publication(job_id, req.url_key, publication)
+    return {"ok": True, **job_payload(store, job_id)}
+
+
+@app.post("/coverage/jobs/{job_id}/country-review")
+def confirm_coverage_countries(
+    job_id: str,
+    req: CoverageCountryReviewRequest,
+    authorization: str = Header(default=""),
+):
+    _check_auth(authorization)
+    store = CoverageJobStore(_load_main_spreadsheet())
+    _require_coverage_job_idle(store, job_id)
+    keys = set(req.lookup_keys)
+    updates = []
+    for candidate in store.list_candidates(job_id):
+        if candidate.get("country_lookup_key") in keys and candidate.get("country"):
+            updates.append({
+                "url_key": candidate.get("url_key"),
+                "country_reviewed": "TRUE",
+            })
+    store.update_candidates(job_id, updates)
+    return {"ok": True, **job_payload(store, job_id)}
+
+
 @app.get("/coverage/search-report/progress")
-def get_client_coverage_search_report_progress(job_id: str, authorization: str = Header(default="")):
+def get_client_coverage_search_report_progress(
+    job_id: str,
+    action: str = "",
+    authorization: str = Header(default=""),
+):
     _check_auth(authorization)
     if not job_id:
         raise HTTPException(status_code=400, detail="job_id is required")
-    run = _find_coverage_run(job_id)
+    store = CoverageJobStore(_load_main_spreadsheet())
+    job = store.get_job(job_id) or {}
+    expected_action = action or str(job.get("active_action", ""))
+    created_after = (
+        str(job.get("updated_at", ""))
+        if expected_action and job.get("active_action") == expected_action
+        else ""
+    )
+    run = _find_coverage_run(job_id, expected_action, created_after)
     if not run:
         return {
             "ok": True,
@@ -2429,6 +2678,23 @@ def get_client_coverage_search_report_progress(job_id: str, authorization: str =
             "current": 0,
             "total": 0,
             "message": "Coverage report is running in GitHub Actions",
+            "actions_url": run.get("html_url"),
+        }
+
+    if run.get("conclusion") != "success":
+        if expected_action:
+            store.release_action(
+                job_id,
+                status="failed",
+                error="GitHub Actions workflow failed",
+                action=expected_action,
+            )
+        return {
+            "ok": True,
+            "status": "failed",
+            "phase": expected_action or "failed",
+            "message": "Coverage workflow failed",
+            "error": "Open the GitHub Actions run for details.",
             "actions_url": run.get("html_url"),
         }
 
@@ -2501,7 +2767,7 @@ def download_client_coverage_search_report(job_id: str, authorization: str = Hea
     if not job_id:
         raise HTTPException(status_code=400, detail="job_id is required")
 
-    run = _find_coverage_run(job_id)
+    run = _find_coverage_run(job_id, "finalize") or _find_coverage_run(job_id)
     if not run:
         raise HTTPException(status_code=404, detail="Coverage workflow run not found")
     if run.get("status") != "completed" or run.get("conclusion") != "success":

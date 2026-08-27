@@ -6,17 +6,15 @@ import shutil
 from pathlib import Path
 
 try:
-    from client_coverage_search import (
-        run_keyword_coverage_report,
-        split_csv_or_lines,
-        split_search_queries,
-    )
+    from client_coverage_search import split_search_queries
+    from coverage_actions import discover_job, enrich_countries_job, finalize_job, job_payload, verify_job
+    from coverage_job_store import CoverageJobStore
+    from google_storage import GoogleSheetsDB
 except ImportError:
-    from backend.client_coverage_search import (
-        run_keyword_coverage_report,
-        split_csv_or_lines,
-        split_search_queries,
-    )
+    from backend.client_coverage_search import split_search_queries
+    from backend.coverage_actions import discover_job, enrich_countries_job, finalize_job, job_payload, verify_job
+    from backend.coverage_job_store import CoverageJobStore
+    from backend.google_storage import GoogleSheetsDB
 
 
 ARTIFACT_DIR = Path("output/client_coverage_artifact")
@@ -32,65 +30,55 @@ def _write_result(payload: dict) -> None:
 
 def main() -> None:
     job_id = os.environ["COVERAGE_JOB_ID"]
-    coverage_run_id = f"coverage-search-{job_id}"
+    action = os.getenv("COVERAGE_ACTION", "discover").strip().lower()
+    database = GoogleSheetsDB()
+    store = CoverageJobStore(database)
 
     try:
-        result = run_keyword_coverage_report(
-            report_title=os.environ["COVERAGE_REPORT_TITLE"],
-            mention_terms=split_csv_or_lines(os.environ["COVERAGE_MENTION_TERMS"]),
-            search_queries=split_search_queries(
-                os.environ["COVERAGE_SEARCH_QUERIES"]
-            ),
-            date_from=os.getenv("COVERAGE_DATE_FROM", ""),
-            date_to=os.getenv("COVERAGE_DATE_TO", ""),
-            backlink_domains=split_csv_or_lines(
-                os.getenv("COVERAGE_BACKLINK_DOMAINS", "")
-            ),
-            coverage_run_id=coverage_run_id,
-        )
-
-        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(result["pdf_path"], ARTIFACT_DIR / "report.pdf")
-
-        searches_used = int(result.get("searches_used", 0) or 0)
-        searched_results = int(result.get("searched_results", 0) or 0)
-        if searched_results == 0:
-            completion_message = "Search returned no results"
-        elif result.get("warnings"):
-            completion_message = "Coverage report complete with warnings"
+        if action == "discover":
+            result = discover_job(
+                store,
+                job_id,
+                queries=split_search_queries(os.getenv("COVERAGE_SEARCH_QUERIES", "")) or None,
+            )
+        elif action == "verify":
+            result = verify_job(store, job_id)
+        elif action == "country":
+            result = enrich_countries_job(store, job_id, database)
+        elif action == "finalize":
+            result = finalize_job(store, job_id)
+            ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(result["pdf_path"], ARTIFACT_DIR / "report.pdf")
         else:
-            completion_message = "Coverage report complete"
+            raise ValueError(f"Unsupported coverage action: {action}")
+
+        status = str((store.get_job(job_id) or {}).get("status", ""))
+        store.release_action(job_id, status=status, action=action)
         _write_result({
             "status": "complete",
-            "phase": "complete",
-            "current": searches_used,
-            "total": searches_used,
-            "message": completion_message,
-            "coverage_run_id": coverage_run_id,
-            "summary": {
-                "total_coverage": result.get("count", 0),
-                "needs_review": result.get("needs_review", 0),
-                "searched_results": searched_results,
-                "searches_used": searches_used,
-                "searches_remaining": result.get("searches_remaining", 0),
-                "search_stop_reason": result.get("search_stop_reason", ""),
-                "country_google_searches_used": result.get(
-                    "country_stats", {}
-                ).get("google_searches_used", 0),
-            },
-            "results": result.get("results", []),
-            "review_results": result.get("review_results", []),
-            "search_diagnostics": result.get("search_diagnostics", []),
-            "highlights": result.get("highlights", {}),
-            "country_stats": result.get("country_stats", {}),
-            "warnings": result.get("warnings", []),
+            "phase": action,
+            "message": f"Coverage {action} complete",
+            "job_id": job_id,
+            "coverage_run_id": f"coverage-search-{job_id}",
+            **result,
         })
     except Exception as exc:
+        store.release_action(
+            job_id,
+            status="failed",
+            error=f"{type(exc).__name__}: {exc}",
+            action=action,
+        )
+        try:
+            snapshot = job_payload(store, job_id)
+        except Exception:
+            snapshot = {}
         _write_result({
             "status": "failed",
-            "phase": "failed",
-            "message": f"Coverage report failed: {exc}",
+            "phase": action,
+            "message": f"Coverage {action} failed: {exc}",
             "error": str(exc),
+            **snapshot,
         })
         raise
 

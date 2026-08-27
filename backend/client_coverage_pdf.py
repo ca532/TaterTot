@@ -63,6 +63,7 @@ def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: lis
 
     bullets = [
         f"{highlights.get('total_coverage', 0)} pieces of coverage",
+        f"{highlights.get('publication_count', len({row.get('publication') for row in rows if row.get('publication')}))} unique publications",
         f"{highlights.get('country_count', 0)} countries: "
         f"{escape(str(highlights.get('countries', '') or 'N/A'))}",
         "Highlights include "
@@ -71,13 +72,24 @@ def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: lis
     for bullet in bullets:
         story.append(Paragraph(f"&bull;&nbsp;&nbsp;{bullet}", body))
 
+    date_from = str(highlights.get("date_from", "") or "")
+    date_to = str(highlights.get("date_to", "") or "")
+    if date_from or date_to:
+        period = f"{date_from or 'Start'} to {date_to or 'Present'}"
+        story.append(Paragraph(f"&bull;&nbsp;&nbsp;Reporting period: {escape(period)}", body))
+
+    if highlights.get("traffic_unavailable"):
+        story.append(Paragraph(
+            "Traffic estimates were unavailable for some publications.",
+            body,
+        ))
+
     story.append(Spacer(1, 0.15 * inch))
 
     for idx, row in enumerate(rows, start=1):
         publication = escape(str(row.get("publication") or "Publication"))
         article_url = escape(str(row.get("article_url") or ""), quote=True)
         country = escape(str(row.get("country") or ""))
-        visits = escape(str(row.get("monthly_visits_display") or "N/A"))
         link_note = escape(str(row.get("link_note") or ""))
 
         label = publication
@@ -86,8 +98,16 @@ def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: lis
 
         country_text = f" ({country})" if country else ""
         note_text = f" ({link_note})" if link_note else ""
+        if str(row.get("manually_approved", "")).upper() == "TRUE":
+            note_text += " (manually approved)"
+        visits = str(row.get("monthly_visits_display") or "N/A")
+        visits_text = (
+            f" - {escape(visits)} Monthly Visits"
+            if visits != "N/A"
+            else ""
+        )
         story.append(Paragraph(
-            f"{idx}.&nbsp;&nbsp;{label}{country_text} - {visits} Monthly Visits{note_text}",
+            f"{idx}.&nbsp;&nbsp;{label}{country_text}{visits_text}{note_text}",
             body,
         ))
 

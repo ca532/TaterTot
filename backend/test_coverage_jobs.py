@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from backend.coverage_job_store import (
+    CANDIDATE_HEADERS,
+    CANDIDATES_SHEET,
+    JOB_HEADERS,
+    JOBS_SHEET,
+    TRAFFIC_HEADERS,
+    TRAFFIC_SHEET,
+    CoverageJobStore,
+    CoverageRunInProgress,
+    canonical_candidate_key,
+)
+
+
+class FakeWorksheet:
+    def __init__(self, headers):
+        self.values = [list(headers)]
+
+    def get_all_values(self):
+        return [list(row) for row in self.values]
+
+    def append_row(self, row, **_kwargs):
+        self.values.append(list(row))
+
+    def append_rows(self, rows, **_kwargs):
+        self.values.extend(list(row) for row in rows)
+
+    def update(self, cell_range, rows, **_kwargs):
+        start = cell_range.split(":", 1)[0]
+        row_number = int("".join(character for character in start if character.isdigit()))
+        while len(self.values) < row_number:
+            self.values.append([])
+        self.values[row_number - 1] = list(rows[0])
+
+    def batch_update(self, updates, **_kwargs):
+        for update in updates:
+            self.update(update["range"], update["values"])
+
+
+class FakeSpreadsheet:
+    def __init__(self):
+        self.sheets = {
+            JOBS_SHEET: FakeWorksheet(JOB_HEADERS),
+            CANDIDATES_SHEET: FakeWorksheet(CANDIDATE_HEADERS),
+            TRAFFIC_SHEET: FakeWorksheet(TRAFFIC_HEADERS),
+        }
+
+    def worksheet(self, title):
+        return self.sheets[title]
+
+    def add_worksheet(self, title, rows, cols):
+        worksheet = FakeWorksheet([])
+        self.sheets[title] = worksheet
+        return worksheet
+
+
+def make_store() -> CoverageJobStore:
+    return CoverageJobStore(FakeSpreadsheet())
+
+
+def create_job(store: CoverageJobStore):
+    store.create_job({
+        "job_id": "job-1",
+        "report_title": "Report",
+        "mention_terms": ["Client Name"],
+        "search_queries": ["first query"],
+        "date_from": "2026-08-01",
+        "date_to": "2026-08-31",
+    })
+
+
+class CoverageJobStoreTests(unittest.TestCase):
+    def test_canonical_key_removes_tracking_and_common_url_variants(self):
+        left = canonical_candidate_key(
+            "http://www.example.com/story/?utm_source=x&id=4"
+        )
+        right = canonical_candidate_key(
+            "https://example.com/story?id=4"
+        )
+        self.assertEqual(left, right)
+
+    def test_discovery_merges_queries_without_duplicate_candidates(self):
+        store = make_store()
+        create_job(store)
+        first = store.upsert_discoveries(
+            "job-1",
+            [{"article_url": "https://example.com/story?utm_source=one"}],
+            query="first query",
+            search_source="news",
+        )
+        second = store.upsert_discoveries(
+            "job-1",
+            [{"article_url": "https://www.example.com/story"}],
+            query="second query",
+            search_source="web",
+        )
+
+        self.assertEqual(first, (1, 0))
+        self.assertEqual(second, (0, 1))
+        candidates = store.list_candidates("job-1")
+        self.assertEqual(len(candidates), 1)
+        self.assertIn("first query", candidates[0]["search_queries"])
+        self.assertIn("second query", candidates[0]["search_queries"])
+
+    def test_second_mutating_action_is_rejected(self):
+        store = make_store()
+        create_job(store)
+        store.acquire_action("job-1", "discover")
+
+        with self.assertRaisesRegex(
+            CoverageRunInProgress,
+            "A coverage run is already in progress",
+        ):
+            store.acquire_action("job-1", "verify")
+
+    def test_bulk_decisions_and_country_override_persist(self):
+        store = make_store()
+        create_job(store)
+        store.upsert_discoveries(
+            "job-1",
+            [{"article_url": "https://example.com/story"}],
+        )
+        candidate = store.list_candidates("job-1")[0]
+        store.update_candidates("job-1", [{
+            "url_key": candidate["url_key"],
+            "decision": "pending_review",
+            "country_lookup_key": "example.com",
+        }])
+        store.set_review_decisions("job-1", [{
+            "url_key": candidate["url_key"],
+            "decision": "approved",
+        }])
+        store.apply_country_override(
+            "job-1",
+            "example.com",
+            "Canada",
+            "CA",
+        )
+
+        saved = store.list_candidates("job-1")[0]
+        self.assertEqual(saved["decision"], "approved")
+        self.assertEqual(saved["manually_approved"], "TRUE")
+        self.assertEqual(saved["country"], "Canada")
+        self.assertEqual(saved["country_reviewed"], "TRUE")
+
+
+class FinalizationTests(unittest.TestCase):
+    @patch("backend.coverage_actions.build_coverage_pdf")
+    @patch("backend.coverage_actions.lookup_publication_traffic")
+    def test_pdf_regeneration_reuses_domain_traffic_cache(
+        self,
+        mock_traffic,
+        mock_pdf,
+    ):
+        from backend.coverage_actions import finalize_job
+
+        mock_traffic.return_value = {
+            "example.com": {
+                "monthly_visits": 1000,
+                "monthly_visits_display": "1.0K",
+                "source": "hypestat_via_zenrows",
+            }
+        }
+        store = make_store()
+        create_job(store)
+        store.upsert_discoveries(
+            "job-1",
+            [{"article_url": "https://example.com/story"}],
+        )
+        candidate = store.list_candidates("job-1")[0]
+        store.update_candidates("job-1", [{
+            "url_key": candidate["url_key"],
+            "article_title": "Story",
+            "publication": "Example",
+            "domain": "example.com",
+            "decision": "approved",
+            "country": "Canada",
+            "country_code": "CA",
+            "country_source": "manual",
+            "country_lookup_key": "example.com",
+            "country_reviewed": "TRUE",
+        }])
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("backend.coverage_actions.OUTPUT_DIR", Path(directory)):
+                finalize_job(store, "job-1")
+                finalize_job(store, "job-1")
+
+        mock_traffic.assert_called_once_with(["example.com"])
+        self.assertEqual(mock_pdf.call_count, 2)
+
+
+class VerificationTests(unittest.TestCase):
+    def test_confirmed_out_of_range_article_is_rejected(self):
+        from backend.coverage_actions import verify_job
+
+        store = make_store()
+        create_job(store)
+        store.upsert_discoveries(
+            "job-1",
+            [{"article_url": "https://example.com/story"}],
+        )
+        page = {
+            "ok": True,
+            "url": "https://example.com/story",
+            "title": "Client Name story",
+            "domain": "example.com",
+            "published_date": "2026-07-01",
+            "extraction_method": "article_element",
+        }
+        evidence = {
+            "matched_terms": ["Client Name"],
+            "has_backlink": False,
+            "backlink_urls": [],
+            "coverage_type": "mention",
+            "evidence_snippet": "Client Name",
+            "verification_status": "confirmed",
+            "verification_reason": "Exact approved term found in body",
+            "is_relevant": True,
+        }
+        with patch("backend.coverage_actions.fetch_page", return_value=page), patch(
+            "backend.coverage_actions.extract_evidence",
+            return_value=evidence,
+        ):
+            verify_job(store, "job-1")
+
+        saved = store.list_candidates("job-1")[0]
+        self.assertEqual(saved["decision"], "rejected")
+        self.assertEqual(saved["verification_status"], "out_of_range")
+
+    def test_extraction_failure_requires_search_evidence_for_review(self):
+        from backend.coverage_actions import verify_job
+
+        store = make_store()
+        create_job(store)
+        store.upsert_discoveries(
+            "job-1",
+            [
+                {
+                    "article_url": "https://example.com/with-evidence",
+                    "title": "Client Name appears here",
+                },
+                {
+                    "article_url": "https://example.com/no-evidence",
+                    "title": "Unrelated story",
+                },
+            ],
+        )
+        with patch(
+            "backend.coverage_actions.fetch_page",
+            return_value={"ok": False, "error": "http_403"},
+        ):
+            verify_job(store, "job-1")
+
+        decisions = {
+            row["article_url"]: row["decision"]
+            for row in store.list_candidates("job-1")
+        }
+        self.assertEqual(
+            decisions["https://example.com/with-evidence"],
+            "pending_review",
+        )
+        self.assertEqual(
+            decisions["https://example.com/no-evidence"],
+            "rejected",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

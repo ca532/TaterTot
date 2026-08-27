@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Download, Pencil, RefreshCw, Search, X } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 
+const RUNNING_MESSAGE = "A coverage run is already in progress. Wait for it to finish before starting another run.";
+
 export default function ClientCoverageScannerView() {
   const [form, setForm] = useState({
     report_title: "",
@@ -11,476 +13,334 @@ export default function ClientCoverageScannerView() {
     date_to: "",
     backlink_domains: "",
   });
-  const [jobId, setJobId] = useState("");
-  const [runId, setRunId] = useState("");
-  const [job, setJob] = useState(null);
-  const [summary, setSummary] = useState(null);
-  const [results, setResults] = useState([]);
-  const [reviewResults, setReviewResults] = useState([]);
+  const [jobId, setJobId] = useState(() => window.localStorage.getItem("coverage_job_id") || "");
+  const [snapshot, setSnapshot] = useState(null);
+  const [runningAction, setRunningAction] = useState("");
+  const [dispatching, setDispatching] = useState(false);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const [selectedReview, setSelectedReview] = useState([]);
+  const [selectedCountries, setSelectedCountries] = useState([]);
   const [countryEdit, setCountryEdit] = useState(null);
-  const [savingCountry, setSavingCountry] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const pollRef = useRef(null);
 
-  const searchQueries = useMemo(
-    () => form.search_queries.split(/\r?\n/).map((q) => q.trim()).filter(Boolean),
+  const queries = useMemo(
+    () => form.search_queries.split(/\r?\n|\|\|/).map((item) => item.trim()).filter(Boolean),
     [form.search_queries]
   );
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
-
-  useEffect(() => () => stopPolling(), []);
-
-  const updateForm = (field, value) => {
-    setForm((current) => ({ ...current, [field]: value }));
-  };
-
-  const pollProgress = (nextJobId) => {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
-      const res = await githubAPI.getClientCoverageSearchReportProgress(nextJobId);
-      if (!res.success) {
-        setError(res.error || "Failed to check report progress.");
-        stopPolling();
-        setLoading(false);
-        return;
-      }
-
-      setJob(res);
-
-      if (res.status === "complete") {
-        stopPolling();
-        setLoading(false);
-        setSummary(res.summary || null);
-        setResults(res.results || []);
-        setReviewResults(res.review_results || []);
-      }
-
-      if (res.status === "failed") {
-        stopPolling();
-        setLoading(false);
-        setError(res.error || res.message || "Coverage report failed.");
-      }
-    }, 3000);
-  };
-
-  const runReport = async () => {
-    setError("");
-    setSummary(null);
-    setResults([]);
-    setReviewResults([]);
-    setJob(null);
-    setCountryEdit(null);
-
-    if (!form.report_title.trim()) {
-      setError("Report title is required.");
-      return;
-    }
-    if (!form.mention_terms.trim()) {
-      setError("Add at least one mention term.");
-      return;
-    }
-    if (!searchQueries.length) {
-      setError("Add at least one search query.");
-      return;
-    }
-
-    setLoading(true);
+  const job = snapshot?.job || null;
+  const results = snapshot?.results || [];
+  const reviewResults = snapshot?.review_results || [];
+  const countryReviewResults = snapshot?.country_review_results || [];
+  const summary = snapshot?.summary || {};
+  const suggestedQueries = useMemo(() => {
     try {
-      const res = await githubAPI.runClientCoverageSearchReport(form);
+      const parsed = JSON.parse(job?.suggested_queries || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }, [job?.suggested_queries]);
 
-      if (!res.success) {
-        setError(res.error || "Coverage report failed to start.");
-        setLoading(false);
+  const stopPolling = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+  };
+
+  const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+
+  const refreshJob = async (id = jobId) => {
+    if (!id) return false;
+    const response = await githubAPI.getCoverageJob(id);
+    if (!response.success) {
+      setError(response.error || "Unable to load the coverage job.");
+      return false;
+    }
+    setSnapshot(response);
+    return true;
+  };
+
+  useEffect(() => {
+    if (!jobId) return;
+    let active = true;
+    githubAPI.getCoverageJob(jobId).then((response) => {
+      if (!active) return;
+      if (response.success) {
+        setSnapshot(response);
+        if (response.job?.active_action) {
+          setRunningAction(response.job.active_action);
+        }
+      }
+      else setError(response.error || "Unable to load the coverage job.");
+    });
+    return () => {
+      active = false;
+    };
+  }, [jobId]);
+
+  const startNewJob = () => {
+    stopPolling();
+    window.localStorage.removeItem("coverage_job_id");
+    setJobId("");
+    setSnapshot(null);
+    setRunningAction("");
+    setDispatching(false);
+    setSelectedReview([]);
+    setSelectedCountries([]);
+    setCountryEdit(null);
+    setError("");
+  };
+
+  useEffect(() => {
+    if (!jobId || !runningAction) return undefined;
+    let active = true;
+    const checkProgress = async () => {
+      const response = await githubAPI.getClientCoverageSearchReportProgress(jobId, runningAction);
+      if (!active) return;
+      if (!response.success) {
+        setRunningAction("");
+        setError(response.error || "Unable to check coverage progress.");
         return;
       }
+      if (response.status === "complete" || response.status === "failed") {
+        setRunningAction("");
+        const refreshed = await githubAPI.getCoverageJob(jobId);
+        if (active && refreshed.success) setSnapshot(refreshed);
+        if (response.status === "failed") {
+          setError(response.error || response.message || "Coverage action failed.");
+        }
+      }
+    };
+    checkProgress();
+    pollRef.current = setInterval(checkProgress, 3000);
+    return () => {
+      active = false;
+      stopPolling();
+    };
+  }, [jobId, runningAction]);
 
-      setJobId(res.job_id || "");
-      setRunId(res.coverage_run_id || "");
-      setJob({
-        status: "running",
-        phase: "initializing",
-        current: 0,
-        total: res.available_searches || 0,
-        message: "Starting coverage report",
-      });
-      pollProgress(res.job_id);
-    } catch (err) {
-      setError(err.message);
-      setLoading(false);
+  const handleActionFailure = (response) => {
+    setRunningAction("");
+    setDispatching(false);
+    if (response.status === 409 || response.error === RUNNING_MESSAGE) {
+      setError(RUNNING_MESSAGE);
+    } else {
+      setError(response.error || "Coverage action failed to start.");
     }
+  };
+
+  const createJob = async () => {
+    setError("");
+    if (!form.report_title.trim()) return setError("Report title is required.");
+    if (!form.mention_terms.trim()) return setError("Add at least one mention term.");
+    if (!queries.length) return setError("Add at least one search query.");
+
+    setDispatching(true);
+    const response = await githubAPI.runClientCoverageSearchReport(form);
+    if (!response.success) return handleActionFailure(response);
+    setDispatching(false);
+    setRunningAction("discover");
+    setJobId(response.job_id);
+    window.localStorage.setItem("coverage_job_id", response.job_id);
+  };
+
+  const runAction = async (action, payload = {}) => {
+    setError("");
+    setDispatching(true);
+    const response = await githubAPI.runCoverageJobAction(jobId, action, payload);
+    if (!response.success) return handleActionFailure(response);
+    setDispatching(false);
+    setRunningAction(action);
+  };
+
+  const runAnotherDiscovery = () => {
+    if (!queries.length) return setError("Add at least one search query.");
+    runAction("discover", { search_queries: queries.join("\n") });
+  };
+
+  const decideSelected = async (decision) => {
+    if (!selectedReview.length) return;
+    setSaving(true);
+    setError("");
+    const response = await githubAPI.reviewCoverageCandidates(
+      jobId,
+      selectedReview.map((url_key) => ({ url_key, decision }))
+    );
+    setSaving(false);
+    if (!response.success) return setError(response.error || "Unable to save review decisions.");
+    setSnapshot(response);
+    setSelectedReview([]);
+  };
+
+  const savePublication = async (row, publication) => {
+    const value = publication.trim();
+    if (!value || value === row.publication) return;
+    const response = await githubAPI.updateCoveragePublication(jobId, {
+      url_key: row.url_key,
+      publication: value,
+    });
+    if (!response.success) setError(response.error || "Unable to update publication.");
+    else setSnapshot(response);
+  };
+
+  const confirmSelectedCountries = async () => {
+    if (!selectedCountries.length) return;
+    setSaving(true);
+    const response = await githubAPI.confirmCoverageCountries(jobId, selectedCountries);
+    setSaving(false);
+    if (!response.success) return setError(response.error || "Unable to confirm countries.");
+    setSnapshot(response);
+    setSelectedCountries([]);
+  };
+
+  const saveCountry = async (notApplicable = false) => {
+    if (!countryEdit) return;
+    if (!notApplicable && !countryEdit.country.trim()) return setError("Country is required.");
+    setSaving(true);
+    const response = await githubAPI.setClientCoverageCountryOverride({
+      job_id: jobId,
+      coverage_run_id: `coverage-search-${jobId}`,
+      lookup_key: countryEdit.country_lookup_key,
+      publication: countryEdit.publication,
+      article_url: countryEdit.article_url,
+      country: countryEdit.country.trim(),
+      country_code: countryEdit.country_code.trim().toUpperCase(),
+      not_applicable: notApplicable,
+    });
+    setSaving(false);
+    if (!response.success) return setError(response.error || "Unable to save country.");
+    setCountryEdit(null);
+    await refreshJob();
   };
 
   const downloadPdf = async () => {
-    if (!jobId) return;
-    setError("");
     setDownloading(true);
-    try {
-      const res = await githubAPI.downloadClientCoverageSearchReport(jobId);
-      if (!res.success) {
-        setError(res.error || "Failed to download PDF.");
-        return;
-      }
-
-      const url = URL.createObjectURL(res.blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = res.filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    } finally {
-      setDownloading(false);
-    }
+    const response = await githubAPI.downloadClientCoverageSearchReport(jobId);
+    setDownloading(false);
+    if (!response.success) return setError(response.error || "Unable to download the PDF.");
+    const url = URL.createObjectURL(response.blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = response.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
-  const beginCountryEdit = (row, rowIndex) => {
-    setError("");
-    const lookupKey = (row.country_lookup_key || row.domain || "").trim().toLowerCase();
-    if (!lookupKey) {
-      setError("This result does not have a publication key for saving its country.");
-      return;
-    }
-    setCountryEdit({
-      row_index: rowIndex,
-      article_url: row.article_url || "",
-      lookup_key: lookupKey,
-      publication: row.publication || "",
-      country: "",
-      country_code: "",
-    });
-  };
-
-  const saveCountryOverride = async () => {
-    const country = countryEdit?.country?.trim();
-    if (!country) {
-      setError("Country is required.");
-      return;
-    }
-
-    setSavingCountry(true);
-    setError("");
-    try {
-      const res = await githubAPI.setClientCoverageCountryOverride({
-        article_url: countryEdit.article_url,
-        lookup_key: countryEdit.lookup_key,
-        publication: countryEdit.publication,
-        country,
-        country_code: countryEdit.country_code.trim().toUpperCase(),
-        coverage_run_id: runId,
-      });
-      if (!res.success) {
-        setError(res.error || "Failed to save country.");
-        return;
-      }
-
-      setResults((current) => current.map((row) => {
-        const key = (row.country_lookup_key || row.domain || "").trim().toLowerCase();
-        if (key !== res.lookup_key) return row;
-        return {
-          ...row,
-          country: res.country,
-          country_source: "manual",
-          country_confidence: "high",
-        };
-      }));
-      setCountryEdit(null);
-    } catch (err) {
-      setError(err.message || "Failed to save country.");
-    } finally {
-      setSavingCountry(false);
-    }
-  };
-
-  const progressTotal = Number(job?.total || 0);
-  const progressCurrent = Number(job?.current || 0);
-  const progressPct = progressTotal > 0 ? Math.min(100, Math.round((progressCurrent / progressTotal) * 100)) : 0;
+  const running = Boolean(dispatching || runningAction || job?.active_action);
+  const canVerify = job && !running && !["article_review", "country_review", "complete"].includes(job.status);
+  const canCountry = job && !running && reviewResults.length === 0 && results.length > 0 && !["country_review", "complete"].includes(job.status);
+  const canFinalize = job && !running && results.length > 0 && reviewResults.length === 0 && countryReviewResults.length === 0;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6">
-      <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#faf8f3] border-2 border-[#b8860b] mb-4">
-          <Search className="w-8 h-8 text-[#b8860b]" />
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
+      <header className="flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#b8860b] bg-[#faf8f3]">
+          <Search className="h-5 w-5 text-[#8a6508]" />
         </div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Client Coverage Report</h2>
-      </div>
-
-      <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-5 mb-6">
-        <input
-          className="w-full p-3 border border-gray-300 rounded-lg"
-          placeholder="Report title"
-          value={form.report_title}
-          onChange={(e) => updateForm("report_title", e.target.value)}
-        />
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <textarea
-            className="w-full p-3 border border-gray-300 rounded-lg min-h-28"
-            placeholder="Mention terms, comma-separated"
-            value={form.mention_terms}
-            onChange={(e) => updateForm("mention_terms", e.target.value)}
-          />
-          <textarea
-            className="w-full p-3 border border-gray-300 rounded-lg min-h-28"
-            placeholder="Backlink domains, optional"
-            value={form.backlink_domains}
-            onChange={(e) => updateForm("backlink_domains", e.target.value)}
-          />
-        </div>
-
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Search Query</label>
-          <textarea
-            className="w-full p-3 border border-gray-300 rounded-lg min-h-36"
-            placeholder={"One query per line\nTobias Kormind Cristiano Ronaldo engagement ring\n77 Diamonds Georgina Rodriguez engagement ring"}
-            value={form.search_queries}
-            onChange={(e) => updateForm("search_queries", e.target.value)}
-          />
-          <p className="text-xs text-gray-500 mt-2">Using one focused query gives us the best chance of searching all available result pages.</p>
+          <h2 className="text-2xl font-bold text-gray-900">Client Coverage Report</h2>
+          {jobId && <p className="text-xs text-gray-500">Job {jobId}</p>}
         </div>
+        {jobId && <button type="button" onClick={startNewJob} disabled={running} className="ml-auto rounded border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 disabled:opacity-50">New job</button>}
+      </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="space-y-2">
-            <span className="block text-sm font-semibold text-gray-700">From</span>
-            <input
-              type="date"
-              className="w-full p-3 border border-gray-300 rounded-lg"
-              value={form.date_from}
-              onChange={(e) => updateForm("date_from", e.target.value)}
-            />
-          </label>
-          <label className="space-y-2">
-            <span className="block text-sm font-semibold text-gray-700">To</span>
-            <input
-              type="date"
-              className="w-full p-3 border border-gray-300 rounded-lg"
-              value={form.date_to}
-              onChange={(e) => updateForm("date_to", e.target.value)}
-            />
-          </label>
-        </div>
-
-        {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</div>}
-
-        <div className="flex flex-col sm:flex-row gap-3">
-          <button
-            type="button"
-            onClick={runReport}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-[#b8860b] text-black font-bold rounded-lg disabled:opacity-60"
-          >
-            {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-            {loading ? "Generating..." : "Generate Report"}
+      {!jobId && (
+        <section className="bg-white border border-gray-200 rounded-lg shadow-sm p-6 space-y-4">
+          <input className="w-full p-3 border border-gray-300 rounded-lg" placeholder="Report title" value={form.report_title} onChange={(event) => updateForm("report_title", event.target.value)} />
+          <div className="grid gap-4 md:grid-cols-2">
+            <textarea className="min-h-24 w-full p-3 border border-gray-300 rounded-lg" placeholder="Mention terms, comma-separated" value={form.mention_terms} onChange={(event) => updateForm("mention_terms", event.target.value)} />
+            <textarea className="min-h-24 w-full p-3 border border-gray-300 rounded-lg" placeholder="Backlink domains, optional" value={form.backlink_domains} onChange={(event) => updateForm("backlink_domains", event.target.value)} />
+          </div>
+          <textarea className="min-h-32 w-full p-3 border border-gray-300 rounded-lg" placeholder="One search query per line" value={form.search_queries} onChange={(event) => updateForm("search_queries", event.target.value)} />
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="text-sm font-semibold text-gray-700">From<input type="date" className="mt-2 w-full p-3 border border-gray-300 rounded-lg" value={form.date_from} onChange={(event) => updateForm("date_from", event.target.value)} /></label>
+            <label className="text-sm font-semibold text-gray-700">To<input type="date" className="mt-2 w-full p-3 border border-gray-300 rounded-lg" value={form.date_to} onChange={(event) => updateForm("date_to", event.target.value)} /></label>
+          </div>
+          <button type="button" onClick={createJob} disabled={running} className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-[#b8860b] font-semibold text-black disabled:opacity-50">
+            {running ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Run discovery
           </button>
-          {job?.status === "complete" && (
-            <button
-              type="button"
-              onClick={downloadPdf}
-              disabled={downloading}
-              className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-[#b8860b] font-semibold rounded-lg border-2 border-[#b8860b] disabled:opacity-60"
-            >
-              <Download className="w-5 h-5" />
-              {downloading ? "Downloading..." : "Download PDF"}
-            </button>
+        </section>
+      )}
+
+      {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+      {running && <div role="alert" className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">{RUNNING_MESSAGE}</div>}
+
+      {jobId && snapshot && (
+        <>
+          <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            {[["Candidates", summary.candidates], ["Approved", summary.total_coverage], ["Article review", summary.needs_review], ["Country review", summary.countries_need_review], ["Status", job.status]].map(([label, value]) => (
+              <div key={label} className="border-b border-gray-200 bg-white p-4">
+                <p className="text-xs text-gray-500">{label}</p><p className="mt-1 text-lg font-semibold text-gray-900">{value || 0}</p>
+              </div>
+            ))}
+          </section>
+
+          <section className="flex flex-wrap items-end gap-3 border-y border-gray-200 bg-white py-4">
+            <label className="min-w-72 flex-1 text-sm font-semibold text-gray-700">Discovery queries
+              <textarea className="mt-2 min-h-20 w-full rounded-lg border border-gray-300 p-3 font-normal" value={form.search_queries} onChange={(event) => updateForm("search_queries", event.target.value)} />
+              {suggestedQueries.length > 0 && <span className="mt-2 flex flex-wrap gap-2">{suggestedQueries.map((query) => <button key={query} type="button" onClick={() => updateForm("search_queries", query)} className="max-w-full truncate rounded border border-gray-300 px-2 py-1 text-xs font-normal text-gray-700" title={query}>{query}</button>)}</span>}
+            </label>
+            <button type="button" onClick={runAnotherDiscovery} disabled={running} className="px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold disabled:opacity-50">Run discovery</button>
+            <button type="button" onClick={() => runAction("verify")} disabled={!canVerify} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Verify new candidates</button>
+            <button type="button" onClick={() => runAction("country")} disabled={!canCountry} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Continue to country review</button>
+            <button type="button" onClick={() => runAction("finalize")} disabled={!canFinalize} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Finalize report</button>
+            {job.status === "complete" && <button type="button" onClick={downloadPdf} disabled={downloading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold"><Download className="h-4 w-4" />{downloading ? "Downloading" : "Download PDF"}</button>}
+          </section>
+
+          {reviewResults.length > 0 && (
+            <ReviewTable rows={reviewResults} selected={selectedReview} setSelected={setSelectedReview} onDecision={decideSelected} onPublication={savePublication} saving={saving} />
           )}
-        </div>
 
-        {job && (
-          <div className="border border-blue-100 bg-blue-50 rounded-lg p-4">
-            <div className="flex items-center justify-between gap-4 mb-2">
-              <p className="text-sm font-semibold text-blue-800">{job.message || "Coverage report running"}</p>
-              <p className="text-xs text-blue-700 whitespace-nowrap">{progressCurrent}/{progressTotal}</p>
+          {["country_review", "complete"].includes(job.status) && results.length > 0 && (
+            <CountryTable rows={results} selected={selectedCountries} setSelected={setSelectedCountries} onConfirm={confirmSelectedCountries} onEdit={setCountryEdit} saving={saving} />
+          )}
+
+          {countryEdit && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+                <div className="flex items-center justify-between"><h3 className="font-semibold">Edit country</h3><button title="Close" onClick={() => setCountryEdit(null)}><X className="h-5 w-5" /></button></div>
+                <div className="mt-4 grid grid-cols-[1fr_90px] gap-3">
+                  <input className="rounded border border-gray-300 p-3" placeholder="Country" value={countryEdit.country} onChange={(event) => setCountryEdit((current) => ({ ...current, country: event.target.value }))} />
+                  <input className="rounded border border-gray-300 p-3 uppercase" placeholder="Code" maxLength={2} value={countryEdit.country_code} onChange={(event) => setCountryEdit((current) => ({ ...current, country_code: event.target.value }))} />
+                </div>
+                <div className="mt-4 flex gap-2"><button onClick={() => saveCountry(false)} disabled={saving} className="px-4 py-2 rounded bg-[#b8860b] font-semibold">Save</button><button onClick={() => saveCountry(true)} disabled={saving} className="px-4 py-2 rounded border border-gray-300">Not applicable</button></div>
+              </div>
             </div>
-            <div className="h-2 bg-white rounded-full overflow-hidden">
-              <div className="h-full bg-[#b8860b]" style={{ width: `${progressPct}%` }} />
-            </div>
-          </div>
-        )}
-      </div>
+          )}
 
-      {summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Coverage</p>
-            <p className="text-2xl font-bold text-green-700">{summary.total_coverage || results.length || 0}</p>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Google Pages Searched</p>
-            <p className="text-2xl font-bold text-gray-800">{summary.searches_used || 0}</p>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Results Checked</p>
-            <p className="text-2xl font-bold text-gray-800">{summary.searched_results || 0}</p>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Searches Remaining</p>
-            <p className="text-2xl font-bold text-gray-800">{summary.searches_remaining || 0}</p>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Needs Review</p>
-            <p className="text-2xl font-bold text-amber-700">{summary.needs_review || 0}</p>
-          </div>
-        </div>
-      )}
-
-      {(runId || jobId) && (
-        <p className="text-sm text-gray-500 mb-3">
-          {runId ? `Run ID: ${runId}` : ""}{jobId ? ` | Job ID: ${jobId}` : ""}
-        </p>
-      )}
-
-      <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-900">Coverage Results</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
-              <tr>
-                <th className="text-left p-3">Publication</th>
-                <th className="text-left p-3">Country</th>
-                <th className="text-left p-3">Article</th>
-                <th className="text-left p-3">Type</th>
-                <th className="text-left p-3">Visits</th>
-                <th className="text-left p-3">Matched Terms</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((row, index) => (
-                <tr key={`${row.article_url || row.publication}-${index}`} className="border-t border-gray-100">
-                  <td className="p-3">{row.publication}</td>
-                  <td className="p-3 min-w-48">
-                    {countryEdit?.row_index === index ? (
-                      <form
-                        className="flex items-center gap-2"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          saveCountryOverride();
-                        }}
-                      >
-                        <input
-                          className="w-28 border border-gray-300 rounded p-2"
-                          aria-label="Country"
-                          placeholder="Country"
-                          value={countryEdit.country}
-                          onChange={(event) => setCountryEdit((current) => ({
-                            ...current,
-                            country: event.target.value,
-                          }))}
-                        />
-                        <input
-                          className="w-14 border border-gray-300 rounded p-2 uppercase"
-                          aria-label="Country code"
-                          placeholder="US"
-                          maxLength={2}
-                          value={countryEdit.country_code}
-                          onChange={(event) => setCountryEdit((current) => ({
-                            ...current,
-                            country_code: event.target.value,
-                          }))}
-                        />
-                        <button
-                          type="submit"
-                          title="Save country"
-                          disabled={savingCountry}
-                          className="p-2 text-green-700 disabled:opacity-50"
-                        >
-                          <Check className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          title="Cancel"
-                          onClick={() => setCountryEdit(null)}
-                          disabled={savingCountry}
-                          className="p-2 text-gray-500 disabled:opacity-50"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </form>
-                    ) : row.country ? (
-                      row.country
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span>N/A</span>
-                        <button
-                          type="button"
-                          title="Add country"
-                          onClick={() => beginCountryEdit(row, index)}
-                          className="p-1 text-[#b8860b]"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    {row.article_url ? (
-                      <a href={row.article_url} target="_blank" rel="noreferrer" className="text-[#b8860b]">
-                        {row.article_title || row.article_url}
-                      </a>
-                    ) : "-"}
-                  </td>
-                  <td className="p-3">{row.coverage_type}</td>
-                  <td className="p-3">{row.monthly_visits_display || "N/A"}</td>
-                  <td className="p-3 text-gray-600">{row.matched_terms}</td>
-                </tr>
-              ))}
-              {results.length === 0 && (
-                <tr>
-                  <td className="p-4 text-gray-500" colSpan={6}>
-                    {summary?.searched_results === 0
-                      ? "Google returned no organic results for this query and date range."
-                      : "No confirmed client mentions were found in the checked results."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {reviewResults.length > 0 && (
-        <div className="bg-white border border-amber-200 rounded-lg shadow-sm overflow-hidden mt-6">
-          <div className="p-4 border-b border-amber-200 bg-amber-50">
-            <h3 className="font-semibold text-gray-900">Needs Review</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="text-left p-3">Publication</th>
-                  <th className="text-left p-3">Article</th>
-                  <th className="text-left p-3">Reason</th>
-                  <th className="text-left p-3">Extraction</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reviewResults.map((row, index) => (
-                  <tr key={`${row.article_url || row.publication}-review-${index}`} className="border-t border-gray-100">
-                    <td className="p-3">{row.publication}</td>
-                    <td className="p-3">
-                      {row.article_url ? (
-                        <a href={row.article_url} target="_blank" rel="noreferrer" className="text-[#b8860b]">
-                          {row.article_title || row.article_url}
-                        </a>
-                      ) : "-"}
-                    </td>
-                    <td className="p-3 text-gray-600">{row.verification_reason}</td>
-                    <td className="p-3 text-gray-600">{row.extraction_method}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+          <CoverageTable rows={results} />
+        </>
       )}
     </div>
+  );
+}
+
+function ReviewTable({ rows, selected, setSelected, onDecision, onPublication, saving }) {
+  const toggleAll = () => setSelected(selected.length === rows.length ? [] : rows.map((row) => row.url_key));
+  return (
+    <section className="overflow-hidden rounded-lg border border-amber-200 bg-white">
+      <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 p-4"><h3 className="mr-auto font-semibold">Article review</h3><button disabled={!selected.length || saving} onClick={() => onDecision("approved")} className="px-3 py-2 rounded bg-green-700 text-white disabled:opacity-40">Approve selected</button><button disabled={!selected.length || saving} onClick={() => onDecision("rejected")} className="px-3 py-2 rounded bg-red-700 text-white disabled:opacity-40">Reject selected</button></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="p-3"><input type="checkbox" aria-label="Select all review articles" checked={selected.length === rows.length} onChange={toggleAll} /></th><th className="p-3 text-left">Publication</th><th className="p-3 text-left">Article</th><th className="p-3 text-left">Date</th><th className="p-3 text-left">Reason</th><th className="p-3 text-left">Extraction</th></tr></thead><tbody>{rows.map((row) => <tr key={row.url_key} className="border-t border-gray-100"><td className="p-3"><input type="checkbox" aria-label={`Select ${row.article_title}`} checked={selected.includes(row.url_key)} onChange={() => setSelected((current) => current.includes(row.url_key) ? current.filter((key) => key !== row.url_key) : [...current, row.url_key])} /></td><td className="p-3"><input className="w-40 rounded border border-transparent p-2 hover:border-gray-300 focus:border-gray-400" defaultValue={row.publication} onBlur={(event) => onPublication(row, event.target.value)} /></td><td className="p-3"><a className="text-[#8a6508] underline" href={row.article_url} target="_blank" rel="noreferrer">{row.article_title || row.article_url}</a></td><td className="p-3">{row.published_date || "Unknown"}</td><td className="p-3 text-gray-600">{row.verification_reason}</td><td className="p-3 text-gray-600">{row.extraction_method}</td></tr>)}</tbody></table></div>
+    </section>
+  );
+}
+
+function CountryTable({ rows, selected, setSelected, onConfirm, onEdit, saving }) {
+  const eligible = [...new Set(rows.filter((row) => row.country && row.country_reviewed !== "TRUE").map((row) => row.country_lookup_key))];
+  return (
+    <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center border-b border-gray-200 p-4"><h3 className="mr-auto font-semibold">Country review</h3><button disabled={!selected.length || saving} onClick={onConfirm} className="px-3 py-2 rounded bg-green-700 text-white disabled:opacity-40">Confirm selected</button></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="p-3"><input type="checkbox" aria-label="Select all resolved countries" checked={eligible.length > 0 && selected.length === eligible.length} onChange={() => setSelected(selected.length === eligible.length ? [] : eligible)} /></th><th className="p-3 text-left">Publication</th><th className="p-3 text-left">Country</th><th className="p-3 text-left">Source</th><th className="p-3 text-left">Confidence</th><th className="p-3" /></tr></thead><tbody>{rows.map((row) => <tr key={row.url_key} className="border-t border-gray-100"><td className="p-3"><input type="checkbox" disabled={!row.country || row.country_reviewed === "TRUE"} checked={selected.includes(row.country_lookup_key)} onChange={() => setSelected((current) => current.includes(row.country_lookup_key) ? current.filter((key) => key !== row.country_lookup_key) : [...current, row.country_lookup_key])} /></td><td className="p-3">{row.publication}</td><td className="p-3">{row.country || "Unresolved"}</td><td className="p-3">{row.country_source || "-"}</td><td className="p-3">{row.country_confidence || "-"}</td><td className="p-3"><button title="Edit country" onClick={() => onEdit({ ...row, country: row.country || "", country_code: row.country_code || "" })} className="p-2 text-[#8a6508]"><Pencil className="h-4 w-4" /></button></td></tr>)}</tbody></table></div>
+    </section>
+  );
+}
+
+function CoverageTable({ rows }) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-gray-200 bg-white"><div className="border-b border-gray-200 p-4"><h3 className="font-semibold">Approved coverage</h3></div><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="p-3 text-left">Publication</th><th className="p-3 text-left">Country</th><th className="p-3 text-left">Article</th><th className="p-3 text-left">Date</th><th className="p-3 text-left">Visits</th></tr></thead><tbody>{rows.map((row) => <tr key={row.url_key} className="border-t border-gray-100"><td className="p-3">{row.publication}</td><td className="p-3">{row.country || "-"}</td><td className="p-3"><a className="text-[#8a6508] underline" href={row.article_url} target="_blank" rel="noreferrer">{row.article_title || row.article_url}</a>{row.manually_approved === "TRUE" && <span className="ml-2 text-xs text-gray-500">Manual</span>}</td><td className="p-3">{row.published_date || "-"}</td><td className="p-3">{row.monthly_visits_display || "-"}</td></tr>)}</tbody></table></div></section>
   );
 }
