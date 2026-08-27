@@ -11,7 +11,7 @@ import requests
 
 COUNTRY_SHEET = "Publication Country Registry"
 GOOGLE_FALLBACK_LIMIT = 20
-COUNTRY_RESOLVER_VERSION = "v2"
+COUNTRY_RESOLVER_VERSION = "v3"
 WIKIDATA_URL = "https://query.wikidata.org/sparql"
 SERPAPI_URL = "https://serpapi.com/search.json"
 COUNTRY_HEADERS = [
@@ -30,6 +30,18 @@ COUNTRY_HEADERS = [
 GENERIC_CCTLDS = {"ai", "cc", "co", "fm", "gg", "io", "ly", "me", "tv"}
 CODE_ALIASES = {"UK": "GB", "USA": "US"}
 SOCIAL_HOSTS = {"facebook.com", "instagram.com"}
+BARE_COUNTRY_EDITION_HOSTS = {"goal.com"}
+SOURCE_TRUST_RANKS = {
+    "manual": 100,
+    "url_edition": 90,
+    "country_domain": 90,
+    "wikidata": 80,
+    "search_source_label": 70,
+    "serpapi_knowledge_graph": 60,
+    "serpapi_answer_box": 55,
+    "serpapi_ai_overview": 50,
+    "serpapi_organic_results": 40,
+}
 
 
 def country_from_code(code: str) -> dict | None:
@@ -38,6 +50,20 @@ def country_from_code(code: str) -> dict | None:
     if not country:
         return None
     return {"country": country.name, "country_code": country.alpha_2}
+
+
+def is_manual_record(record: dict | None) -> bool:
+    return (
+        str((record or {}).get("manual_override", "")).strip().upper()
+        == "TRUE"
+    )
+
+
+def record_trust_rank(record: dict | None) -> int:
+    if is_manual_record(record):
+        return SOURCE_TRUST_RANKS["manual"]
+    source = str((record or {}).get("source", "")).strip()
+    return SOURCE_TRUST_RANKS.get(source, 0)
 
 
 def country_from_text(text: str) -> dict | None:
@@ -72,15 +98,27 @@ def publication_lookup_key(url: str) -> str:
     host = parsed.netloc.lower().removeprefix("www.")
     if host == "m.facebook.com":
         host = "facebook.com"
+
+    if host in SOCIAL_HOSTS:
+        return host
+
     parts = [part.lower() for part in parsed.path.split("/") if part]
+    if not parts:
+        return host
 
-    if host in SOCIAL_HOSTS and parts:
-        return f"{host}/{parts[0]}"
+    edition = parts[0]
 
-    if parts:
-        match = re.fullmatch(r"(?:[a-z]{2}-)?([a-z]{2})", parts[0])
-        if match and country_from_code(match.group(1)):
-            return f"{host}/{parts[0]}"
+    region_match = re.fullmatch(r"[a-z]{2}-([a-z]{2})", edition)
+    if region_match and country_from_code(region_match.group(1)):
+        return f"{host}/{edition}"
+
+    if (
+        host in BARE_COUNTRY_EDITION_HOSTS
+        and re.fullmatch(r"[a-z]{2}", edition)
+        and country_from_code(edition)
+    ):
+        return f"{host}/{edition}"
+
     return host
 
 
@@ -91,8 +129,9 @@ def country_from_url(url: str) -> dict | None:
         return None
 
     if edition:
-        match = re.fullmatch(r"(?:[a-z]{2}-)?([a-z]{2})", edition)
-        country = country_from_code(match.group(1)) if match else None
+        region_match = re.fullmatch(r"[a-z]{2}-([a-z]{2})", edition)
+        code = region_match.group(1) if region_match else edition
+        country = country_from_code(code)
         if country:
             return {
                 **country,
@@ -167,7 +206,7 @@ def load_registry(ws) -> dict[str, dict]:
 
     headers = values[0]
     registry = {}
-    for row in values[1:]:
+    for row_number, row in enumerate(values[1:], start=2):
         record = {
             header: row[index] if index < len(row) else ""
             for index, header in enumerate(headers)
@@ -176,13 +215,18 @@ def load_registry(ws) -> dict[str, dict]:
         if not key:
             continue
 
+        record["_row_number"] = row_number
         existing = registry.get(key)
-        manual = str(record.get("manual_override", "")).upper() == "TRUE"
-        existing_manual = (
-            str((existing or {}).get("manual_override", "")).upper() == "TRUE"
-        )
-
-        if not existing or manual or not existing_manual:
+        record_rank = record_trust_rank(record)
+        existing_rank = record_trust_rank(existing)
+        if (
+            not existing
+            or record_rank > existing_rank
+            or (
+                record_rank == existing_rank
+                and row_number > existing["_row_number"]
+            )
+        ):
             registry[key] = record
 
     return registry
@@ -309,6 +353,7 @@ def enrich_publication_countries(
     )
     google_searches = 0
     new_records = []
+    registry_updates = []
     today = datetime.now(timezone.utc)
 
     for key, matching_rows in grouped.items():
@@ -319,11 +364,23 @@ def enrich_publication_countries(
         unresolved_is_fresh = False
         first = matching_rows[0]
 
+        host = urlparse(first.get("article_url", "")).netloc.lower()
+        host = host.removeprefix("www.")
+        if host == "m.facebook.com":
+            host = "facebook.com"
+
+        if host in SOCIAL_HOSTS:
+            for row in matching_rows:
+                row["country"] = ""
+                row["country_source"] = "social_unresolved"
+                row["country_confidence"] = "low"
+                row["country_lookup_key"] = host
+                row.pop("_country_hint", None)
+                row.pop("_publication_hint", None)
+            continue
+
         try:
-            manual = (
-                str((stored or {}).get("manual_override", "")).upper()
-                == "TRUE"
-            )
+            manual = is_manual_record(stored)
             retry_after = str((stored or {}).get("retry_after", "")).strip()
             unresolved_is_fresh = (
                 bool(stored)
@@ -331,6 +388,11 @@ def enrich_publication_countries(
                 and stored.get("source_reference") == COUNTRY_RESOLVER_VERSION
                 and retry_after
                 and retry_after > today.strftime("%Y-%m-%d")
+            )
+            stored_source = str((stored or {}).get("source", ""))
+            stored_is_trusted = (
+                bool((stored or {}).get("country"))
+                and record_trust_rank(stored) > 0
             )
 
             if manual:
@@ -342,14 +404,6 @@ def enrich_publication_countries(
                 }
                 used_registry = True
             else:
-                metadata_hint = next(
-                    (
-                        row.get("_country_hint")
-                        for row in matching_rows
-                        if row.get("_country_hint")
-                    ),
-                    None,
-                )
                 publication_hint = next(
                     (
                         row.get("_publication_hint")
@@ -366,16 +420,16 @@ def enrich_publication_countries(
                         "source_reference": publication_hint,
                     })
 
-                result = (
-                    country_from_url(first.get("article_url", ""))
-                    or metadata_hint
-                    or label_country
-                )
-                if result is None and stored and stored.get("country"):
+                result = country_from_url(first.get("article_url", ""))
+
+                if result is None and label_country:
+                    result = label_country
+
+                if result is None and stored_is_trusted:
                     result = {
                         "country": stored.get("country", ""),
                         "country_code": stored.get("country_code", ""),
-                        "source": stored.get("source", "registry"),
+                        "source": stored_source,
                         "confidence": stored.get("confidence", ""),
                     }
                     used_registry = True
@@ -399,6 +453,21 @@ def enrich_publication_countries(
                     hl,
                 )
 
+            if (
+                result is not None
+                and stored_is_trusted
+                and not used_registry
+                and record_trust_rank(stored)
+                >= SOURCE_TRUST_RANKS.get(result.get("source", ""), 0)
+            ):
+                result = {
+                    "country": stored.get("country", ""),
+                    "country_code": stored.get("country_code", ""),
+                    "source": stored.get("source", ""),
+                    "confidence": stored.get("confidence", ""),
+                }
+                used_registry = True
+
         except Exception as exc:
             print(
                 "[COUNTRY_LOOKUP] "
@@ -419,7 +488,7 @@ def enrich_publication_countries(
             }
 
         if not used_registry and write_record and not unresolved_is_fresh:
-            new_records.append([
+            record = [
                 key,
                 first.get("publication", ""),
                 result["country"],
@@ -431,7 +500,23 @@ def enrich_publication_countries(
                 result.get("source_reference", ""),
                 today.strftime("%Y-%m-%d"),
                 (today + timedelta(days=30)).strftime("%Y-%m-%d") if unresolved else "",
-            ])
+            ]
+            stored_rank = record_trust_rank(stored)
+            result_rank = SOURCE_TRUST_RANKS.get(result["source"], 0)
+            refresh_unresolved = (
+                unresolved
+                and bool(stored)
+                and stored.get("status") == "unresolved"
+            )
+
+            if not stored:
+                new_records.append(record)
+            elif result_rank > stored_rank or refresh_unresolved:
+                row_number = int(stored.get("_row_number") or 0)
+                registry_updates.append({
+                    "range": f"A{row_number}:K{row_number}",
+                    "values": [record],
+                })
 
         for row in matching_rows:
             row["country"] = result["country"]
@@ -450,10 +535,13 @@ def enrich_publication_countries(
             "unresolved_cache_hit": unresolved_is_fresh,
         }, sort_keys=True))
 
+    if registry_updates:
+        ws.batch_update(registry_updates, value_input_option="RAW")
     if new_records:
         ws.append_rows(new_records, value_input_option="RAW")
     return {
         "publications_checked": len(grouped),
         "google_searches_used": google_searches,
         "new_registry_rows": len(new_records),
+        "registry_rows_updated": len(registry_updates),
     }

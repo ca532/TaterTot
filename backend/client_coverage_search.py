@@ -56,6 +56,10 @@ SERPAPI_READ_TIMEOUT = 90
 SERPAPI_NETWORK_RETRIES = 3
 SERPAPI_RESULTS_PER_PAGE = 10
 SERPAPI_DATE_SLICE_DAYS = 7
+SERPAPI_COUNTRY_RESERVE = max(
+    0,
+    int(os.getenv("SERPAPI_COUNTRY_RESERVE", "10")),
+)
 REPORT_SHEET = os.getenv("CLIENT_COVERAGE_REPORT_SHEET", "Client Coverage Reports")
 OUTPUT_DIR = Path(os.getenv("CLIENT_COVERAGE_OUTPUT_DIR", "output/client_coverage"))
 REPORT_HEADERS = [
@@ -373,6 +377,7 @@ def serpapi_search_all(
     date_from: str = "",
     date_to: str = "",
     progress_callback=None,
+    reserved_searches: int = 0,
 ) -> dict:
     def emit(phase: str, current: int, total: int, message: str):
         if progress_callback:
@@ -467,8 +472,8 @@ def serpapi_search_all(
 
     while queue:
         capacity = get_serpapi_capacity()
-        if capacity["monthly_left"] <= 0:
-            stop_reason = "monthly_limit_reached"
+        if capacity["monthly_left"] <= reserved_searches:
+            stop_reason = "country_search_reserve_reached"
             break
 
         if capacity["hourly_limit"] and capacity["hourly_left"] <= 0:
@@ -1118,6 +1123,7 @@ def run_keyword_coverage_report(
         date_from=date_from,
         date_to=date_to,
         progress_callback=progress_callback,
+        reserved_searches=SERPAPI_COUNTRY_RESERVE,
     )
     all_search_results = search_run["results"]
 
