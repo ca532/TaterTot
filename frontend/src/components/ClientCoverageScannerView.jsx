@@ -230,6 +230,8 @@ export default function ClientCoverageScannerView() {
   };
 
   const running = Boolean(dispatching || runningAction || job?.active_action);
+  const reportComplete = job?.status === "complete";
+  const coverageCount = Number(summary.total_coverage || 0);
   const canVerify = job && !running && !["article_review", "country_review", "complete"].includes(job.status);
   const canCountry = job && !running && reviewResults.length === 0 && results.length > 0 && !["country_review", "complete"].includes(job.status);
   const canFinalize = job && !running && results.length > 0 && reviewResults.length === 0 && countryReviewResults.length === 0;
@@ -267,7 +269,37 @@ export default function ClientCoverageScannerView() {
       )}
 
       {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
-      {running && <div role="alert" className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">{RUNNING_MESSAGE}</div>}
+      {(running || reportComplete) && (
+        <section
+          role="status"
+          className="rounded-lg border border-blue-200 bg-blue-50 p-4"
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 font-semibold text-blue-800">
+              {running && <RefreshCw className="h-4 w-4 animate-spin" />}
+              <span>
+                {running
+                  ? "Generating coverage report"
+                  : "Coverage report complete"}
+              </span>
+            </div>
+
+            {reportComplete && !running && (
+              <span className="text-sm text-blue-600">
+                {coverageCount}/{coverageCount}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-3 h-2 overflow-hidden rounded bg-gray-200">
+            <div
+              className={`h-full bg-[#b88a25] transition-all duration-500 ${
+                reportComplete && !running ? "w-full" : "w-0"
+              }`}
+            />
+          </div>
+        </section>
+      )}
 
       {jobId && snapshot && (
         <>
