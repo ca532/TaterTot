@@ -21,8 +21,10 @@ from backend.coverage_job_store import (
 class FakeWorksheet:
     def __init__(self, headers):
         self.values = [list(headers)]
+        self.read_count = 0
 
     def get_all_values(self):
+        self.read_count += 1
         return [list(row) for row in self.values]
 
     def append_row(self, row, **_kwargs):
@@ -148,6 +150,44 @@ class CoverageJobStoreTests(unittest.TestCase):
         self.assertEqual(saved["manually_approved"], "TRUE")
         self.assertEqual(saved["country"], "Canada")
         self.assertEqual(saved["country_reviewed"], "TRUE")
+
+    def test_traffic_cache_is_loaded_once_and_written_in_batches(self):
+        store = make_store()
+        worksheet = store.traffic
+        worksheet.append_row([
+            "cached.example",
+            "1000",
+            "1K",
+            "zenrows",
+            "2026-08-01T00:00:00Z",
+        ])
+        worksheet.read_count = 0
+
+        cache = store.load_traffic_cache()
+        store.upsert_traffic_many(
+            {
+                "cached.example": {
+                    "monthly_visits": 2000,
+                    "monthly_visits_display": "2K",
+                    "source": "zenrows",
+                },
+                "new.example": {
+                    "monthly_visits": 3000,
+                    "monthly_visits_display": "3K",
+                    "source": "zenrows",
+                },
+            },
+            existing=cache,
+        )
+
+        self.assertEqual(worksheet.read_count, 1)
+        saved = {
+            row[0]: row
+            for row in worksheet.values[1:]
+        }
+        self.assertEqual(saved["cached.example"][1:4], ["2000", "2K", "zenrows"])
+        self.assertEqual(saved["new.example"][1:4], ["3000", "3K", "zenrows"])
+        self.assertEqual(len(saved), 2)
 
 
 class FinalizationTests(unittest.TestCase):

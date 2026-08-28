@@ -359,19 +359,21 @@ def finalize_job(store: CoverageJobStore, job_id: str) -> dict:
 
     store.update_job(job_id, status="finalizing")
     domains = sorted({row.get("domain", "") for row in rows if row.get("domain")})
-    traffic = {}
-    missing = []
-    for domain in domains:
-        cached = store.get_traffic(domain)
-        if cached:
-            traffic[domain] = cached
-        else:
-            missing.append(domain)
+    cached_traffic = store.load_traffic_cache()
+    traffic = {
+        domain: cached_traffic[domain]
+        for domain in domains
+        if domain in cached_traffic
+    }
+    missing = [
+        domain
+        for domain in domains
+        if domain not in cached_traffic
+    ]
     if missing:
         fresh = lookup_publication_traffic(missing)
-        for domain, values in fresh.items():
-            store.upsert_traffic(domain, values)
-            traffic[domain] = values
+        store.upsert_traffic_many(fresh, existing=cached_traffic)
+        traffic.update(fresh)
 
     updates = []
     for row in rows:

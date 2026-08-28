@@ -475,30 +475,74 @@ class CoverageJobStore:
             )
         self.update_candidates(job_id, updates)
 
-    def get_traffic(self, domain: str) -> dict | None:
-        normalized = str(domain or "").lower().removeprefix("www.")
-        return next(
-            (
-                record
-                for record in self._records(self.traffic, TRAFFIC_HEADERS)
-                if record.get("domain") == normalized
-            ),
-            None,
-        )
+    def load_traffic_cache(self) -> dict[str, dict]:
+        cache = {}
+        for record in self._records(self.traffic, TRAFFIC_HEADERS):
+            domain = str(record.get("domain", "")).lower().removeprefix("www.")
+            if domain:
+                cache[domain] = record
+        return cache
 
-    def upsert_traffic(self, domain: str, values: dict):
-        normalized = str(domain or "").lower().removeprefix("www.")
-        existing = self.get_traffic(normalized)
-        record = {header: values.get(header, "") for header in TRAFFIC_HEADERS}
-        record["traffic_source"] = values.get("traffic_source") or values.get("source", "")
-        record.update({"domain": normalized, "checked_at": utc_now()})
-        if existing:
-            row_number = existing.pop("_row_number")
-            self._replace_row(
-                self.traffic,
-                TRAFFIC_HEADERS,
-                row_number,
-                record,
+    def upsert_traffic_many(
+        self,
+        traffic_by_domain: dict[str, dict],
+        *,
+        existing: dict[str, dict] | None = None,
+    ) -> None:
+        if existing is None:
+            existing = self.load_traffic_cache()
+
+        now = utc_now()
+        pending_updates = []
+        pending_inserts = []
+
+        for domain, values in traffic_by_domain.items():
+            normalized = str(domain or "").lower().removeprefix("www.")
+            if not normalized:
+                continue
+
+            record = {
+                header: values.get(header, "")
+                for header in TRAFFIC_HEADERS
+            }
+            record.update({
+                "domain": normalized,
+                "traffic_source": (
+                    values.get("traffic_source") or values.get("source", "")
+                ),
+                "checked_at": now,
+            })
+
+            current = existing.get(normalized)
+            if current:
+                pending_updates.append({
+                    **record,
+                    "_row_number": current["_row_number"],
+                })
+            else:
+                pending_inserts.append(record)
+
+        if pending_updates:
+            end_column = self._column_name(len(TRAFFIC_HEADERS))
+            self.traffic.batch_update(
+                [
+                    {
+                        "range": (
+                            f"A{record['_row_number']}:"
+                            f"{end_column}{record['_row_number']}"
+                        ),
+                        "values": [self._row_values(TRAFFIC_HEADERS, record)],
+                    }
+                    for record in pending_updates
+                ],
+                value_input_option="RAW",
             )
-        else:
-            self.traffic.append_row(self._row_values(TRAFFIC_HEADERS, record))
+
+        if pending_inserts:
+            self.traffic.append_rows(
+                [
+                    self._row_values(TRAFFIC_HEADERS, record)
+                    for record in pending_inserts
+                ],
+                value_input_option="RAW",
+            )
