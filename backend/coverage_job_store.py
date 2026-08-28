@@ -27,6 +27,8 @@ JOB_HEADERS = [
     "last_error",
     "pdf_path",
     "finalized_at",
+    "active_run_id",
+    "active_run_started_at",
 ]
 
 CANDIDATE_HEADERS = [
@@ -157,9 +159,14 @@ class CoverageJobStore:
             return worksheet
 
         values = worksheet.get_all_values()
-        if not values:
+        current_headers = values[0] if values else []
+        if not current_headers:
             worksheet.update("A1", [headers])
-        elif values[0][: len(headers)] != headers:
+        elif current_headers == headers:
+            pass
+        elif current_headers == headers[:len(current_headers)]:
+            worksheet.update("A1", [headers])
+        else:
             raise RuntimeError(
                 f"{title} has an unexpected schema; expected {headers!r}"
             )
@@ -260,7 +267,14 @@ class CoverageJobStore:
                 "A coverage run is already in progress. "
                 "Wait for it to finish before starting another run."
             )
-        self.update_job(job_id, active_action=action, status=f"{action}_queued")
+        return self.update_job(
+            job_id,
+            active_action=action,
+            active_run_id="",
+            active_run_started_at=utc_now(),
+            status=f"{action}_queued",
+            last_error="",
+        )
 
     def release_action(
         self,
@@ -278,6 +292,8 @@ class CoverageJobStore:
         self.update_job(
             job_id,
             active_action="",
+            active_run_id="",
+            active_run_started_at="",
             status=status,
             last_error=error,
         )

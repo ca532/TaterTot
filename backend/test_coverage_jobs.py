@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -78,6 +80,14 @@ def create_job(store: CoverageJobStore):
 
 
 class CoverageJobStoreTests(unittest.TestCase):
+    def test_existing_job_sheet_is_extended_with_run_tracking_headers(self):
+        spreadsheet = FakeSpreadsheet()
+        spreadsheet.sheets[JOBS_SHEET] = FakeWorksheet(JOB_HEADERS[:-2])
+
+        CoverageJobStore(spreadsheet)
+
+        self.assertEqual(spreadsheet.sheets[JOBS_SHEET].values[0], JOB_HEADERS)
+
     def test_canonical_key_removes_tracking_and_common_url_variants(self):
         left = canonical_candidate_key(
             "http://www.example.com/story/?utm_source=x&id=4"
@@ -120,6 +130,28 @@ class CoverageJobStoreTests(unittest.TestCase):
             "A coverage run is already in progress",
         ):
             store.acquire_action("job-1", "verify")
+
+    def test_action_run_tracking_is_created_and_cleared(self):
+        store = make_store()
+        create_job(store)
+
+        acquired = store.acquire_action("job-1", "discover")
+        self.assertEqual(acquired["active_action"], "discover")
+        self.assertTrue(acquired["active_run_started_at"])
+
+        store.update_job("job-1", active_run_id="123")
+        store.release_action(
+            "job-1",
+            status="cancelled",
+            error="GitHub Actions workflow cancelled",
+            action="discover",
+        )
+
+        released = store.get_job("job-1")
+        self.assertEqual(released["active_action"], "")
+        self.assertEqual(released["active_run_id"], "")
+        self.assertEqual(released["active_run_started_at"], "")
+        self.assertEqual(released["status"], "cancelled")
 
     def test_bulk_decisions_and_country_override_persist(self):
         store = make_store()
@@ -188,6 +220,76 @@ class CoverageJobStoreTests(unittest.TestCase):
         self.assertEqual(saved["cached.example"][1:4], ["2000", "2K", "zenrows"])
         self.assertEqual(saved["new.example"][1:4], ["3000", "3K", "zenrows"])
         self.assertEqual(len(saved), 2)
+
+
+SERVICE_DEPS_AVAILABLE = all(
+    importlib.util.find_spec(module) is not None
+    for module in ("fastapi", "gspread", "jwt")
+)
+
+
+@unittest.skipUnless(SERVICE_DEPS_AVAILABLE, "trigger service dependencies unavailable")
+class CoverageRunReconciliationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        environment = {
+            "GITHUB_OWNER": "owner",
+            "GITHUB_REPO": "repo",
+            "GITHUB_REF": "App-revamp",
+            "GITHUB_TOKEN": "token",
+            "APP_LOGIN_PASSWORD": "password",
+            "JWT_SECRET": "secret",
+        }
+        with patch.dict(os.environ, environment):
+            from backend import trigger_service
+        cls.service = trigger_service
+
+    def test_cancelled_run_releases_persisted_action(self):
+        store = make_store()
+        create_job(store)
+        store.acquire_action("job-1", "discover")
+        store.update_job("job-1", active_run_id="123")
+        cancelled = {"id": 123, "status": "completed", "conclusion": "cancelled"}
+
+        with patch.object(self.service, "_get_run_by_id", return_value=cancelled):
+            job, run = self.service._reconcile_coverage_run(
+                store,
+                store.get_job("job-1"),
+            )
+
+        self.assertEqual(run, cancelled)
+        self.assertEqual(job["status"], "cancelled")
+        self.assertEqual(job["active_action"], "")
+
+    def test_legacy_job_falls_back_to_title_and_persists_run_id(self):
+        store = make_store()
+        create_job(store)
+        store.acquire_action("job-1", "discover")
+        queued = {"id": 456, "status": "queued", "conclusion": None}
+
+        with patch.object(self.service, "_find_coverage_run", return_value=queued):
+            job, run = self.service._reconcile_coverage_run(
+                store,
+                store.get_job("job-1"),
+            )
+
+        self.assertEqual(run, queued)
+        self.assertEqual(job["active_run_id"], "456")
+
+    def test_stale_missing_run_is_released_before_idle_check(self):
+        store = make_store()
+        create_job(store)
+        store.acquire_action("job-1", "discover")
+        store.update_job(
+            "job-1",
+            active_run_started_at="2020-01-01T00:00:00+00:00",
+        )
+
+        with patch.object(self.service, "_find_coverage_run", return_value=None):
+            job = self.service._require_coverage_job_idle(store, "job-1")
+
+        self.assertEqual(job["active_action"], "")
+        self.assertEqual(job["status"], "failed")
 
 
 class FinalizationTests(unittest.TestCase):

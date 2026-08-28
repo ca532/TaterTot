@@ -10,7 +10,7 @@ import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from fastapi.middleware.cors import CORSMiddleware
@@ -1244,7 +1244,9 @@ def _find_coverage_run(
     )
     if created_after:
         try:
-            threshold = datetime.fromisoformat(created_after.replace("Z", "+00:00"))
+            threshold = datetime.fromisoformat(
+                created_after.replace("Z", "+00:00")
+            ) - timedelta(seconds=5)
             runs = (
                 run
                 for run in runs
@@ -1261,6 +1263,92 @@ def _find_coverage_run(
         ),
         None,
     )
+
+
+def _coverage_run_age_seconds(value: str) -> Optional[float]:
+    try:
+        started_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - started_at).total_seconds())
+
+
+def _reconcile_coverage_run(
+    store: CoverageJobStore,
+    job: dict,
+) -> tuple[dict, Optional[dict]]:
+    action = str(job.get("active_action", "")).strip()
+    if not action:
+        return job, None
+
+    run = None
+    run_id = str(job.get("active_run_id", "")).strip()
+    if run_id.isdigit():
+        run = _get_run_by_id(int(run_id))
+
+    started_at = str(job.get("active_run_started_at", ""))
+    if not run:
+        run = _find_coverage_run(job["job_id"], action, started_at)
+
+    if run and str(run.get("id", "")) != run_id:
+        job = store.update_job(job["job_id"], active_run_id=str(run["id"]))
+
+    if run and run.get("status") == "completed":
+        conclusion = str(run.get("conclusion") or "failure")
+        if conclusion == "success":
+            fallback_status = {
+                "discover": "discovered",
+                "verify": "verified",
+                "country": "country_review",
+                "finalize": "complete",
+            }.get(action, "complete")
+            status = str(job.get("status", ""))
+            if status.endswith("_queued") or status in {
+                "discovering",
+                "verifying",
+                "country_enrichment",
+                "finalizing",
+            }:
+                status = fallback_status
+            store.release_action(job["job_id"], status=status, action=action)
+        else:
+            status = "cancelled" if conclusion == "cancelled" else "failed"
+            store.release_action(
+                job["job_id"],
+                status=status,
+                error=f"GitHub Actions workflow {conclusion}",
+                action=action,
+            )
+        job = store.get_job(job["job_id"]) or job
+    elif not run:
+        age = _coverage_run_age_seconds(
+            started_at or str(job.get("updated_at", ""))
+        )
+        if age is not None and age >= 300:
+            store.release_action(
+                job["job_id"],
+                status="failed",
+                error="No matching GitHub Actions run was found",
+                action=action,
+            )
+            job = store.get_job(job["job_id"]) or job
+
+    return job, run
+
+
+def _capture_coverage_run(
+    store: CoverageJobStore,
+    job_id: str,
+    action: str,
+    started_at: str,
+) -> Optional[dict]:
+    for _ in range(15):
+        run = _find_coverage_run(job_id, action, started_at)
+        if run:
+            store.update_job(job_id, active_run_id=str(run["id"]))
+            return run
+        time.sleep(1)
+    return None
 
 
 def _get_coverage_artifact(run_id: int, job_id: str) -> Optional[dict]:
@@ -1339,6 +1427,7 @@ def _require_coverage_job_idle(store: CoverageJobStore, job_id: str) -> dict:
     job = store.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Coverage job not found")
+    job, _ = _reconcile_coverage_run(store, job)
     if str(job.get("active_action", "")).strip():
         raise HTTPException(
             status_code=409,
@@ -1354,10 +1443,13 @@ def _acquire_coverage_action(
     store: CoverageJobStore,
     job_id: str,
     action: str,
-) -> None:
+) -> dict:
     with COVERAGE_ACTION_LOCK:
+        job = store.get_job(job_id)
+        if job:
+            _reconcile_coverage_run(store, job)
         try:
-            store.acquire_action(job_id, action)
+            return store.acquire_action(job_id, action)
         except CoverageRunInProgress as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -2496,7 +2588,7 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         "date_to": (req.date_to or "").strip(),
         "backlink_domains": _split_keywords(req.backlink_domains or ""),
     })
-    _acquire_coverage_action(store, job_id, "discover")
+    active_job = _acquire_coverage_action(store, job_id, "discover")
     dispatch_body = {
         "ref": GITHUB_REF,
         "inputs": {
@@ -2522,6 +2614,12 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
             status_code=502,
             detail=f"GitHub coverage dispatch failed: {detail}",
         )
+    _capture_coverage_run(
+        store,
+        job_id,
+        "discover",
+        str(active_job.get("active_run_started_at", "")),
+    )
 
     return {
         "ok": True,
@@ -2544,7 +2642,7 @@ def run_coverage_job_action(
     store = CoverageJobStore(_load_main_spreadsheet())
     if not store.get_job(job_id):
         raise HTTPException(status_code=404, detail="Coverage job not found")
-    _acquire_coverage_action(store, job_id, action)
+    active_job = _acquire_coverage_action(store, job_id, action)
 
     queries = [
         query.strip()
@@ -2571,6 +2669,12 @@ def run_coverage_job_action(
             action=action,
         )
         raise HTTPException(status_code=502, detail="GitHub coverage dispatch failed")
+    _capture_coverage_run(
+        store,
+        job_id,
+        action,
+        str(active_job.get("active_run_started_at", "")),
+    )
     return {"ok": True, "job_id": job_id, "status": "running", "action": action}
 
 
@@ -2652,14 +2756,19 @@ def get_client_coverage_search_report_progress(
         raise HTTPException(status_code=400, detail="job_id is required")
     store = CoverageJobStore(_load_main_spreadsheet())
     job = store.get_job(job_id) or {}
+    job, run = _reconcile_coverage_run(store, job)
     expected_action = action or str(job.get("active_action", ""))
-    created_after = (
-        str(job.get("updated_at", ""))
-        if expected_action and job.get("active_action") == expected_action
-        else ""
-    )
-    run = _find_coverage_run(job_id, expected_action, created_after)
     if not run:
+        if not str(job.get("active_action", "")).strip():
+            return {
+                "ok": True,
+                "status": "failed",
+                "phase": expected_action or "failed",
+                "current": 0,
+                "total": 0,
+                "message": "Coverage workflow could not be found",
+                "error": job.get("last_error") or "Coverage workflow is no longer active",
+            }
         return {
             "ok": True,
             "status": "running",
@@ -2682,19 +2791,17 @@ def get_client_coverage_search_report_progress(
         }
 
     if run.get("conclusion") != "success":
-        if expected_action:
-            store.release_action(
-                job_id,
-                status="failed",
-                error="GitHub Actions workflow failed",
-                action=expected_action,
-            )
+        conclusion = str(run.get("conclusion") or "failure")
         return {
             "ok": True,
             "status": "failed",
             "phase": expected_action or "failed",
-            "message": "Coverage workflow failed",
-            "error": "Open the GitHub Actions run for details.",
+            "message": (
+                "Coverage workflow cancelled"
+                if conclusion == "cancelled"
+                else "Coverage workflow failed"
+            ),
+            "error": f"GitHub Actions workflow {conclusion}.",
             "actions_url": run.get("html_url"),
         }
 
