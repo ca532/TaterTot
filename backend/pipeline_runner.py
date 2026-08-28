@@ -10,6 +10,11 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 from google_storage import GoogleSheetsDB
+from roundup_selection import (
+    MIN_ROUNDUP_ARTICLES,
+    TARGET_ROUNDUP_ARTICLES,
+    select_roundup_articles,
+)
 
 DEBUG_PROGRESS = os.environ.get("DEBUG_PROGRESS", "true").lower() == "true"
 
@@ -140,6 +145,20 @@ class PipelineRunner:
             if not articles:
                 print("⚠️  No articles collected")
                 return []
+
+            qualified_count = len(articles)
+            articles = select_roundup_articles(articles)
+            print(
+                f"Selected {len(articles)}/{qualified_count} qualified articles "
+                f"for the roundup (minimum={MIN_ROUNDUP_ARTICLES}, "
+                f"target={TARGET_ROUNDUP_ARTICLES})"
+            )
+            if len(articles) < MIN_ROUNDUP_ARTICLES:
+                print(
+                    "WARNING: The qualified source pool could not meet the "
+                    f"{MIN_ROUNDUP_ARTICLES}-article minimum without lowering "
+                    "quality requirements."
+                )
             
             print(f"\n✅ Collected {len(articles)} total articles")
             

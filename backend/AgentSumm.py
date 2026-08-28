@@ -64,6 +64,29 @@ class ArticleSummarizer:
         """Get a random User-Agent"""
         return random.choice(self.user_agents)
 
+    def _build_extractive_summary(self, input_text: str) -> str:
+        """Recover a grounded summary when model generation remains invalid."""
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", clean_article_text(input_text))
+            if len(sentence.strip().split()) >= 8
+            and sentence.strip().endswith((".", "!", "?"))
+        ]
+        selected = []
+        total_words = 0
+        debris = (
+            "click here", "subscribe", "sign up", "read more",
+            "related articles", "all rights reserved", "advertisement",
+        )
+        for sentence in sentences:
+            if any(marker in sentence.lower() for marker in debris):
+                continue
+            selected.append(sentence)
+            total_words += len(sentence.split())
+            if total_words >= 80 or len(selected) >= 4:
+                break
+        return clean_article_text(" ".join(selected))
+
     def summarize_article(
         self,
         article_content: str,
@@ -100,7 +123,18 @@ class ArticleSummarizer:
 
             valid, reason = validate_summary(summary_text, self.custom_prompt)
             if not valid:
-                print(f"Skipping invalid summary ({reason}): {article_url}")
+                print(
+                    f"Using extractive fallback after summary failure "
+                    f"({reason}): {article_url}"
+                )
+                summary_text = self._build_extractive_summary(input_text)
+                valid, reason = validate_summary(summary_text, self.custom_prompt)
+
+            if not valid:
+                print(
+                    f"Skipping article after all summary attempts failed "
+                    f"({reason}): {article_url}"
+                )
                 return None
 
             return ArticleSummary(

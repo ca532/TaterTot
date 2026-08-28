@@ -520,16 +520,18 @@ class CustomArticleCollector:
         self.max_articles_per_publication = topic_config["max_articles_per_publication"]
         self.require_keyword_in_url = topic_config["require_keyword_in_url"]
 
-        # Start at five accepted articles per publication, then expand strong
-        # sources to eight or ten based on the first five extracted candidates.
-        self.use_dynamic_caps = True
-        self.max_articles_per_publication = min(
-            self.max_articles_per_publication,
-            5,
+        # Discovery depth is deliberately separate from the final roundup cap.
+        # The collector returns a deeper qualified pool; roundup_selection.py
+        # applies the soft/hard publication limits globally.
+        self.use_dynamic_caps = False
+        self.candidates_per_publication = max(
+            1, int(os.getenv("CANDIDATES_PER_PUBLICATION", "20"))
         )
-        # Evaluate a few extra candidates before retaining the highest-scoring
-        # articles under the dynamically selected cap.
-        self.post_cap_buffer = 3
+        self.extracted_articles_per_publication = max(
+            1, int(os.getenv("EXTRACTED_ARTICLES_PER_PUBLICATION", "12"))
+        )
+        self.max_articles_per_publication = self.extracted_articles_per_publication
+        self.post_cap_buffer = 0
         topic_key = (self.source_list_name or self.topic).strip().lower()
         self.article_classifier = (
             ArticleRelevanceClassifier() if topic_key == "luxury" else None
@@ -1869,11 +1871,12 @@ class CustomArticleCollector:
             return None
     
     def collect_top_3_per_publication(self, sources_subset: List[str] = None) -> List[ArticleCandidate]:
-        """Collect top articles per publication with dynamic caps."""
-        cap_label = "Dynamic cap per publication" if self.use_dynamic_caps else "Fixed cap per publication"
-        print(f"Weekly Article Collection ({cap_label})")
+        """Build a deep, qualified article pool for global selection."""
+        print(
+            "Weekly Article Collection "
+            f"(extraction target {self.extracted_articles_per_publication} per publication)"
+        )
         print("=" * 60)
-        baseline_max_articles = self.max_articles_per_publication
         
         sources_to_use = sources_subset if sources_subset else list(self.target_sources.keys())
         print(f"Targeting {len(sources_to_use)} publications\n")
@@ -1935,18 +1938,14 @@ class CustomArticleCollector:
                 f"  Candidate ranking: {scored_candidates}/{len(candidates)} "
                 "URLs contain preliminary topic signals"
             )
-            max_articles_per_publication = baseline_max_articles
-            if self.use_dynamic_caps:
-                print(
-                    f"  Initial cap: {max_articles_per_publication} "
-                    f"(baseline {baseline_max_articles}, probe first 5 extracted)"
-                )
-            else:
-                print(f"  Fixed cap: {max_articles_per_publication}")
+            print(
+                f"  Extraction target: "
+                f"{self.extracted_articles_per_publication} qualified articles"
+            )
             
             # Extract full content and collect articles
             publication_articles = []
-            max_tries = min(len(candidates), 20)
+            max_tries = min(len(candidates), self.candidates_per_publication)
             probe_count = min(5, max_tries)
 
             # Pass 1: probe first 5 candidates with full-content scoring
@@ -1957,20 +1956,9 @@ class CustomArticleCollector:
 
                 time.sleep(random.uniform(1, 2))
 
-            # Expand only after the full-content quality and relevance gates pass.
-            if self.use_dynamic_caps:
-                dynamic_cap = self._dynamic_max_from_extracted(
-                    publication_articles,
-                    attempted_count=probe_count,
-                    baseline=baseline_max_articles,
-                )
-                if dynamic_cap > max_articles_per_publication:
-                    print(f"  Raising cap based on extracted quality: {max_articles_per_publication} -> {dynamic_cap}")
-                    max_articles_per_publication = dynamic_cap
-
-            # Pass 2: continue until cap + buffer, then finalize by score.
-            effective_buffer = self.post_cap_buffer if self.use_dynamic_caps else 0
-            target_with_buffer = max_articles_per_publication + effective_buffer
+            # Pass 2: build a deeper qualified pool. Final source caps are
+            # applied globally after cross-publication deduplication.
+            target_with_buffer = self.extracted_articles_per_publication
             for candidate in candidates[probe_count:max_tries]:
                 if len(publication_articles) >= target_with_buffer:
                     break
@@ -2015,9 +2003,8 @@ class CustomArticleCollector:
                         print(f"  Found {len(new_rss_candidates)} new RSS candidates to try...")
                         new_rss_candidates.sort(key=lambda x: x.relevance_score, reverse=True)
                         
-                        # Try extra RSS candidates up to cap + buffer.
-                        effective_buffer = self.post_cap_buffer if self.use_dynamic_caps else 0
-                        target_with_buffer = max_articles_per_publication + effective_buffer
+                        # Try extra RSS candidates up to the extraction target.
+                        target_with_buffer = self.extracted_articles_per_publication
                         for candidate in new_rss_candidates[:30]:
                             if len(publication_articles) >= target_with_buffer:
                                 break
@@ -2046,7 +2033,9 @@ class CustomArticleCollector:
                     print(f"  RSS fallback error: {str(e)[:60]}")
             
             publication_articles.sort(key=lambda x: x.relevance_score, reverse=True)
-            final_articles = publication_articles[:max_articles_per_publication]
+            final_articles = publication_articles[
+                :self.extracted_articles_per_publication
+            ]
 
             fc = self.source_fail_counts
             print(

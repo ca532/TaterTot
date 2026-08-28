@@ -129,6 +129,13 @@ jobs:
           SOURCE_LIST_NAME: ${{ github.event.inputs.list_name }}
           SUMMARIZER_MODEL: google/flan-t5-base
           RUN_CLASSIFIER_EVAL: "false"
+          CANDIDATES_PER_PUBLICATION: "20"
+          EXTRACTED_ARTICLES_PER_PUBLICATION: "12"
+          MIN_ROUNDUP_ARTICLES: "40"
+          TARGET_ROUNDUP_ARTICLES: "50"
+          MAX_ROUNDUP_ARTICLES: "60"
+          SOFT_PUBLICATION_CAP: "5"
+          HARD_PUBLICATION_CAP: "10"
 
 
       - name: Find PDF and Get Date
