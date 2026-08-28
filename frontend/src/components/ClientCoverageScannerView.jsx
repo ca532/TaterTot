@@ -336,7 +336,7 @@ export default function ClientCoverageScannerView() {
       )}
 
       {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
-      {jobId && loadingJob && !snapshot && (
+      {jobId && loadingJob && !snapshot && !running && (
         <section role="status" className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-800">
           <RefreshCw className="h-4 w-4 animate-spin" />
           Loading coverage job
