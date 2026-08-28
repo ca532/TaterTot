@@ -130,7 +130,7 @@ export default function ClientCoverageScannerView() {
       }
     };
     checkProgress();
-    pollRef.current = setInterval(checkProgress, 30 * 1000);
+    pollRef.current = setInterval(checkProgress, 60 * 1000);
     return () => {
       active = false;
       stopPolling();
