@@ -9,6 +9,11 @@ const ACTION_PROGRESS_MESSAGES = {
   finalize: "Generating coverage report",
 };
 
+const formatStage = (status = "") => {
+  const label = status.replaceAll("_", " ");
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : "-";
+};
+
 export default function ClientCoverageScannerView() {
   const [form, setForm] = useState({
     report_title: "",
@@ -259,6 +264,7 @@ export default function ClientCoverageScannerView() {
   const reportComplete = job?.status === "complete";
   const coverageCount = Number(summary.total_coverage || 0);
   const searchesRemaining = job?.searches_remaining;
+  const stageLabel = formatStage(job?.status);
   const canCountry = job && !running && reviewResults.length === 0 && results.length > 0 && !["country_review", "complete"].includes(job.status);
   const canFinalize = job && !running && results.length > 0 && reviewResults.length === 0 && countryReviewResults.length === 0;
 
@@ -335,22 +341,21 @@ export default function ClientCoverageScannerView() {
 
       {jobId && snapshot && (
         <>
-          <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
             {[
-              ["Candidates", summary.candidates],
-              ["Approved", summary.total_coverage],
-              ["Article review", summary.needs_review],
-              ["Country review", summary.countries_need_review],
+              ["Coverage", summary.total_coverage],
+              ["Under review", summary.needs_review],
+              ["Countries to review", summary.countries_need_review],
               [
                 "Searches remaining",
                 searchesRemaining === "" || searchesRemaining == null
                   ? "-"
                   : searchesRemaining,
               ],
-              ["Status", job.status],
+              ["Stage", stageLabel],
             ].map(([label, value]) => (
               <div key={label} className="border-b border-gray-200 bg-white p-4">
-                <p className="text-xs text-gray-500">{label}</p><p className="mt-1 text-lg font-semibold text-gray-900">{value || 0}</p>
+                <p className="text-xs text-gray-500">{label}</p><p className="mt-1 text-lg font-semibold text-gray-900">{value === "" || value == null ? 0 : value}</p>
               </div>
             ))}
           </section>
@@ -387,7 +392,9 @@ export default function ClientCoverageScannerView() {
             </div>
           )}
 
-          <CoverageTable rows={results} />
+          {job.status !== "country_review" && (
+            <CoverageTable rows={results} />
+          )}
         </>
       )}
     </div>
@@ -409,7 +416,7 @@ function CountryTable({ rows, selected, setSelected, onConfirm, onEdit, saving }
   return (
     <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
       <div className="flex items-center border-b border-gray-200 p-4"><h3 className="mr-auto font-semibold">Country review</h3><button disabled={!selected.length || saving} onClick={onConfirm} className="px-3 py-2 rounded bg-green-700 text-white disabled:opacity-40">Confirm selected</button></div>
-      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="p-3"><input type="checkbox" aria-label="Select all resolved countries" checked={eligible.length > 0 && selected.length === eligible.length} onChange={() => setSelected(selected.length === eligible.length ? [] : eligible)} /></th><th className="p-3 text-left">Publication</th><th className="p-3 text-left">Country</th><th className="p-3 text-left">Source</th><th className="p-3 text-left">Confidence</th><th className="p-3" /></tr></thead><tbody>{rows.map((row) => <tr key={row.url_key} className="border-t border-gray-100"><td className="p-3"><input type="checkbox" disabled={!row.country || row.country_reviewed === "TRUE"} checked={selected.includes(row.country_lookup_key)} onChange={() => setSelected((current) => current.includes(row.country_lookup_key) ? current.filter((key) => key !== row.country_lookup_key) : [...current, row.country_lookup_key])} /></td><td className="p-3">{row.publication}</td><td className="p-3">{row.country || "Unresolved"}</td><td className="p-3">{row.country_source || "-"}</td><td className="p-3">{row.country_confidence || "-"}</td><td className="p-3"><button title="Edit country" onClick={() => onEdit({ ...row, country: row.country || "", country_code: row.country_code || "" })} className="p-2 text-[#8a6508]"><Pencil className="h-4 w-4" /></button></td></tr>)}</tbody></table></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="p-3"><input type="checkbox" aria-label="Select all resolved countries" checked={eligible.length > 0 && selected.length === eligible.length} onChange={() => setSelected(selected.length === eligible.length ? [] : eligible)} /></th><th className="p-3 text-left">Publication</th><th className="p-3 text-left">Country</th><th className="p-3 text-left">Source</th><th className="p-3 text-left">Confidence</th><th className="p-3" /></tr></thead><tbody>{rows.map((row) => <tr key={row.url_key} className="border-t border-gray-100"><td className="p-3"><input type="checkbox" disabled={!row.country || row.country_reviewed === "TRUE"} checked={selected.includes(row.country_lookup_key)} onChange={() => setSelected((current) => current.includes(row.country_lookup_key) ? current.filter((key) => key !== row.country_lookup_key) : [...current, row.country_lookup_key])} /></td><td className="p-3"><a href={row.article_url} target="_blank" rel="noreferrer" className="text-[#8a6508] underline">{row.publication}</a></td><td className="p-3">{row.country || "Unresolved"}</td><td className="p-3">{row.country_source || "-"}</td><td className="p-3">{row.country_confidence || "-"}</td><td className="p-3"><button title="Edit country" onClick={() => onEdit({ ...row, country: row.country || "", country_code: row.country_code || "" })} className="p-2 text-[#8a6508]"><Pencil className="h-4 w-4" /></button></td></tr>)}</tbody></table></div>
     </section>
   );
 }
