@@ -78,6 +78,34 @@ class ArticleQualityTests(unittest.TestCase):
         )
         self.assertTrue(validate_summary(valid, prompt)[0])
 
+    def test_rejects_truncation_and_unsupported_numeric_claims(self):
+        source = " ".join([
+            "The company reported revenue of EUR 1.44 trillion for the period.",
+            "Executives said jewelry demand remained strong across major markets.",
+            "European clients continued to favor established jewelry houses and designers.",
+            "Asian markets recorded increased interest in colored gemstones and watches.",
+            "Retail investment focused on flagship stores and private client experiences.",
+            "The group introduced new collections combining craftsmanship with contemporary design.",
+            "Management expects marketing activity to support launches during the next quarter.",
+            "High jewelry remained an important contributor to the wider luxury portfolio.",
+            "The report also described stable demand among clients in the United States.",
+            "Executives plan to maintain investment in artisans, workshops, and product development.",
+        ])
+        truncated = (
+            "The company reported strong demand across its major international "
+            "markets while jewelry remained central to its strategy [...]"
+        )
+        invented_number = source.replace("1.44", "9.99")
+
+        self.assertEqual(
+            "truncated_summary",
+            validate_summary(truncated, source_text=source)[1],
+        )
+        self.assertEqual(
+            "unsupported_numeric_claim",
+            validate_summary(invented_number, source_text=source)[1],
+        )
+
     def test_normalizes_known_publication_names(self):
         self.assertEqual(normalize_publication_name("businessinsider"), "Business Insider")
         self.assertEqual(normalize_publication_name("harpersbazaar"), "Harper's Bazaar")

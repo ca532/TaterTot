@@ -1,5 +1,4 @@
 from newspaper import Article
-from transformers import pipeline
 from dataclasses import dataclass
 from typing import List, Optional
 from urllib.parse import urlparse
@@ -10,6 +9,38 @@ from bs4 import BeautifulSoup
 import random
 
 from article_quality import clean_article_text, validate_article_content, validate_author, validate_summary
+from qwen_runtime import get_qwen_model
+
+
+SUMMARY_MODEL_REPO = os.getenv(
+    "SUMMARY_MODEL_REPO", "Qwen/Qwen2.5-3B-Instruct-GGUF"
+).strip()
+SUMMARY_MODEL_FILE = os.getenv(
+    "SUMMARY_MODEL_FILE", "qwen2.5-3b-instruct-q4_k_m.gguf"
+).strip()
+
+SUMMARY_SYSTEM_PROMPT = """
+You summarize articles for a luxury and fine-jewelry PR reading roundup.
+
+Write one coherent paragraph of 80 to 140 words.
+
+Rules:
+- Use only facts present in the supplied article.
+- Preserve the exact spelling of people, brands, collections, currencies,
+  numbers, percentages, and magnitude words.
+- Do not calculate or convert currencies.
+- Do not use ellipses, square-bracket omissions, unfinished sentences,
+  boilerplate, first-person language, or promotional calls to action.
+- Explain the material luxury, jewelry, business, design, market, or PR value.
+- Provide 1 to 5 concise source facts that directly support the summary.
+- Do not invent evidence.
+
+Return JSON only in this format:
+{
+  "summary": "One coherent paragraph.",
+  "source_facts": ["A fact supported by the supplied article."]
+}
+""".strip()
 
 # Try to import cloudscraper for CloudFlare bypass
 try:
@@ -28,14 +59,23 @@ class ArticleSummary:
     publication: str
     topics: List[str] = None
     published_date: Optional[str] = None
+    source_facts: List[str] = None
 
 class ArticleSummarizer:
     def __init__(self, model: str = None, custom_prompt: str = None):
-        """Initialize summarizer model from env, defaulting to BART."""
-        resolved_model = model or os.getenv("SUMMARIZER_MODEL", "facebook/bart-large-cnn")
-        print(f"Loading model: {resolved_model} ... this may take a moment.")
-        self.summarizer = pipeline("summarization", model=resolved_model)
-        self.is_promptable = "t5" in resolved_model.lower() or "flan" in resolved_model.lower()
+        """Configure a lazy local Qwen summarizer."""
+        if model:
+            print(
+                f"Ignoring legacy summarizer model override {model!r}; "
+                "using the configured Qwen GGUF runtime."
+            )
+        self.model_repo = SUMMARY_MODEL_REPO
+        self.model_file = SUMMARY_MODEL_FILE
+        self.model = None
+        print(
+            f"Configured summary model: {self.model_repo}/{self.model_file} "
+            "(loaded lazily and shared with the classifier when identical)."
+        )
         self.custom_prompt = (custom_prompt or os.getenv("SUMMARIZER_PROMPT", "")).strip()
         
         # Setup CloudScraper if available
@@ -64,6 +104,40 @@ class ArticleSummarizer:
         """Get a random User-Agent"""
         return random.choice(self.user_agents)
 
+    def _load(self):
+        if self.model is None:
+            self.model = get_qwen_model(self.model_repo, self.model_file)
+        return self.model
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        decoder = json.JSONDecoder()
+        value = str(text or "")
+        for index, character in enumerate(value):
+            if character != "{":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(value[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    @staticmethod
+    def _source_facts_valid(source_facts, source_text: str) -> bool:
+        if not isinstance(source_facts, list) or not 1 <= len(source_facts) <= 5:
+            return False
+        source_tokens = set(re.findall(r"[a-z0-9]+", source_text.lower()))
+        for fact in source_facts:
+            fact_tokens = set(re.findall(r"[a-z0-9]+", str(fact).lower()))
+            meaningful = {token for token in fact_tokens if len(token) > 2}
+            if not meaningful:
+                return False
+            if len(meaningful & source_tokens) / len(meaningful) < 0.55:
+                return False
+        return True
+
     def _build_extractive_summary(self, input_text: str) -> str:
         """Recover a grounded summary when model generation remains invalid."""
         sentences = [
@@ -81,9 +155,12 @@ class ArticleSummarizer:
         for sentence in sentences:
             if any(marker in sentence.lower() for marker in debris):
                 continue
+            sentence_words = len(sentence.split())
+            if total_words >= 80 and total_words + sentence_words > 140:
+                break
             selected.append(sentence)
-            total_words += len(sentence.split())
-            if total_words >= 80 or len(selected) >= 4:
+            total_words += sentence_words
+            if total_words >= 80:
                 break
         return clean_article_text(" ".join(selected))
 
@@ -97,38 +174,66 @@ class ArticleSummarizer:
     ) -> Optional[ArticleSummary]:
         """Summarize an article focusing on luxury brands, jewelry pieces, and celebrities"""
         try:
-            input_text = clean_article_text(article_content)[:4000]
+            input_text = clean_article_text(article_content)[:8000]
             content_valid, content_reason = validate_article_content(input_text)
             if not content_valid:
                 print(f"Skipping invalid summary input ({content_reason}): {article_url}")
                 return None
 
-            if self.is_promptable:
-                summary_text = self._generate_prompted_summary(input_text, use_short_prompt=False)
-                valid, reason = validate_summary(summary_text, self.custom_prompt)
-                if not valid:
-                    print(f"Retrying summary after quality failure ({reason}): {article_url}")
-                    summary_text = self._generate_prompted_summary(input_text, use_short_prompt=True)
-            else:
-                summary_text = self.summarizer(
-                    input_text,
-                    max_length=300,
-                    min_length=120,
-                    do_sample=False,
-                    truncation=True,
-                    num_beams=6,
-                    length_penalty=1.0,
-                    early_stopping=True
-                )[0]["summary_text"]
+            summary_text = ""
+            source_facts = []
+            reason = "no_summary"
+            previous_summary = ""
 
-            valid, reason = validate_summary(summary_text, self.custom_prompt)
+            for attempt in range(1, 3):
+                try:
+                    result = self._generate_qwen_summary(
+                        input_text=input_text,
+                        title=title,
+                        publication=publication,
+                        previous_summary=previous_summary,
+                        repair_reason=reason if attempt > 1 else "",
+                    )
+                    summary_text = clean_article_text(result.get("summary", ""))
+                    source_facts = [
+                        clean_article_text(str(fact))
+                        for fact in result.get("source_facts", [])
+                        if clean_article_text(str(fact))
+                    ] if isinstance(result.get("source_facts"), list) else []
+
+                    valid, reason = validate_summary(
+                        summary_text,
+                        prompt=self.custom_prompt,
+                        source_text=input_text,
+                    )
+                    if valid and not self._source_facts_valid(source_facts, input_text):
+                        valid, reason = False, "ungrounded_source_facts"
+                    if valid:
+                        break
+                    previous_summary = summary_text
+                    print(
+                        f"Retrying Qwen summary after quality failure "
+                        f"({reason}): {article_url}"
+                    )
+                except Exception as exc:
+                    valid, reason = False, f"qwen_error:{str(exc)[:120]}"
+                    print(
+                        f"Retrying Qwen summary after generation failure "
+                        f"(attempt {attempt}/2): {article_url}: {str(exc)[:160]}"
+                    )
+
             if not valid:
                 print(
                     f"Using extractive fallback after summary failure "
                     f"({reason}): {article_url}"
                 )
                 summary_text = self._build_extractive_summary(input_text)
-                valid, reason = validate_summary(summary_text, self.custom_prompt)
+                source_facts = [summary_text]
+                valid, reason = validate_summary(
+                    summary_text,
+                    prompt=self.custom_prompt,
+                    source_text=input_text,
+                )
 
             if not valid:
                 print(
@@ -143,38 +248,55 @@ class ArticleSummarizer:
                 summary=clean_article_text(summary_text),
                 url=article_url,
                 publication=publication,
-                topics=[]
+                topics=[],
+                source_facts=source_facts,
             )
 
         except Exception as e:
             print(f"Error summarizing article {article_url}: {e}")
             return None
 
-    def _generate_prompted_summary(self, input_text: str, use_short_prompt: bool) -> str:
-        if use_short_prompt:
-            prompt = f"Summarize the article accurately in one concise paragraph.\n\nArticle:\n{input_text}"
-        elif self.custom_prompt:
-            prompt = self.custom_prompt
-            if "{article}" in prompt:
-                prompt = prompt.replace("{article}", input_text)
-            else:
-                prompt = f"{prompt}\n\nArticle:\n{input_text}"
-        else:
-            prompt = (
-                "Summarize this article for PR and media monitoring. Preserve names, organizations, "
-                "numbers, and material implications. Write one concise paragraph.\n\n"
-                f"Article:\n{input_text}"
-            )
-        return self.summarizer(
-            prompt,
-            max_length=260,
-            min_length=100,
-            do_sample=False,
-            truncation=True,
-            num_beams=4,
-            length_penalty=1.0,
-            early_stopping=True,
-        )[0]["summary_text"]
+    def _generate_qwen_summary(
+        self,
+        input_text: str,
+        title: str,
+        publication: str,
+        previous_summary: str = "",
+        repair_reason: str = "",
+    ) -> dict:
+        custom_instructions = self.custom_prompt.replace(
+            "{article}", "[article supplied separately]"
+        )
+        payload = {
+            "title": str(title or "").strip(),
+            "publication": str(publication or "").strip(),
+            "article": input_text,
+            "editorial_instructions": custom_instructions,
+        }
+        if repair_reason:
+            payload["repair"] = {
+                "previous_summary": previous_summary,
+                "failure_reason": repair_reason,
+                "instruction": (
+                    "Regenerate from the supplied article and correct the failure. "
+                    "Do not repeat unsupported or malformed wording."
+                ),
+            }
+
+        response = self._load().create_chat_completion(
+            messages=[
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0.0,
+            max_tokens=550,
+            response_format={"type": "json_object"},
+        )
+        content = response["choices"][0]["message"]["content"]
+        result = self._parse_json(content)
+        if not result:
+            raise ValueError("Qwen returned malformed summary JSON")
+        return result
 
 def extract_publication_name(url: str) -> str:
     domain = urlparse(url).netloc.replace("www.", "").split(".")[0]
@@ -243,7 +365,7 @@ def _get_author_from_jsonld(author_field):
 
 
 def main():
-    print("Luxury-Focused Article Summarizer (BART CNN)")
+    print("Luxury-Focused Article Summarizer (Qwen GGUF)")
     print("=" * 50)
 
     # Initialize summarizer

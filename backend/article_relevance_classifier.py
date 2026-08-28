@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from article_quality import keyword_matches, prepare_article_for_classification
+from qwen_runtime import get_qwen_model
 
 
 MODEL_REPO = os.getenv(
@@ -116,17 +117,7 @@ class ArticleRelevanceClassifier:
     def _load(self):
         if self.model is not None:
             return self.model
-        from huggingface_hub import hf_hub_download
-        from llama_cpp import Llama
-
-        model_path = hf_hub_download(repo_id=MODEL_REPO, filename=MODEL_FILE)
-        self.model = Llama(
-            model_path=model_path,
-            n_ctx=4096,
-            n_threads=max(1, (os.cpu_count() or 2) - 1),
-            n_batch=256,
-            verbose=False,
-        )
+        self.model = get_qwen_model(MODEL_REPO, MODEL_FILE)
         return self.model
 
     @staticmethod

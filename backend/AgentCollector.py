@@ -2181,7 +2181,7 @@ def main():
         print(f"Saved to: {filename}")
         
         print(f"\nIntegration Preview:")
-        print(f"Articles are ready to feed into your BART summarizer!")
+        print("Articles are ready to feed into the Qwen summarizer!")
         for i, article in enumerate(articles[:3], 1):
             print(f"{i}. {article.title} ({article.publication})")
             print(f"   Content: {len(article.full_content)} characters")

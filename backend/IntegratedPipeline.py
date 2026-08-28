@@ -37,7 +37,7 @@ class IntegratedPipeline:
         
         # Initialize summarizer
         print("\nSetting up Article Summarizer...")
-        self.summarizer = ArticleSummarizer("facebook/bart-large-cnn")
+        self.summarizer = ArticleSummarizer()
         
         print("\nPipeline ready!\n")
     

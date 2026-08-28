@@ -123,7 +123,8 @@ jobs:
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          SUMMARIZER_MODEL: google/flan-t5-base
+          SUMMARY_MODEL_REPO: Qwen/Qwen2.5-3B-Instruct-GGUF
+          SUMMARY_MODEL_FILE: qwen2.5-3b-instruct-q4_k_m.gguf
           RUN_CLASSIFIER_EVAL: "false"
           CANDIDATES_PER_PUBLICATION: "20"
           EXTRACTED_ARTICLES_PER_PUBLICATION: "12"

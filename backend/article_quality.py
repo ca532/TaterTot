@@ -421,7 +421,46 @@ def repetition_ratio(text: str) -> float:
     return repeated / len(sentences)
 
 
-def validate_summary(summary: str, prompt: str = "") -> tuple[bool, str]:
+NUMERIC_CLAIM_PATTERN = re.compile(
+    r"(?<!\w)(?P<currency>[$€£])?\s*"
+    r"(?P<number>\d[\d,.]*)\s*"
+    r"(?P<unit>%|percent|million|billion|trillion|thousand|"
+    r"carat|carats|ct|kroner|dollars|euros|pounds)?",
+    flags=re.I,
+)
+
+
+def _numeric_claims(text: str) -> list[tuple[str, str, str]]:
+    claims = []
+    for match in NUMERIC_CLAIM_PATTERN.finditer(text or ""):
+        currency = (match.group("currency") or "").lower()
+        number = (match.group("number") or "").replace(",", "").lower()
+        unit = (match.group("unit") or "").lower()
+        if unit == "%":
+            unit = "percent"
+        claims.append((currency, number, unit))
+    return claims
+
+
+def _numbers_are_grounded(summary: str, source_text: str) -> bool:
+    source_claims = _numeric_claims(source_text)
+    for currency, number, unit in _numeric_claims(summary):
+        supported = any(
+            number == source_number
+            and (not currency or currency == source_currency)
+            and (not unit or unit == source_unit)
+            for source_currency, source_number, source_unit in source_claims
+        )
+        if not supported:
+            return False
+    return True
+
+
+def validate_summary(
+    summary: str,
+    prompt: str = "",
+    source_text: str = "",
+) -> tuple[bool, str]:
     cleaned = clean_article_text(summary)
     if len(cleaned) < 80:
         return False, "short_summary"
@@ -433,6 +472,18 @@ def validate_summary(summary: str, prompt: str = "") -> tuple[bool, str]:
         return False, "repetitive_summary"
     if re.search(r"\bu00[0-9a-f]{2}\b|\ufffd", cleaned, flags=re.I):
         return False, "malformed_summary"
+    if "[...]" in cleaned or "…" in cleaned or "..." in cleaned:
+        return False, "truncated_summary"
+    if not re.search(r"[.!?][\"')\]]*$", cleaned):
+        return False, "incomplete_summary"
+    if source_text:
+        word_count = len(re.findall(r"\b\w+\b", cleaned))
+        if word_count < 80:
+            return False, "summary_under_80_words"
+        if word_count > 140:
+            return False, "summary_over_140_words"
+        if not _numbers_are_grounded(cleaned, source_text):
+            return False, "unsupported_numeric_claim"
     return True, ""
 
 
