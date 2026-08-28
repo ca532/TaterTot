@@ -414,10 +414,21 @@ class CoverageJobStore:
             )
         return inserted, updated
 
-    def update_candidates(self, job_id: str, candidates: list[dict]):
+    def update_candidates(
+        self,
+        job_id: str,
+        candidates: list[dict],
+        *,
+        existing_records: list[dict] | None = None,
+    ):
+        records = (
+            existing_records
+            if existing_records is not None
+            else self.list_candidates(job_id)
+        )
         existing = {
             record.get("url_key"): record
-            for record in self.list_candidates(job_id)
+            for record in records
             if record.get("url_key")
         }
         pending_updates = {}
@@ -475,8 +486,9 @@ class CoverageJobStore:
         *,
         not_applicable: bool = False,
     ):
+        existing_records = self.list_candidates(job_id)
         updates = []
-        for candidate in self.list_candidates(job_id):
+        for candidate in existing_records:
             if candidate.get("country_lookup_key") != lookup_key:
                 continue
             updates.append(
@@ -491,7 +503,11 @@ class CoverageJobStore:
                     "country_reviewed": "TRUE",
                 }
             )
-        self.update_candidates(job_id, updates)
+        self.update_candidates(
+            job_id,
+            updates,
+            existing_records=existing_records,
+        )
 
     def load_traffic_cache(self) -> dict[str, dict]:
         cache = {}

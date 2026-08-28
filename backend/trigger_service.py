@@ -2476,13 +2476,16 @@ def set_coverage_country_override(
     persistent_job_id = (req.job_id or "").strip()
     if not persistent_job_id and (req.coverage_run_id or "").startswith("coverage-search-"):
         persistent_job_id = req.coverage_run_id.removeprefix("coverage-search-")
+    spreadsheet = _load_main_spreadsheet()
     persistent_store = None
     if persistent_job_id:
-        persistent_store = CoverageJobStore(_load_main_spreadsheet())
+        persistent_store = CoverageJobStore(spreadsheet)
         _require_coverage_job_idle(persistent_store, persistent_job_id)
 
-    ws = ensure_country_sheet(_load_main_spreadsheet())
-    values = ws.get_all_values()
+    ws, values = ensure_country_sheet(
+        spreadsheet,
+        include_values=True,
+    )
     target_row = None
     for row_index, row in enumerate(values[1:], start=2):
         existing_key = row[0].strip().lower() if row else ""
@@ -2515,12 +2518,14 @@ def set_coverage_country_override(
         else:
             ws.append_row(payload, value_input_option="RAW")
 
-    report_rows_updated = _update_coverage_report_country(
-        coverage_run_id=(req.coverage_run_id or "").strip(),
-        lookup_key=lookup_key,
-        article_url=(req.article_url or "").strip(),
-        country=country,
-    )
+    report_rows_updated = 0
+    if not persistent_store:
+        report_rows_updated = _update_coverage_report_country(
+            coverage_run_id=(req.coverage_run_id or "").strip(),
+            lookup_key=lookup_key,
+            article_url=(req.article_url or "").strip(),
+            country=country,
+        )
     if persistent_store:
         persistent_store.apply_country_override(
             persistent_job_id,
@@ -2532,8 +2537,8 @@ def set_coverage_country_override(
     return {
         "ok": True,
         "lookup_key": lookup_key,
-        "country": country,
-        "country_code": country_code,
+        "country": "" if req.not_applicable else country,
+        "country_code": "" if req.not_applicable else country_code,
         "country_source": "not_applicable" if req.not_applicable else "manual",
         "country_confidence": "high",
         "report_rows_updated": report_rows_updated,
@@ -2706,15 +2711,22 @@ def confirm_coverage_countries(
     store = CoverageJobStore(_load_main_spreadsheet())
     _require_coverage_job_idle(store, job_id)
     keys = set(req.lookup_keys)
+    candidates = store.list_candidates(job_id)
+    confirmed_keys = set()
     updates = []
-    for candidate in store.list_candidates(job_id):
+    for candidate in candidates:
         if candidate.get("country_lookup_key") in keys and candidate.get("country"):
+            confirmed_keys.add(candidate.get("country_lookup_key"))
             updates.append({
                 "url_key": candidate.get("url_key"),
                 "country_reviewed": "TRUE",
             })
-    store.update_candidates(job_id, updates)
-    return {"ok": True, **job_payload(store, job_id)}
+    store.update_candidates(
+        job_id,
+        updates,
+        existing_records=candidates,
+    )
+    return {"ok": True, "lookup_keys": sorted(confirmed_keys)}
 
 
 @app.get("/coverage/search-report/progress")

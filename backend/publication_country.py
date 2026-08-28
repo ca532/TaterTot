@@ -174,7 +174,7 @@ def extract_metadata_country(soup) -> dict | None:
     }
 
 
-def ensure_country_sheet(db_or_spreadsheet):
+def ensure_country_sheet(db_or_spreadsheet, *, include_values=False):
     spreadsheet = getattr(
         db_or_spreadsheet,
         "spreadsheet",
@@ -194,9 +194,11 @@ def ensure_country_sheet(db_or_spreadsheet):
     values = ws.get_all_values()
     if not values:
         ws.append_row(COUNTRY_HEADERS)
+        values = [list(COUNTRY_HEADERS)]
     elif values[0] != COUNTRY_HEADERS:
         ws.update("A1:K1", [COUNTRY_HEADERS])
-    return ws
+        values[0] = list(COUNTRY_HEADERS)
+    return (ws, values) if include_values else ws
 
 
 def load_registry(ws) -> dict[str, dict]:

@@ -221,6 +221,29 @@ class CoverageJobStoreTests(unittest.TestCase):
         self.assertEqual(saved["country"], "Canada")
         self.assertEqual(saved["country_reviewed"], "TRUE")
 
+    def test_country_override_reuses_the_loaded_candidate_rows(self):
+        store = make_store()
+        create_job(store)
+        store.upsert_discoveries(
+            "job-1",
+            [{"article_url": "https://example.com/story"}],
+        )
+        candidate = store.list_candidates("job-1")[0]
+        store.update_candidates("job-1", [{
+            "url_key": candidate["url_key"],
+            "country_lookup_key": "example.com",
+        }])
+        store.candidates.read_count = 0
+
+        store.apply_country_override(
+            "job-1",
+            "example.com",
+            "Canada",
+            "CA",
+        )
+
+        self.assertEqual(store.candidates.read_count, 1)
+
     def test_traffic_cache_is_loaded_once_and_written_in_batches(self):
         store = make_store()
         worksheet = store.traffic

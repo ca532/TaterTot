@@ -14,6 +14,16 @@ const formatStage = (status = "") => {
   return label ? label.charAt(0).toUpperCase() + label.slice(1) : "-";
 };
 
+const parseStoredQueries = (value) => {
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
 export default function ClientCoverageScannerView() {
   const [form, setForm] = useState({
     report_title: "",
@@ -61,17 +71,6 @@ export default function ClientCoverageScannerView() {
 
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
-  const refreshJob = async (id = jobId) => {
-    if (!id) return false;
-    const response = await githubAPI.getCoverageJob(id);
-    if (!response.success) {
-      setError(response.error || "Unable to load the coverage job.");
-      return false;
-    }
-    setSnapshot(response);
-    return true;
-  };
-
   useEffect(() => {
     if (!jobId) return;
     let active = true;
@@ -80,6 +79,11 @@ export default function ClientCoverageScannerView() {
       if (!active) return;
       if (response.success) {
         setSnapshot(response);
+        const persistedQueries = parseStoredQueries(response.job?.search_queries);
+        setForm((current) => ({
+          ...current,
+          search_queries: current.search_queries || persistedQueries.join("\n"),
+        }));
         if (response.job?.active_action) {
           setRunningAction(response.job.active_action);
         }
@@ -211,13 +215,37 @@ export default function ClientCoverageScannerView() {
     else setSnapshot(response);
   };
 
+  const applyCountryUpdates = (lookupKeys, override = {}) => {
+    const keys = new Set(lookupKeys);
+    setSnapshot((current) => {
+      if (!current) return current;
+
+      const updateRow = (row) => keys.has(row.country_lookup_key)
+        ? { ...row, ...override, country_reviewed: "TRUE" }
+        : row;
+      const countryReviewResults = (current.country_review_results || []).filter(
+        (row) => !keys.has(row.country_lookup_key)
+      );
+
+      return {
+        ...current,
+        results: (current.results || []).map(updateRow),
+        country_review_results: countryReviewResults,
+        summary: {
+          ...current.summary,
+          countries_need_review: countryReviewResults.length,
+        },
+      };
+    });
+  };
+
   const confirmSelectedCountries = async () => {
     if (!selectedCountries.length) return;
     setSaving(true);
     const response = await githubAPI.confirmCoverageCountries(jobId, selectedCountries);
     setSaving(false);
     if (!response.success) return setError(response.error || "Unable to confirm countries.");
-    setSnapshot(response);
+    applyCountryUpdates(response.lookup_keys || selectedCountries);
     setSelectedCountries([]);
   };
 
@@ -237,8 +265,13 @@ export default function ClientCoverageScannerView() {
     });
     setSaving(false);
     if (!response.success) return setError(response.error || "Unable to save country.");
+    applyCountryUpdates([response.lookup_key], {
+      country: response.country,
+      country_code: response.country_code,
+      country_source: response.country_source,
+      country_confidence: response.country_confidence,
+    });
     setCountryEdit(null);
-    await refreshJob();
   };
 
   const downloadPdf = async () => {
@@ -266,7 +299,7 @@ export default function ClientCoverageScannerView() {
   const searchesRemaining = job?.searches_remaining;
   const stageLabel = formatStage(job?.status);
   const canCountry = job && !running && reviewResults.length === 0 && results.length > 0 && !["country_review", "complete"].includes(job.status);
-  const canFinalize = job && !running && results.length > 0 && reviewResults.length === 0 && countryReviewResults.length === 0;
+  const canFinalize = job && job.status !== "complete" && !running && results.length > 0 && reviewResults.length === 0 && countryReviewResults.length === 0;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
@@ -365,7 +398,7 @@ export default function ClientCoverageScannerView() {
               <textarea className="mt-2 min-h-20 w-full rounded-lg border border-gray-300 p-3 font-normal" value={form.search_queries} onChange={(event) => updateForm("search_queries", event.target.value)} />
               {suggestedQueries.length > 0 && <span className="mt-2 flex flex-wrap gap-2">{suggestedQueries.map((query) => <button key={query} type="button" onClick={() => updateForm("search_queries", query)} className="max-w-full truncate rounded border border-gray-300 px-2 py-1 text-xs font-normal text-gray-700" title={query}>{query}</button>)}</span>}
             </label>
-            <button type="button" onClick={runAnotherDiscovery} disabled={running} className="px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold disabled:opacity-50">Run discovery</button>
+            <button type="button" onClick={runAnotherDiscovery} disabled={running || reportComplete} className="px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold disabled:opacity-50">Run discovery</button>
             {canCountry && <button type="button" onClick={() => runAction("country")} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold">Run country check</button>}
             <button type="button" onClick={() => runAction("finalize")} disabled={!canFinalize} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Finalize report</button>
             {job.status === "complete" && <button type="button" onClick={downloadPdf} disabled={downloading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold"><Download className="h-4 w-4" />{downloading ? "Downloading" : "Download PDF"}</button>}
