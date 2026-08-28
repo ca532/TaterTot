@@ -6,6 +6,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 try:
     from article_quality import keyword_matches, parse_date
     from client_coverage_pdf import build_coverage_pdf
@@ -18,6 +20,7 @@ try:
         SERPAPI_COUNTRY_RESERVE,
         extract_evidence,
         fetch_page,
+        get_serpapi_capacity,
         publication_name_from_domain,
         serpapi_search_all,
     )
@@ -36,6 +39,7 @@ except ImportError:
         SERPAPI_COUNTRY_RESERVE,
         extract_evidence,
         fetch_page,
+        get_serpapi_capacity,
         publication_name_from_domain,
         serpapi_search_all,
     )
@@ -163,7 +167,15 @@ def discover_job(
         for result in search_run.get("results", [])
     ]
     inserted, updated = store.upsert_discoveries(job_id, discoveries)
-    store.update_job(job_id, status="discovered")
+    previous_used = int(job.get("searches_used") or 0)
+    searches_used = int(search_run.get("searches_used") or 0)
+    searches_remaining = int(search_run.get("searches_remaining") or 0)
+    store.update_job(
+        job_id,
+        status="discovered",
+        searches_used=previous_used + searches_used,
+        searches_remaining=searches_remaining,
+    )
     return {
         **job_payload(store, job_id),
         "searches_used": search_run.get("searches_used", 0),
@@ -363,7 +375,29 @@ def enrich_countries_job(store: CoverageJobStore, job_id: str, database) -> dict
             ),
         })
     store.update_candidates(job_id, updates)
-    store.update_job(job_id, status="country_review")
+
+    job = payload["job"]
+    previous_used = int(job.get("searches_used") or 0)
+    country_searches_used = int(stats.get("google_searches_used") or 0)
+    try:
+        searches_remaining = int(
+            get_serpapi_capacity().get("monthly_left") or 0
+        )
+    except (
+        requests.RequestException,
+        RuntimeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        searches_remaining = int(job.get("searches_remaining") or 0)
+
+    store.update_job(
+        job_id,
+        status="country_review",
+        searches_used=previous_used + country_searches_used,
+        searches_remaining=searches_remaining,
+    )
     return {**job_payload(store, job_id), "country_stats": stats}
 
 

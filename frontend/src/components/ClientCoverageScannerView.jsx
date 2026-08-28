@@ -258,6 +258,7 @@ export default function ClientCoverageScannerView() {
     : ACTION_PROGRESS_MESSAGES[activeAction] || "Processing coverage";
   const reportComplete = job?.status === "complete";
   const coverageCount = Number(summary.total_coverage || 0);
+  const searchesRemaining = job?.searches_remaining;
   const canCountry = job && !running && reviewResults.length === 0 && results.length > 0 && !["country_review", "complete"].includes(job.status);
   const canFinalize = job && !running && results.length > 0 && reviewResults.length === 0 && countryReviewResults.length === 0;
 
@@ -334,8 +335,20 @@ export default function ClientCoverageScannerView() {
 
       {jobId && snapshot && (
         <>
-          <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            {[["Candidates", summary.candidates], ["Approved", summary.total_coverage], ["Article review", summary.needs_review], ["Country review", summary.countries_need_review], ["Status", job.status]].map(([label, value]) => (
+          <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+            {[
+              ["Candidates", summary.candidates],
+              ["Approved", summary.total_coverage],
+              ["Article review", summary.needs_review],
+              ["Country review", summary.countries_need_review],
+              [
+                "Searches remaining",
+                searchesRemaining === "" || searchesRemaining == null
+                  ? "-"
+                  : searchesRemaining,
+              ],
+              ["Status", job.status],
+            ].map(([label, value]) => (
               <div key={label} className="border-b border-gray-200 bg-white p-4">
                 <p className="text-xs text-gray-500">{label}</p><p className="mt-1 text-lg font-semibold text-gray-900">{value || 0}</p>
               </div>

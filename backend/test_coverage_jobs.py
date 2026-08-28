@@ -106,11 +106,25 @@ class CoverageJobStoreTests(unittest.TestCase):
 
     def test_existing_job_sheet_is_extended_with_run_tracking_headers(self):
         spreadsheet = FakeSpreadsheet()
-        spreadsheet.sheets[JOBS_SHEET] = FakeWorksheet(JOB_HEADERS[:-2])
+        spreadsheet.sheets[JOBS_SHEET] = FakeWorksheet(JOB_HEADERS[:-4])
 
         CoverageJobStore(spreadsheet)
 
         self.assertEqual(spreadsheet.sheets[JOBS_SHEET].values[0], JOB_HEADERS)
+
+    def test_search_balance_is_persisted_on_job(self):
+        store = make_store()
+        create_job(store)
+
+        store.update_job(
+            "job-1",
+            searches_used=17,
+            searches_remaining=483,
+        )
+
+        saved = store.get_job("job-1")
+        self.assertEqual(saved["searches_used"], "17")
+        self.assertEqual(saved["searches_remaining"], "483")
 
     def test_canonical_key_removes_tracking_and_common_url_variants(self):
         left = canonical_candidate_key(

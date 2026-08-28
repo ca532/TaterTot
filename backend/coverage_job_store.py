@@ -29,6 +29,8 @@ JOB_HEADERS = [
     "finalized_at",
     "active_run_id",
     "active_run_started_at",
+    "searches_used",
+    "searches_remaining",
 ]
 
 CANDIDATE_HEADERS = [
