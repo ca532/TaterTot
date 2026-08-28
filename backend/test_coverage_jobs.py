@@ -80,6 +80,30 @@ def create_job(store: CoverageJobStore):
 
 
 class CoverageJobStoreTests(unittest.TestCase):
+    def test_country_review_only_keeps_unresolved_low_and_organic_guesses(self):
+        from backend.coverage_actions import country_requires_review
+
+        self.assertTrue(country_requires_review({
+            "country": "",
+            "country_confidence": "low",
+            "country_source": "unresolved",
+        }))
+        self.assertTrue(country_requires_review({
+            "country": "United States",
+            "country_confidence": "medium",
+            "country_source": "serpapi_organic_results",
+        }))
+        self.assertFalse(country_requires_review({
+            "country": "France",
+            "country_confidence": "medium",
+            "country_source": "search_source_label",
+        }))
+        self.assertFalse(country_requires_review({
+            "country": "South Africa",
+            "country_confidence": "high",
+            "country_source": "manual",
+        }))
+
     def test_existing_job_sheet_is_extended_with_run_tracking_headers(self):
         spreadsheet = FakeSpreadsheet()
         spreadsheet.sheets[JOBS_SHEET] = FakeWorksheet(JOB_HEADERS[:-2])
@@ -290,6 +314,34 @@ class CoverageRunReconciliationTests(unittest.TestCase):
 
         self.assertEqual(job["active_action"], "")
         self.assertEqual(job["status"], "failed")
+
+    def test_successful_inactive_job_is_reported_as_complete(self):
+        spreadsheet = FakeSpreadsheet()
+        store = CoverageJobStore(spreadsheet)
+        create_job(store)
+        store.update_job("job-1", status="article_review")
+
+        with (
+            patch.object(self.service, "_check_auth"),
+            patch.object(
+                self.service,
+                "_load_main_spreadsheet",
+                return_value=spreadsheet,
+            ),
+        ):
+            response = self.service.get_client_coverage_search_report_progress(
+                job_id="job-1",
+                action="discover",
+                authorization="Bearer test",
+            )
+
+        self.assertEqual(response["status"], "complete")
+        self.assertEqual(response["phase"], "discover")
+        self.assertEqual(
+            response["message"],
+            "Coverage discovery and verification complete",
+        )
+        self.assertEqual(response["job"]["status"], "article_review")
 
 
 class FinalizationTests(unittest.TestCase):

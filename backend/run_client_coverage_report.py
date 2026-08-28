@@ -36,11 +36,18 @@ def main() -> None:
 
     try:
         if action == "discover":
-            result = discover_job(
+            discovery = discover_job(
                 store,
                 job_id,
                 queries=split_search_queries(os.getenv("COVERAGE_SEARCH_QUERIES", "")) or None,
             )
+            verification = verify_job(store, job_id)
+            result = {
+                **discovery,
+                **verification,
+                "new_candidates": discovery.get("new_candidates", 0),
+                "searches_used": discovery.get("searches_used", 0),
+            }
         elif action == "verify":
             result = verify_job(store, job_id)
         elif action == "country":

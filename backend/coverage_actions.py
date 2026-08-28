@@ -48,7 +48,25 @@ except ImportError:
     from backend.publication_traffic import lookup_publication_traffic
 
 
-AUTO_REVIEWED_COUNTRY_SOURCES = {"manual", "country_domain", "url_edition"}
+UNTRUSTED_COUNTRY_SOURCES = {
+    "serpapi_organic_results",
+    "unresolved",
+    "social_unresolved",
+}
+
+
+def country_requires_review(row: dict) -> bool:
+    country = str(row.get("country", "")).strip()
+    confidence = str(row.get("country_confidence", "")).strip().lower()
+    source = str(row.get("country_source", "")).strip().lower()
+
+    return (
+        not country
+        or confidence in {"", "low", "very_low"}
+        or source in UNTRUSTED_COUNTRY_SOURCES
+    )
+
+
 def _json_list(value) -> list[str]:
     if isinstance(value, list):
         return value
@@ -340,7 +358,9 @@ def enrich_countries_job(store: CoverageJobStore, job_id: str, database) -> dict
             "country_source": source,
             "country_confidence": row.get("country_confidence", ""),
             "country_lookup_key": row.get("country_lookup_key", ""),
-            "country_reviewed": "TRUE" if source in AUTO_REVIEWED_COUNTRY_SOURCES else "FALSE",
+            "country_reviewed": (
+                "FALSE" if country_requires_review(row) else "TRUE"
+            ),
         })
     store.update_candidates(job_id, updates)
     store.update_job(job_id, status="country_review")

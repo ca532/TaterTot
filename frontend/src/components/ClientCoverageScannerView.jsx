@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Download, Pencil, RefreshCw, Search, X } from "lucide-react";
+import { Download, Pencil, RefreshCw, Search, X } from "lucide-react";
 import githubAPI from "../services/githubAPI";
 
 const RUNNING_MESSAGE = "A coverage run is already in progress. Wait for it to finish before starting another run.";
+const ACTION_PROGRESS_MESSAGES = {
+  discover: "Discovering and verifying coverage",
+  country: "Checking publication countries",
+  finalize: "Generating coverage report",
+};
 
 export default function ClientCoverageScannerView() {
   const [form, setForm] = useState({
@@ -15,6 +20,7 @@ export default function ClientCoverageScannerView() {
   });
   const [jobId, setJobId] = useState(() => window.localStorage.getItem("coverage_job_id") || "");
   const [snapshot, setSnapshot] = useState(null);
+  const [loadingJob, setLoadingJob] = useState(Boolean(jobId));
   const [runningAction, setRunningAction] = useState("");
   const [dispatching, setDispatching] = useState(false);
   const [error, setError] = useState("");
@@ -64,6 +70,7 @@ export default function ClientCoverageScannerView() {
   useEffect(() => {
     if (!jobId) return;
     let active = true;
+    setLoadingJob(true);
     githubAPI.getCoverageJob(jobId).then((response) => {
       if (!active) return;
       if (response.success) {
@@ -73,6 +80,8 @@ export default function ClientCoverageScannerView() {
         }
       }
       else setError(response.error || "Unable to load the coverage job.");
+    }).finally(() => {
+      if (active) setLoadingJob(false);
     });
     return () => {
       active = false;
@@ -84,6 +93,7 @@ export default function ClientCoverageScannerView() {
     window.localStorage.removeItem("coverage_job_id");
     setJobId("");
     setSnapshot(null);
+    setLoadingJob(false);
     setRunningAction("");
     setDispatching(false);
     setSelectedReview([]);
@@ -104,16 +114,23 @@ export default function ClientCoverageScannerView() {
         return;
       }
       if (response.status === "complete" || response.status === "failed") {
+        stopPolling();
         setRunningAction("");
-        const refreshed = await githubAPI.getCoverageJob(jobId);
-        if (active && refreshed.success) setSnapshot(refreshed);
+        if (response.job) {
+          setSnapshot(response);
+        } else {
+          const refreshed = await githubAPI.getCoverageJob(jobId);
+          if (active && refreshed.success) setSnapshot(refreshed);
+        }
         if (response.status === "failed") {
           setError(response.error || response.message || "Coverage action failed.");
+        } else {
+          setError("");
         }
       }
     };
     checkProgress();
-    pollRef.current = setInterval(checkProgress, 3 * 60 * 1000);
+    pollRef.current = setInterval(checkProgress, 30 * 1000);
     return () => {
       active = false;
       stopPolling();
@@ -159,18 +176,23 @@ export default function ClientCoverageScannerView() {
     runAction("discover", { search_queries: queries.join("\n") });
   };
 
-  const decideSelected = async (decision) => {
-    if (!selectedReview.length) return;
+  const acceptSelected = async () => {
+    if (!reviewResults.length || !selectedReview.length) return;
     setSaving(true);
     setError("");
+    const accepted = new Set(selectedReview);
     const response = await githubAPI.reviewCoverageCandidates(
       jobId,
-      selectedReview.map((url_key) => ({ url_key, decision }))
+      reviewResults.map((row) => ({
+        url_key: row.url_key,
+        decision: accepted.has(row.url_key) ? "approved" : "rejected",
+      }))
     );
     setSaving(false);
     if (!response.success) return setError(response.error || "Unable to save review decisions.");
     setSnapshot(response);
     setSelectedReview([]);
+    await runAction("country");
   };
 
   const savePublication = async (row, publication) => {
@@ -230,9 +252,12 @@ export default function ClientCoverageScannerView() {
   };
 
   const running = Boolean(dispatching || runningAction || job?.active_action);
+  const activeAction = runningAction || job?.active_action || "";
+  const progressMessage = dispatching && !activeAction
+    ? "Starting coverage workflow"
+    : ACTION_PROGRESS_MESSAGES[activeAction] || "Processing coverage";
   const reportComplete = job?.status === "complete";
   const coverageCount = Number(summary.total_coverage || 0);
-  const canVerify = job && !running && !["article_review", "country_review", "complete"].includes(job.status);
   const canCountry = job && !running && reviewResults.length === 0 && results.length > 0 && !["country_review", "complete"].includes(job.status);
   const canFinalize = job && !running && results.length > 0 && reviewResults.length === 0 && countryReviewResults.length === 0;
 
@@ -269,6 +294,12 @@ export default function ClientCoverageScannerView() {
       )}
 
       {error && <div role="alert" className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+      {jobId && loadingJob && !snapshot && (
+        <section role="status" className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-800">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Loading coverage job
+        </section>
+      )}
       {(running || reportComplete) && (
         <section
           role="status"
@@ -279,7 +310,7 @@ export default function ClientCoverageScannerView() {
               {running && <RefreshCw className="h-4 w-4 animate-spin" />}
               <span>
                 {running
-                  ? "Generating coverage report"
+                  ? progressMessage
                   : "Coverage report complete"}
               </span>
             </div>
@@ -317,18 +348,17 @@ export default function ClientCoverageScannerView() {
               {suggestedQueries.length > 0 && <span className="mt-2 flex flex-wrap gap-2">{suggestedQueries.map((query) => <button key={query} type="button" onClick={() => updateForm("search_queries", query)} className="max-w-full truncate rounded border border-gray-300 px-2 py-1 text-xs font-normal text-gray-700" title={query}>{query}</button>)}</span>}
             </label>
             <button type="button" onClick={runAnotherDiscovery} disabled={running} className="px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold disabled:opacity-50">Run discovery</button>
-            <button type="button" onClick={() => runAction("verify")} disabled={!canVerify} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Verify new candidates</button>
-            <button type="button" onClick={() => runAction("country")} disabled={!canCountry} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Continue to country review</button>
+            {canCountry && <button type="button" onClick={() => runAction("country")} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold">Run country check</button>}
             <button type="button" onClick={() => runAction("finalize")} disabled={!canFinalize} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Finalize report</button>
             {job.status === "complete" && <button type="button" onClick={downloadPdf} disabled={downloading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold"><Download className="h-4 w-4" />{downloading ? "Downloading" : "Download PDF"}</button>}
           </section>
 
           {reviewResults.length > 0 && (
-            <ReviewTable rows={reviewResults} selected={selectedReview} setSelected={setSelectedReview} onDecision={decideSelected} onPublication={savePublication} saving={saving} />
+            <ReviewTable rows={reviewResults} selected={selectedReview} setSelected={setSelectedReview} onAccept={acceptSelected} onPublication={savePublication} saving={saving} />
           )}
 
-          {["country_review", "complete"].includes(job.status) && results.length > 0 && (
-            <CountryTable rows={results} selected={selectedCountries} setSelected={setSelectedCountries} onConfirm={confirmSelectedCountries} onEdit={setCountryEdit} saving={saving} />
+          {countryReviewResults.length > 0 && (
+            <CountryTable rows={countryReviewResults} selected={selectedCountries} setSelected={setSelectedCountries} onConfirm={confirmSelectedCountries} onEdit={setCountryEdit} saving={saving} />
           )}
 
           {countryEdit && (
@@ -351,11 +381,11 @@ export default function ClientCoverageScannerView() {
   );
 }
 
-function ReviewTable({ rows, selected, setSelected, onDecision, onPublication, saving }) {
+function ReviewTable({ rows, selected, setSelected, onAccept, onPublication, saving }) {
   const toggleAll = () => setSelected(selected.length === rows.length ? [] : rows.map((row) => row.url_key));
   return (
     <section className="overflow-hidden rounded-lg border border-amber-200 bg-white">
-      <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 p-4"><h3 className="mr-auto font-semibold">Article review</h3><button disabled={!selected.length || saving} onClick={() => onDecision("approved")} className="px-3 py-2 rounded bg-green-700 text-white disabled:opacity-40">Approve selected</button><button disabled={!selected.length || saving} onClick={() => onDecision("rejected")} className="px-3 py-2 rounded bg-red-700 text-white disabled:opacity-40">Reject selected</button></div>
+      <div className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 p-4"><h3 className="mr-auto font-semibold">Article review</h3><button disabled={!selected.length || saving} onClick={onAccept} className="px-3 py-2 rounded bg-green-700 text-white disabled:opacity-40">Accept selected</button></div>
       <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="p-3"><input type="checkbox" aria-label="Select all review articles" checked={selected.length === rows.length} onChange={toggleAll} /></th><th className="p-3 text-left">Publication</th><th className="p-3 text-left">Article</th><th className="p-3 text-left">Date</th><th className="p-3 text-left">Reason</th><th className="p-3 text-left">Extraction</th></tr></thead><tbody>{rows.map((row) => <tr key={row.url_key} className="border-t border-gray-100"><td className="p-3"><input type="checkbox" aria-label={`Select ${row.article_title}`} checked={selected.includes(row.url_key)} onChange={() => setSelected((current) => current.includes(row.url_key) ? current.filter((key) => key !== row.url_key) : [...current, row.url_key])} /></td><td className="p-3"><input className="w-40 rounded border border-transparent p-2 hover:border-gray-300 focus:border-gray-400" defaultValue={row.publication} onBlur={(event) => onPublication(row, event.target.value)} /></td><td className="p-3"><a className="text-[#8a6508] underline" href={row.article_url} target="_blank" rel="noreferrer">{row.article_title || row.article_url}</a></td><td className="p-3">{row.published_date || "Unknown"}</td><td className="p-3 text-gray-600">{row.verification_reason}</td><td className="p-3 text-gray-600">{row.extraction_method}</td></tr>)}</tbody></table></div>
     </section>
   );

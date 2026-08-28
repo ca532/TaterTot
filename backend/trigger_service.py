@@ -1336,21 +1336,6 @@ def _reconcile_coverage_run(
     return job, run
 
 
-def _capture_coverage_run(
-    store: CoverageJobStore,
-    job_id: str,
-    action: str,
-    started_at: str,
-) -> Optional[dict]:
-    for _ in range(15):
-        run = _find_coverage_run(job_id, action, started_at)
-        if run:
-            store.update_job(job_id, active_run_id=str(run["id"]))
-            return run
-        time.sleep(1)
-    return None
-
-
 def _get_coverage_artifact(run_id: int, job_id: str) -> Optional[dict]:
     response = _gh_request(
         "GET",
@@ -2588,7 +2573,7 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
         "date_to": (req.date_to or "").strip(),
         "backlink_domains": _split_keywords(req.backlink_domains or ""),
     })
-    active_job = _acquire_coverage_action(store, job_id, "discover")
+    _acquire_coverage_action(store, job_id, "discover")
     dispatch_body = {
         "ref": GITHUB_REF,
         "inputs": {
@@ -2614,13 +2599,6 @@ def run_client_coverage_search_report(req: CoverageScanRequest, authorization: s
             status_code=502,
             detail=f"GitHub coverage dispatch failed: {detail}",
         )
-    _capture_coverage_run(
-        store,
-        job_id,
-        "discover",
-        str(active_job.get("active_run_started_at", "")),
-    )
-
     return {
         "ok": True,
         "job_id": job_id,
@@ -2642,7 +2620,7 @@ def run_coverage_job_action(
     store = CoverageJobStore(_load_main_spreadsheet())
     if not store.get_job(job_id):
         raise HTTPException(status_code=404, detail="Coverage job not found")
-    active_job = _acquire_coverage_action(store, job_id, action)
+    _acquire_coverage_action(store, job_id, action)
 
     queries = [
         query.strip()
@@ -2669,12 +2647,6 @@ def run_coverage_job_action(
             action=action,
         )
         raise HTTPException(status_code=502, detail="GitHub coverage dispatch failed")
-    _capture_coverage_run(
-        store,
-        job_id,
-        action,
-        str(active_job.get("active_run_started_at", "")),
-    )
     return {"ok": True, "job_id": job_id, "status": "running", "action": action}
 
 
@@ -2759,23 +2731,62 @@ def get_client_coverage_search_report_progress(
     job, run = _reconcile_coverage_run(store, job)
     expected_action = action or str(job.get("active_action", ""))
     if not run:
-        if not str(job.get("active_action", "")).strip():
+        active_action = str(job.get("active_action", "")).strip()
+        job_status = str(job.get("status", "")).strip()
+
+        if active_action:
+            return {
+                "ok": True,
+                "status": "running",
+                "phase": "queued",
+                "current": 0,
+                "total": 0,
+                "message": "Waiting for GitHub Actions to start",
+            }
+
+        if job_status in {"failed", "cancelled"}:
             return {
                 "ok": True,
                 "status": "failed",
-                "phase": expected_action or "failed",
+                "phase": expected_action or job_status,
                 "current": 0,
                 "total": 0,
-                "message": "Coverage workflow could not be found",
-                "error": job.get("last_error") or "Coverage workflow is no longer active",
+                "message": (
+                    "Coverage workflow cancelled"
+                    if job_status == "cancelled"
+                    else "Coverage workflow failed"
+                ),
+                "error": job.get("last_error") or "Coverage workflow failed",
             }
+
+        if job_status in {
+            "discovered",
+            "verified",
+            "article_review",
+            "country_review",
+            "complete",
+        }:
+            messages = {
+                "discover": "Coverage discovery and verification complete",
+                "country": "Publication country check complete",
+                "finalize": "Coverage report complete",
+            }
+            return {
+                "ok": True,
+                "status": "complete",
+                "phase": expected_action or job_status,
+                "message": messages.get(
+                    expected_action,
+                    "Coverage workflow complete",
+                ),
+                **job_payload(store, job_id),
+            }
+
         return {
             "ok": True,
-            "status": "running",
-            "phase": "queued",
-            "current": 0,
-            "total": 0,
-            "message": "Waiting for GitHub Actions to start",
+            "status": "failed",
+            "phase": expected_action or "failed",
+            "error": "Coverage workflow is not active",
         }
 
     if run.get("status") != "completed":
