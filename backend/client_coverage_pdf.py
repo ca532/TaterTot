@@ -1,15 +1,38 @@
 from __future__ import annotations
 
 from html import escape
+from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+FONT_NAMES = {
+    "light": "CoverageMontserratLight",
+    "regular": "CoverageMontserratRegular",
+    "medium": "CoverageMontserratMedium",
+}
+
+
+def _register_fonts() -> None:
+    for weight, filename in (
+        ("light", "Montserrat-Light.ttf"),
+        ("regular", "Montserrat-Regular.ttf"),
+        ("medium", "Montserrat-Medium.ttf"),
+    ):
+        font_name = FONT_NAMES[weight]
+        if font_name not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont(font_name, FONT_DIR / filename))
+
+
 def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: list[dict]) -> str:
+    _register_fonts()
     doc = SimpleDocTemplate(
         output_path,
         pagesize=letter,
@@ -23,8 +46,9 @@ def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: lis
     brand = ParagraphStyle(
         "Brand",
         parent=styles["Title"],
-        fontSize=22,
-        leading=26,
+        fontName=FONT_NAMES["medium"],
+        fontSize=25,
+        leading=29,
         alignment=1,
         textColor=colors.HexColor("#b8860b"),
         spaceAfter=2,
@@ -32,32 +56,41 @@ def build_coverage_pdf(output_path: str, title: str, highlights: dict, rows: lis
     small_brand = ParagraphStyle(
         "SmallBrand",
         parent=styles["Normal"],
-        fontSize=10,
-        leading=12,
+        fontName=FONT_NAMES["medium"],
+        fontSize=12,
+        leading=14,
         alignment=1,
-        spaceAfter=18,
+        spaceAfter=24,
     )
     subtitle = ParagraphStyle(
         "Subtitle",
         parent=styles["Normal"],
-        fontSize=16,
-        leading=20,
+        fontName=FONT_NAMES["regular"],
+        fontSize=20,
+        leading=26,
         alignment=1,
-        spaceAfter=18,
+        spaceAfter=24,
     )
     body = ParagraphStyle(
         "Body",
         parent=styles["Normal"],
-        fontSize=10.5,
-        leading=15,
-        spaceAfter=8,
+        fontName=FONT_NAMES["light"],
+        fontSize=11.5,
+        leading=17,
+        spaceAfter=10,
+    )
+    section_heading = ParagraphStyle(
+        "SectionHeading",
+        parent=body,
+        fontName=FONT_NAMES["regular"],
+        spaceAfter=10,
     )
 
     story = [
         Paragraph("CLAIRE ADLER", brand),
         Paragraph("L U X U R Y&nbsp;&nbsp;P R", small_brand),
         Paragraph(escape(str(title or "")), subtitle),
-        Paragraph("Coverage Highlights:", body),
+        Paragraph("Coverage Highlights:", section_heading),
         Spacer(1, 0.1 * inch),
     ]
 

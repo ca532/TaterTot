@@ -8,6 +8,14 @@ const ACTION_PROGRESS_MESSAGES = {
   country: "Checking publication countries",
   finalize: "Generating coverage report",
 };
+const EMPTY_FORM = {
+  report_title: "",
+  mention_terms: "",
+  search_queries: "",
+  date_from: "",
+  date_to: "",
+  backlink_domains: "",
+};
 
 const formatStage = (status = "") => {
   const label = status.replaceAll("_", " ");
@@ -25,14 +33,7 @@ const parseStoredQueries = (value) => {
 };
 
 export default function ClientCoverageScannerView() {
-  const [form, setForm] = useState({
-    report_title: "",
-    mention_terms: "",
-    search_queries: "",
-    date_from: "",
-    date_to: "",
-    backlink_domains: "",
-  });
+  const [form, setForm] = useState(() => ({ ...EMPTY_FORM }));
   const [jobId, setJobId] = useState(() => window.localStorage.getItem("coverage_job_id") || "");
   const [snapshot, setSnapshot] = useState(null);
   const [loadingJob, setLoadingJob] = useState(Boolean(jobId));
@@ -108,6 +109,7 @@ export default function ClientCoverageScannerView() {
     setSelectedReview([]);
     setSelectedCountries([]);
     setCountryEdit(null);
+    setForm({ ...EMPTY_FORM });
     setError("");
   };
 
@@ -398,7 +400,7 @@ export default function ClientCoverageScannerView() {
               <textarea className="mt-2 min-h-20 w-full rounded-lg border border-gray-300 p-3 font-normal" value={form.search_queries} onChange={(event) => updateForm("search_queries", event.target.value)} />
               {suggestedQueries.length > 0 && <span className="mt-2 flex flex-wrap gap-2">{suggestedQueries.map((query) => <button key={query} type="button" onClick={() => updateForm("search_queries", query)} className="max-w-full truncate rounded border border-gray-300 px-2 py-1 text-xs font-normal text-gray-700" title={query}>{query}</button>)}</span>}
             </label>
-            <button type="button" onClick={runAnotherDiscovery} disabled={running || reportComplete} className="px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold disabled:opacity-50">Run discovery</button>
+            <button type="button" onClick={runAnotherDiscovery} disabled={Boolean(jobId)} className="px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold disabled:opacity-50">Run discovery</button>
             {canCountry && <button type="button" onClick={() => runAction("country")} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold">Run country check</button>}
             <button type="button" onClick={() => runAction("finalize")} disabled={!canFinalize} className="px-4 py-2 rounded-lg bg-[#b8860b] text-black font-semibold disabled:opacity-40">Finalize report</button>
             {job.status === "complete" && <button type="button" onClick={downloadPdf} disabled={downloading} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#b8860b] text-[#8a6508] font-semibold"><Download className="h-4 w-4" />{downloading ? "Downloading" : "Download PDF"}</button>}
