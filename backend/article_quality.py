@@ -263,17 +263,69 @@ def _json_ld_objects(value):
             yield from _json_ld_objects(value["@graph"])
 
 
+GENERIC_PUBLICATION_NAMES = {
+    "home",
+    "latest",
+    "latest news",
+    "news",
+    "unknown",
+    "website",
+}
+
+
+def _publication_candidate(value) -> str:
+    name = clean_article_text(str(value or "")).strip()
+    if (
+        len(name) < 2
+        or len(name) > 100
+        or name.casefold() in GENERIC_PUBLICATION_NAMES
+    ):
+        return ""
+    return normalize_publication_name(name)
+
+
+def _json_ld_publisher_name(value) -> str:
+    if isinstance(value, dict):
+        return _publication_candidate(value.get("name"))
+    if isinstance(value, list):
+        for item in value:
+            name = _json_ld_publisher_name(item)
+            if name:
+                return name
+    if isinstance(value, str):
+        return _publication_candidate(value)
+    return ""
+
+
 def extract_page_metadata(html_text: str) -> dict:
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html_text or "", "html.parser")
-    metadata = {"published_date": None, "published_date_source": "", "canonical_url": "", "title": ""}
+    metadata = {
+        "published_date": None,
+        "published_date_source": "",
+        "canonical_url": "",
+        "title": "",
+        "publication_name": "",
+        "publication_name_source": "",
+    }
     canonical = soup.find("link", rel=lambda value: value and "canonical" in value)
     if canonical:
         metadata["canonical_url"] = str(canonical.get("href", "")).strip()
     og_title = soup.find("meta", property="og:title")
     if og_title:
         metadata["title"] = str(og_title.get("content", "")).strip()
+
+    for attrs, source in (
+        ({"property": "og:site_name"}, "og_site_name"),
+        ({"name": "application-name"}, "application_name"),
+    ):
+        tag = soup.find("meta", attrs=attrs)
+        name = _publication_candidate(tag.get("content") if tag else "")
+        if name:
+            metadata["publication_name"] = name
+            metadata["publication_name_source"] = source
+            break
 
     for script in soup.find_all("script", type="application/ld+json"):
         try:
@@ -286,22 +338,31 @@ def extract_page_metadata(html_text: str) -> dict:
                 continue
             if not metadata["title"]:
                 metadata["title"] = str(obj.get("headline", "")).strip()
-            parsed = parse_date(obj.get("datePublished"))
+            if not metadata["publication_name"]:
+                publisher = obj.get("publisher") or obj.get("sourceOrganization")
+                name = _json_ld_publisher_name(publisher)
+                if name:
+                    metadata["publication_name"] = name
+                    metadata["publication_name_source"] = "json_ld_publisher"
+            if not metadata["published_date"]:
+                parsed = parse_date(obj.get("datePublished"))
+                if parsed:
+                    metadata["published_date"] = parsed
+                    metadata["published_date_source"] = "json_ld"
+
+    if not metadata["published_date"]:
+        for attrs in (
+            {"property": "article:published_time"},
+            {"name": "article:published_time"},
+            {"name": "pub_date"},
+            {"name": "publish-date"},
+        ):
+            tag = soup.find("meta", attrs=attrs)
+            parsed = parse_date(tag.get("content")) if tag else None
             if parsed:
                 metadata["published_date"] = parsed
-                metadata["published_date_source"] = "json_ld"
-                return metadata
-
-    for attrs in (
-        {"property": "article:published_time"}, {"name": "article:published_time"},
-        {"name": "pub_date"}, {"name": "publish-date"},
-    ):
-        tag = soup.find("meta", attrs=attrs)
-        parsed = parse_date(tag.get("content")) if tag else None
-        if parsed:
-            metadata["published_date"] = parsed
-            metadata["published_date_source"] = "meta"
-            break
+                metadata["published_date_source"] = "meta"
+                break
     return metadata
 
 

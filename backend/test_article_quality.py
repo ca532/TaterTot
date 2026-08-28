@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from article_quality import (
+    extract_page_metadata,
     has_low_signal_intent,
     keyword_matches,
     normalize_publication_name,
@@ -81,6 +82,38 @@ class ArticleQualityTests(unittest.TestCase):
         self.assertEqual(normalize_publication_name("businessinsider"), "Business Insider")
         self.assertEqual(normalize_publication_name("harpersbazaar"), "Harper's Bazaar")
         self.assertEqual(normalize_publication_name("nytimes"), "The New York Times")
+
+    def test_extracts_publication_name_from_open_graph(self):
+        metadata = extract_page_metadata(
+            '<meta property="og:site_name" content="harpersbazaar">'
+        )
+
+        self.assertEqual(metadata["publication_name"], "Harper's Bazaar")
+        self.assertEqual(metadata["publication_name_source"], "og_site_name")
+
+    def test_extracts_json_ld_publisher_when_open_graph_is_unavailable(self):
+        metadata = extract_page_metadata(
+            """
+            <script type="application/ld+json">
+            {
+              "@type": "NewsArticle",
+              "headline": "Example story",
+              "publisher": {"@type": "Organization", "name": "Robb Report"}
+            }
+            </script>
+            """
+        )
+
+        self.assertEqual(metadata["publication_name"], "Robb Report")
+        self.assertEqual(metadata["publication_name_source"], "json_ld_publisher")
+
+    def test_ignores_generic_publication_metadata(self):
+        metadata = extract_page_metadata(
+            '<meta property="og:site_name" content="News">'
+        )
+
+        self.assertEqual(metadata["publication_name"], "")
+        self.assertEqual(metadata["publication_name_source"], "")
 
     def test_identifies_low_signal_article_intent(self):
         self.assertTrue(has_low_signal_intent("The perfect date night top for GBP 36"))

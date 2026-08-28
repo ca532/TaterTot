@@ -428,6 +428,65 @@ class FinalizationTests(unittest.TestCase):
 
 
 class VerificationTests(unittest.TestCase):
+    def test_verification_uses_page_publication_without_overwriting_existing_name(self):
+        from backend.coverage_actions import verify_job
+
+        store = make_store()
+        create_job(store)
+        store.upsert_discoveries(
+            "job-1",
+            [
+                {"article_url": "https://robbreport.com/story"},
+                {"article_url": "https://example.com/story"},
+            ],
+        )
+        candidates = store.list_candidates("job-1")
+        manual = next(
+            row for row in candidates
+            if row["article_url"] == "https://example.com/story"
+        )
+        store.update_candidates("job-1", [{
+            "url_key": manual["url_key"],
+            "publication": "Team Corrected Name",
+        }])
+        evidence = {
+            "matched_terms": ["Client Name"],
+            "has_backlink": False,
+            "backlink_urls": [],
+            "coverage_type": "mention",
+            "evidence_snippet": "Client Name",
+            "verification_status": "confirmed",
+            "verification_reason": "Exact approved term found in body",
+            "is_relevant": True,
+        }
+
+        def page_for(url):
+            return {
+                "ok": True,
+                "url": url,
+                "title": "Client Name story",
+                "domain": url.split("/")[2],
+                "publication_name": "Robb Report",
+                "published_date": "2026-08-15",
+                "extraction_method": "article_element",
+            }
+
+        with patch(
+            "backend.coverage_actions.fetch_page",
+            side_effect=page_for,
+        ), patch(
+            "backend.coverage_actions.extract_evidence",
+            return_value=evidence,
+        ):
+            verify_job(store, "job-1")
+
+        publications = {
+            row["domain"]: row["publication"]
+            for row in store.list_candidates("job-1")
+        }
+        self.assertEqual(publications["robbreport.com"], "Robb Report")
+        self.assertEqual(publications["example.com"], "Team Corrected Name")
+
     def test_confirmed_out_of_range_article_is_rejected(self):
         from backend.coverage_actions import verify_job
 

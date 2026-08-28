@@ -296,7 +296,11 @@ def verify_job(
 
         domain = page.get("domain") or candidate.get("domain", "")
         title = page.get("title") or candidate.get("search_result_title", "")
-        publication = candidate.get("publication") or publication_name_from_domain(domain)
+        publication = (
+            candidate.get("publication")
+            or page.get("publication_name")
+            or publication_name_from_domain(domain)
+        )
         updates.append({
             "url_key": candidate.get("url_key"),
             "article_url": page.get("url") or candidate.get("article_url", ""),

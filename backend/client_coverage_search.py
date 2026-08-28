@@ -1007,6 +1007,11 @@ def fetch_page(url: str) -> dict:
         "has_article_container": container is not None,
         "article_links": _extract_article_links(container, canonical),
         "published_date": metadata.get("published_date"),
+        "publication_name": metadata.get("publication_name", ""),
+        "publication_name_source": metadata.get(
+            "publication_name_source",
+            "",
+        ),
         "domain": domain_from_url(canonical),
         "country_hint": country_hint,
     }
@@ -1229,7 +1234,10 @@ def run_keyword_coverage_report(
             "search_query": result.get("search_query", ""),
             "article_title": page.get("title") or result.get("title", ""),
             "article_url": page.get("url") or result["article_url"],
-            "publication": publication_name_from_domain(domain),
+            "publication": (
+                page.get("publication_name")
+                or publication_name_from_domain(domain)
+            ),
             "domain": domain,
             "country": "",
             "published_date": str(published or ""),
