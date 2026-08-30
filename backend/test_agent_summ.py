@@ -89,6 +89,17 @@ class ArticleSummarizerTests(unittest.TestCase):
         self.assertGreaterEqual(len(result.summary.split()), 80)
         self.assertNotIn("...", result.summary)
 
+    def test_extractive_fallback_never_exceeds_140_words(self):
+        summarizer = summarizer_with_model(FakeModel([]))
+        oversized = " ".join(["oversized"] * 150) + "."
+        source = " ".join([oversized] + SOURCE_SENTENCES)
+
+        summary = summarizer._build_extractive_summary(source)
+
+        self.assertGreaterEqual(len(summary.split()), 80)
+        self.assertLessEqual(len(summary.split()), 140)
+        self.assertNotIn("oversized", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

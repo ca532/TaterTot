@@ -115,6 +115,7 @@ class GoogleSheetsDB:
                 'published_date_source', 'matched_keywords', 'canonical_url', 'topic',
                 'classifier_relevant', 'classifier_category',
                 'classifier_evidence', 'classifier_reason',
+                'retrieval_score', 'selection_disposition',
             )
             for column, header in enumerate(audit_headers, start=11):
                 if len(headers) < column or not headers[column - 1]:
@@ -143,6 +144,8 @@ class GoogleSheetsDB:
                 article.get('classifier_category', ''),
                 article.get('classifier_evidence', '[]'),
                 article.get('classifier_reason', ''),
+                article.get('retrieval_score', article.get('score', 0.0)),
+                article.get('selection_disposition', ''),
             ])
         
         # Append to sheet (keeps history)

@@ -992,6 +992,7 @@ class CustomArticleCollector:
         print(
             "[ARTICLE_CLASSIFICATION] "
             f"relevant={decision.relevant} category={decision.category} "
+            f"retrieval_score={candidate.relevance_score:.1f} "
             f"title={candidate.title!r} evidence={decision.luxury_evidence} "
             f"reason={decision.reason}"
         )

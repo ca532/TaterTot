@@ -137,6 +137,9 @@ jobs:
           MAX_ROUNDUP_ARTICLES: "60"
           SOFT_PUBLICATION_CAP: "5"
           HARD_PUBLICATION_CAP: "10"
+          MAX_RESERVE_ARTICLES: "10"
+          MAX_GENERAL_ROYAL_ARTICLES: "8"
+          MAX_LIFESTYLE_RESERVE_ARTICLES: "5"
 
 
       - name: Find PDF and Get Date

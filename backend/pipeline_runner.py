@@ -13,6 +13,7 @@ from google_storage import GoogleSheetsDB
 from roundup_selection import (
     MIN_ROUNDUP_ARTICLES,
     TARGET_ROUNDUP_ARTICLES,
+    article_disposition,
     select_roundup_articles,
 )
 
@@ -149,16 +150,10 @@ class PipelineRunner:
             qualified_count = len(articles)
             articles = select_roundup_articles(articles)
             print(
-                f"Selected {len(articles)}/{qualified_count} qualified articles "
-                f"for the roundup (minimum={MIN_ROUNDUP_ARTICLES}, "
-                f"target={TARGET_ROUNDUP_ARTICLES})"
+                f"Prepared {len(articles)}/{qualified_count} retained candidates "
+                f"for summarization (successful-output target="
+                f"{TARGET_ROUNDUP_ARTICLES})"
             )
-            if len(articles) < MIN_ROUNDUP_ARTICLES:
-                print(
-                    "WARNING: The qualified source pool could not meet the "
-                    f"{MIN_ROUNDUP_ARTICLES}-article minimum without lowering "
-                    "quality requirements."
-                )
             
             print(f"\n✅ Collected {len(articles)} total articles")
             
@@ -184,6 +179,7 @@ class PipelineRunner:
                     'author': author,      # Placeholder
                     'summary': '',            # Will be filled by summarizer
                     'score': round(score, 2),
+                    'retrieval_score': round(score, 2),
                     'classifier_relevant': getattr(article, 'classifier_relevant', False),
                     'classifier_category': getattr(article, 'classifier_category', ''),
                     'classifier_evidence': json.dumps(
@@ -191,6 +187,7 @@ class PipelineRunner:
                         ensure_ascii=False,
                     ),
                     'classifier_reason': getattr(article, 'classifier_reason', ''),
+                    'selection_disposition': article_disposition(article),
                 }
                 articles_data.append(article_dict)
             
@@ -203,9 +200,7 @@ class PipelineRunner:
             raise
 
     def run_summarization(self, articles_data):
-        """
-        Summarize articles and extract authors using AgentSumm
-        """
+        """Summarize candidates until the successful-output target is reached."""
         print("\n" + "="*60)
         print("STEP 2: SUMMARIZATION & AUTHOR EXTRACTION")
         print("="*60 + "\n")
@@ -217,7 +212,14 @@ class PipelineRunner:
         summarized_articles = []
         
         for idx, article in enumerate(articles_data):
-            print(f"[{idx+1}/{len(articles_data)}] Processing: {article['title'][:60]}...")
+            if len(summarized_articles) >= TARGET_ROUNDUP_ARTICLES:
+                break
+
+            disposition = article.get('selection_disposition', 'primary')
+            print(
+                f"[{idx+1}/{len(articles_data)}] Processing "
+                f"({disposition}): {article['title'][:60]}..."
+            )
             
             try:
                 # Use AgentSumm to summarize AND extract author
@@ -247,6 +249,17 @@ class PipelineRunner:
                 print(f"    ❌ Error: {str(e)[:60]}")
         
         print(f"\n✅ Summarized {len(summarized_articles)} articles")
+        successful_count = len(summarized_articles)
+        if successful_count < MIN_ROUNDUP_ARTICLES:
+            print(
+                "WARNING: Could not reach the "
+                f"{MIN_ROUNDUP_ARTICLES}-article minimum."
+            )
+        elif successful_count < TARGET_ROUNDUP_ARTICLES:
+            print(
+                "NOTICE: Minimum reached, but the "
+                f"{TARGET_ROUNDUP_ARTICLES}-article target was not met."
+            )
         return summarized_articles
         
     def generate_pdf(self, articles_data):

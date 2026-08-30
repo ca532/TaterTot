@@ -21,7 +21,7 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
             "category": "jewelry_product",
-            "evidence": ["Boucheron high-jewelry collection"],
+            "evidence": ["Boucheron introduced its latest collection."],
         })
         decision = classifier.classify(
             title="Boucheron launches a high-jewelry collection",
@@ -31,10 +31,11 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         self.assertTrue(decision.relevant)
         self.assertEqual("jewelry_product", decision.category)
         self.assertEqual(
-            ["Boucheron high-jewelry collection"], decision.luxury_evidence
+            ["Boucheron introduced its latest collection."],
+            decision.luxury_evidence,
         )
 
-    def test_accepts_relevant_category_without_evidence_and_warns(self):
+    def test_rejects_relevant_category_without_grounded_evidence(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
             "category": "luxury_brand",
@@ -47,10 +48,10 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
                 publication="Example",
                 article_text="A luxury house announced its appointment.",
             )
-        self.assertTrue(decision.relevant)
-        self.assertEqual([], decision.luxury_evidence)
+        self.assertFalse(decision.relevant)
+        self.assertEqual("irrelevant", decision.category)
         self.assertIn("[CLASSIFIER_EVIDENCE_WARNING]", output.getvalue())
-        self.assertIn("decision retained", output.getvalue())
+        self.assertIn("[CLASSIFIER_POLICY_VETO]", output.getvalue())
 
     def test_rejects_irrelevant_category(self):
         classifier = ArticleRelevanceClassifier()
@@ -70,7 +71,7 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         classifier.model = FakeModel({
             "category": "luxury_product",
             "evidence": [
-                "The article substantially covers Chanel bag trends and craftsmanship."
+                "Chanel bags and their craftsmanship lead the fall trend report."
             ],
         })
         decision = classifier.classify(
@@ -81,12 +82,12 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         self.assertTrue(decision.relevant)
         self.assertEqual("luxury_product", decision.category)
 
-    def test_vetoes_royal_wardrobe_without_concrete_wardrobe_evidence(self):
+    def test_routes_royal_news_without_wardrobe_evidence_to_reserve(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
             "category": "royal_wardrobe",
             "evidence": [
-                "Queen Camilla went shopping with her granddaughter."
+                "Queen Camilla spent the afternoon shopping with her granddaughter."
             ],
         })
         output = StringIO()
@@ -94,18 +95,20 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
             decision = classifier.classify(
                 title="Queen Camilla goes shopping with her granddaughter",
                 publication="Example",
-                article_text="The pair spent the afternoon shopping together.",
+                article_text=(
+                    "Queen Camilla spent the afternoon shopping with her "
+                    "granddaughter."
+                ),
             )
-        self.assertFalse(decision.relevant)
-        self.assertEqual("irrelevant", decision.category)
-        self.assertIn("[CLASSIFIER_POLICY_VETO]", output.getvalue())
+        self.assertTrue(decision.relevant)
+        self.assertEqual("general_royal_news", decision.category)
 
     def test_accepts_royal_wardrobe_with_concrete_evidence(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
             "category": "royal_wardrobe",
             "evidence": [
-                "Queen Mary wore wide-leg jeans for her return to work."
+                "Queen Mary wore wide-leg jeans for the engagement."
             ],
         })
         decision = classifier.classify(
@@ -114,6 +117,52 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
             article_text="Queen Mary wore wide-leg jeans for the engagement.",
         )
         self.assertTrue(decision.relevant)
+
+    def test_routes_high_street_luxury_product_to_reserve(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "luxury_product",
+            "evidence": ["The H&M blouse looks luxe and costs under £50."],
+        })
+        decision = classifier.classify(
+            title="H&M blouse looks luxe for autumn",
+            publication="Example",
+            article_text="The H&M blouse looks luxe and costs under £50.",
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("high_street_fashion", decision.category)
+
+    def test_routes_mass_consumer_collection_to_reserve(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "luxury_product",
+            "evidence": [
+                "Bath & Body Works introduced its new Reserve collection."
+            ],
+        })
+        decision = classifier.classify(
+            title="Bath & Body Works introduces Reserve",
+            publication="Example",
+            article_text=(
+                "Bath & Body Works introduced its new Reserve collection."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("consumer_lifestyle", decision.category)
+
+    def test_rejects_invented_evidence(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "royal_wardrobe",
+            "evidence": ["The king wore a bespoke Dior uniform."],
+        })
+        decision = classifier.classify(
+            title="The king issues a statement",
+            publication="Example",
+            article_text="The king issued a statement from the palace today.",
+        )
+        self.assertFalse(decision.relevant)
+        self.assertEqual("irrelevant", decision.category)
 
 
 if __name__ == "__main__":

@@ -156,8 +156,10 @@ class ArticleSummarizer:
             if any(marker in sentence.lower() for marker in debris):
                 continue
             sentence_words = len(sentence.split())
-            if total_words >= 80 and total_words + sentence_words > 140:
-                break
+            # Skip sentences that cannot fit instead of allowing one long
+            # sentence to push the fallback beyond the validation ceiling.
+            if sentence_words > 140 or total_words + sentence_words > 140:
+                continue
             selected.append(sentence)
             total_words += sentence_words
             if total_words >= 80:
