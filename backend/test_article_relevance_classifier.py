@@ -150,6 +150,151 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         self.assertTrue(decision.relevant)
         self.assertEqual("consumer_lifestyle", decision.category)
 
+    def test_rejects_non_monarchy_royal_organization(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "general_royal_news",
+            "evidence": [
+                "The Royal Navy spent three days tracking Russian vessels."
+            ],
+        })
+        decision = classifier.classify(
+            title="Royal Navy tracks Russian vessels in UK waters",
+            publication="The Guardian",
+            article_text=(
+                "The Royal Navy spent three days tracking Russian vessels."
+            ),
+        )
+        self.assertFalse(decision.relevant)
+        self.assertEqual("irrelevant", decision.category)
+
+    def test_rejects_royal_sounding_location_without_monarchy_context(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "general_royal_news",
+            "evidence": [
+                "Prince Rupert Harbour is expanding its Canadian trade capacity."
+            ],
+        })
+        decision = classifier.classify(
+            title="Prince Rupert becomes central to Canadian trade",
+            publication="Example",
+            article_text=(
+                "Prince Rupert Harbour is expanding its Canadian trade capacity."
+            ),
+        )
+        self.assertFalse(decision.relevant)
+        self.assertEqual("irrelevant", decision.category)
+
+    def test_accepts_general_royal_news_with_monarchy_context(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "general_royal_news",
+            "evidence": [
+                "King Haakon ascended the throne following his father's death."
+            ],
+        })
+        decision = classifier.classify(
+            title="King Haakon begins his reign",
+            publication="Example",
+            article_text=(
+                "King Haakon ascended the throne following his father's death."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("general_royal_news", decision.category)
+
+    def test_accepts_single_princess_story_with_person_context(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "general_royal_news",
+            "evidence": [
+                "Princess Anne visited the hospital during an official visit."
+            ],
+        })
+        decision = classifier.classify(
+            title="Princess Anne visits a London hospital",
+            publication="Example",
+            article_text=(
+                "Princess Anne visited the hospital during an official visit."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("general_royal_news", decision.category)
+
+    def test_promotes_material_royal_jewelry_subject(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "general_royal_news",
+            "evidence": [
+                "The Queen owned the diamond brooch for several decades."
+            ],
+        })
+        decision = classifier.classify(
+            title="Royal diamond brooch heads to auction",
+            publication="Example",
+            article_text=(
+                "The Queen owned the diamond brooch for several decades. "
+                "The jewel will be offered at auction in London."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("royal_jewelry", decision.category)
+
+    def test_promotes_material_non_royal_jewelry_subject(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "consumer_lifestyle",
+            "evidence": [
+                "Customs officers confiscated the counterfeit jewelry shipment."
+            ],
+        })
+        decision = classifier.classify(
+            title="Customs confiscates counterfeit jewelry",
+            publication="Example",
+            article_text=(
+                "Customs officers confiscated the counterfeit jewelry shipment."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("jewelry_product", decision.category)
+
+    def test_does_not_promote_metaphorical_gemstone_language(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "consumer_lifestyle",
+            "evidence": [
+                "The article describes a pearl of wisdom for home cooks."
+            ],
+        })
+        decision = classifier.classify(
+            title="A pearl of wisdom for home cooks",
+            publication="Example",
+            article_text=(
+                "The article describes a pearl of wisdom for home cooks."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("consumer_lifestyle", decision.category)
+
+    def test_routes_fashion_story_out_of_beauty_category(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "general_beauty_trend",
+            "evidence": [
+                "The designer is growing fabric to create her own dress."
+            ],
+        })
+        decision = classifier.classify(
+            title="The woman growing her own dress",
+            publication="The Guardian",
+            article_text=(
+                "The designer is growing fabric to create her own dress."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("consumer_lifestyle", decision.category)
+
     def test_rejects_invented_evidence(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({

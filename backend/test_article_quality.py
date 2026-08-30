@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from article_quality import (
+    clean_article_text,
     extract_page_metadata,
     has_low_signal_intent,
     keyword_matches,
@@ -170,6 +171,17 @@ class ArticleQualityTests(unittest.TestCase):
         self.assertIn("diamonds and rock crystal", cleaned)
         self.assertNotIn("Click here", cleaned)
         self.assertNotIn("All Rights Reserved", cleaned)
+
+    def test_repairs_common_summary_joining_artifacts(self):
+        cleaned = clean_article_text(
+            "Some collections begin with sketches.,This one did not. "
+            "Growth.Pandora expanded the The collection."
+        )
+        self.assertEqual(
+            "Some collections begin with sketches. This one did not. "
+            "Growth. Pandora expanded the collection.",
+            cleaned,
+        )
 
 
 if __name__ == "__main__":

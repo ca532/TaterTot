@@ -7,12 +7,42 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from datetime import datetime
 import json
+from pathlib import Path
 from typing import List, Dict
 from xml.sax.saxutils import escape, quoteattr
+
+
+FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+ROUNDUP_FONT = "RoundupMontserrat"
+ROUNDUP_FONT_BOLD = "RoundupMontserratMedium"
+ROUNDUP_FONT_LIGHT = "RoundupMontserratLight"
+
+
+def _register_fonts():
+    if ROUNDUP_FONT in pdfmetrics.getRegisteredFontNames():
+        return
+    pdfmetrics.registerFont(
+        TTFont(ROUNDUP_FONT, FONT_DIR / "Montserrat-Regular.ttf")
+    )
+    pdfmetrics.registerFont(
+        TTFont(ROUNDUP_FONT_BOLD, FONT_DIR / "Montserrat-Medium.ttf")
+    )
+    pdfmetrics.registerFont(
+        TTFont(ROUNDUP_FONT_LIGHT, FONT_DIR / "Montserrat-Light.ttf")
+    )
+    pdfmetrics.registerFontFamily(
+        ROUNDUP_FONT,
+        normal=ROUNDUP_FONT,
+        bold=ROUNDUP_FONT_BOLD,
+        italic=ROUNDUP_FONT_LIGHT,
+        boldItalic=ROUNDUP_FONT_BOLD,
+    )
+
 
 class weeklyRoundupPDF:
     def __init__(self, topic_name: str = "", lookback_days: int = 14):
         """Initialize PDF generator with styling"""
+        _register_fonts()
         self.styles = getSampleStyleSheet()
         self.topic_name = (topic_name or "").strip()
         self.lookback_days = max(1, int(lookback_days or 14))
@@ -24,7 +54,8 @@ class weeklyRoundupPDF:
             fontSize=24,
             textColor='#2C3E50',
             spaceAfter=30,
-            alignment=TA_CENTER
+            alignment=TA_CENTER,
+            fontName=ROUNDUP_FONT_BOLD,
         )
         
         self.header_style = ParagraphStyle(
@@ -33,7 +64,8 @@ class weeklyRoundupPDF:
             fontSize=14,
             textColor='#34495E',
             spaceAfter=12,
-            spaceBefore=20
+            spaceBefore=20,
+            fontName=ROUNDUP_FONT_BOLD,
         )
         
         self.publication_style = ParagraphStyle(
@@ -43,7 +75,7 @@ class weeklyRoundupPDF:
             textColor='#2C3E50',
             spaceAfter=8,
             spaceBefore=16,
-            fontName='Helvetica-Bold'
+            fontName=ROUNDUP_FONT_BOLD,
         )
         
         self.article_style = ParagraphStyle(
@@ -53,7 +85,8 @@ class weeklyRoundupPDF:
             textColor='#2C3E50',
             spaceAfter=6,
             leading=14,
-            leftIndent=10
+            leftIndent=10,
+            fontName=ROUNDUP_FONT,
         )
         
         self.meta_style = ParagraphStyle(
@@ -63,7 +96,7 @@ class weeklyRoundupPDF:
             textColor='#7F8C8D',
             spaceAfter=12,
             leftIndent=10,
-            fontName='Helvetica-Oblique'
+            fontName=ROUNDUP_FONT_LIGHT,
         )
 
     def _format_published_date(self, raw_date: str) -> str:
@@ -134,7 +167,7 @@ class weeklyRoundupPDF:
         # Publication summary
         story.append(Paragraph("Publications Covered", self.header_style))
         for pub, items in sorted(by_publication.items(), key=lambda x: len(x[1]), reverse=True):
-            pub_line = f"• <b>{pub}</b>: {len(items)} article(s)"
+            pub_line = f"• <b>{escape(str(pub))}</b>: {len(items)} article(s)"
             story.append(Paragraph(pub_line, self.article_style))
         
         story.append(Spacer(1, 0.4 * inch))

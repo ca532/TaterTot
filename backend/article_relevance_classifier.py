@@ -147,10 +147,48 @@ GARMENT_TERMS = {
     "jeans", "tie", "tartan", "kilt", "uniform", "couture", "designer",
     "wardrobe", "outfit", "clothing", "garment",
 }
+NON_MONARCHY_ROYAL_PHRASES = {
+    "royal navy", "royal air force", "royal marines", "royal society",
+    "royal academy", "royal opera", "royal caribbean", "royal mail",
+}
+UNAMBIGUOUS_MONARCHY_TERMS = {
+    "king", "queen", "duke", "duchess", "monarch", "monarchy",
+    "throne", "succession", "coronation", "sovereign", "regent",
+    "royal family", "royal household", "royal court", "state visit",
+    "crown prince", "crown princess",
+}
+ROYAL_PERSON_TITLES = {"prince", "princess"}
+ROYAL_PERSON_CONTEXT_TERMS = {
+    "said", "announced", "attended", "visited", "met", "joined",
+    "married", "wedding", "husband", "wife", "daughter", "son",
+    "mother", "father", "family", "health", "hospital", "died",
+    "death", "born", "reign", "engagement", "official visit",
+}
+FASHION_DESIGN_TERMS = GARMENT_TERMS | {
+    "fashion", "textile", "fabric", "craftsmanship", "sustainable fashion",
+}
 JEWELRY_TERMS = {
-    "jewel", "jewelry", "jewellery", "diamond", "gemstone", "tiara",
-    "brooch", "necklace", "earring", "bracelet", "ring", "regalia",
-    "sapphire", "emerald", "ruby", "pearl",
+    "jewel", "jewels", "jewelry", "jewellery", "diamond", "diamonds",
+    "gemstone", "gemstones", "tiara", "tiaras", "brooch", "brooches",
+    "necklace", "necklaces", "earring", "earrings", "bracelet",
+    "bracelets", "ring", "rings", "pendant", "pendants", "bangle",
+    "bangles", "choker", "chokers", "chain", "chains", "watch",
+    "watches", "timepiece", "timepieces", "regalia", "sapphire",
+    "sapphires", "emerald", "emeralds", "ruby", "rubies", "pearl",
+    "pearls", "platinum", "carat", "carats", "karat", "karats",
+}
+JEWELRY_PROMOTION_CATEGORIES = {
+    "general_royal_news", "celebrity_style", "general_beauty_trend",
+    "consumer_lifestyle",
+}
+JEWELRY_CONTEXT_TERMS = {
+    "jewel", "jewels", "jewelry", "jewellery", "jeweler", "jeweller",
+    "brooch", "brooches", "necklace", "necklaces", "earring", "earrings",
+    "bracelet", "bracelets", "ring", "rings", "pendant", "pendants",
+    "bangle", "bangles", "choker", "chokers", "watch", "watches",
+    "timepiece", "timepieces", "carat", "carats", "karat", "karats",
+    "high jewelry", "high jewellery", "fine jewelry", "fine jewellery",
+    "set with", "set in", "mounted", "auction",
 }
 BUSINESS_TERMS = {
     "revenue", "sales", "earnings", "profit", "acquisition", "investment",
@@ -292,6 +330,66 @@ class ArticleRelevanceClassifier:
                 "irrelevant",
                 evidence,
                 "Classifier evidence was not copied from the article",
+            )
+
+        subject_text = f"{title} {evidence_text}"
+
+        # Promote reserve classifications only when both the headline and the
+        # supplied article establish jewelry as a material subject. This avoids
+        # hard-coding brands or stories while rejecting metaphorical matches.
+        if (
+            decision.category in JEWELRY_PROMOTION_CATEGORIES
+            and _contains_any(title, JEWELRY_TERMS)
+            and _contains_any(article_text, JEWELRY_CONTEXT_TERMS)
+        ):
+            promoted_category = (
+                "royal_jewelry"
+                if _contains_any(complete_text, UNAMBIGUOUS_MONARCHY_TERMS)
+                else "jewelry_product"
+            )
+            decision = _decision(
+                promoted_category,
+                evidence,
+                "Headline and article establish jewelry as the material subject",
+            )
+
+        # Validate that general royal news concerns monarchy rather than an
+        # organization, location, company, or other use of a royal title.
+        if decision.category == "general_royal_news":
+            if _contains_any(subject_text, NON_MONARCHY_ROYAL_PHRASES):
+                return _decision(
+                    "irrelevant",
+                    evidence,
+                    "Royal refers to a non-monarchy organization",
+                )
+            has_person_context = (
+                _contains_any(subject_text, ROYAL_PERSON_TITLES)
+                and _contains_any(subject_text, ROYAL_PERSON_CONTEXT_TERMS)
+            )
+            if (
+                not _contains_any(subject_text, UNAMBIGUOUS_MONARCHY_TERMS)
+                and not has_person_context
+            ):
+                return _decision(
+                    "irrelevant",
+                    evidence,
+                    "No concrete monarchy subject",
+                )
+
+        # Preserve fashion coverage that Qwen mistakenly labels as beauty.
+        if decision.category == "general_beauty_trend" and not _contains_any(
+            f"{title} {evidence_text}", BEAUTY_TERMS
+        ):
+            if _contains_any(complete_text, FASHION_DESIGN_TERMS):
+                return _decision(
+                    "consumer_lifestyle",
+                    evidence,
+                    "Fashion or garment coverage without a beauty focus",
+                )
+            return _decision(
+                "irrelevant",
+                evidence,
+                "No concrete beauty or fashion subject",
             )
 
         if decision.category == "royal_wardrobe" and not _contains_any(

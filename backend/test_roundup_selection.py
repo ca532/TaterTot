@@ -61,7 +61,7 @@ class RoundupSelectionTests(unittest.TestCase):
             counts[article.publication] = counts.get(article.publication, 0) + 1
         self.assertEqual({10}, set(counts.values()))
 
-    def test_primary_articles_precede_capped_royal_reserves(self):
+    def test_primary_articles_precede_buffered_royal_reserves(self):
         primary = make_articles(9, 5)
         reserve = make_articles(
             10,
@@ -70,7 +70,7 @@ class RoundupSelectionTests(unittest.TestCase):
             prefix="Royal",
         )
         selected = select_roundup_articles(primary + reserve)
-        self.assertEqual(53, len(selected))
+        self.assertEqual(55, len(selected))
         self.assertTrue(all(
             article.classifier_category == "jewelry_product"
             for article in selected[:45]
@@ -80,7 +80,7 @@ class RoundupSelectionTests(unittest.TestCase):
             for article in selected[45:]
         ))
 
-    def test_lifestyle_reserve_group_is_capped_at_five(self):
+    def test_lifestyle_reserve_queue_includes_failure_replacements(self):
         selected = select_roundup_articles(
             make_articles(
                 10,
@@ -89,7 +89,30 @@ class RoundupSelectionTests(unittest.TestCase):
                 prefix="Lifestyle",
             )
         )
-        self.assertEqual(5, len(selected))
+        self.assertEqual(10, len(selected))
+
+    def test_short_primary_pool_builds_sixty_candidate_attempts(self):
+        primary = make_articles(29, 1)
+        royal_reserve = make_articles(
+            18,
+            1,
+            category="general_royal_news",
+            prefix="Royal Reserve",
+        )
+        lifestyle_reserve = make_articles(
+            22,
+            1,
+            category="celebrity_style",
+            prefix="Lifestyle Reserve",
+        )
+        selected = select_roundup_articles(
+            primary + royal_reserve + lifestyle_reserve
+        )
+        self.assertEqual(60, len(selected))
+        self.assertTrue(all(
+            article.classifier_category == "jewelry_product"
+            for article in selected[:29]
+        ))
 
 
 if __name__ == "__main__":

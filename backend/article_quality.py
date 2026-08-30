@@ -106,6 +106,11 @@ def clean_article_text(text: str) -> str:
     value = re.sub(r"\b(?:br|gt|lt)&?;?>", " ", value, flags=re.I)
     value = re.sub(r"[ \t]+", " ", value)
     value = re.sub(r"\n{3,}", "\n\n", value)
+    value = re.sub(r"\.,(?=[A-Z])", ". ", value)
+    value = re.sub(r"(?<=[.!?])(?=[A-Z][a-z]{3})", " ", value)
+    value = re.sub(r"\bthe\s+the\b", "the", value, flags=re.I)
+    value = re.sub(r"\s+([,.;:!?])", r"\1", value)
+    value = re.sub(r" {2,}", " ", value)
     return value.strip()
 
 

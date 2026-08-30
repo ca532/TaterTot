@@ -18,6 +18,7 @@ MAX_ROUNDUP_CANDIDATES = int(os.getenv("MAX_ROUNDUP_ARTICLES", "60"))
 SOFT_PUBLICATION_CAP = int(os.getenv("SOFT_PUBLICATION_CAP", "5"))
 HARD_PUBLICATION_CAP = int(os.getenv("HARD_PUBLICATION_CAP", "10"))
 MAX_RESERVE_ARTICLES = int(os.getenv("MAX_RESERVE_ARTICLES", "10"))
+SUMMARY_FAILURE_BUFFER = int(os.getenv("SUMMARY_FAILURE_BUFFER", "10"))
 MAX_GENERAL_ROYAL_ARTICLES = int(os.getenv("MAX_GENERAL_ROYAL_ARTICLES", "8"))
 MAX_LIFESTYLE_RESERVE_ARTICLES = int(
     os.getenv("MAX_LIFESTYLE_RESERVE_ARTICLES", "5")
@@ -137,12 +138,14 @@ def select_roundup_articles(articles: Iterable[ArticleT]) -> List[ArticleT]:
             group = _reserve_group(article)
             if (
                 group == "general_royal"
-                and reserve_group_counts[group] >= MAX_GENERAL_ROYAL_ARTICLES
+                and reserve_group_counts[group]
+                >= MAX_GENERAL_ROYAL_ARTICLES + SUMMARY_FAILURE_BUFFER
             ):
                 return False
             if (
                 group == "lifestyle"
-                and reserve_group_counts[group] >= MAX_LIFESTYLE_RESERVE_ARTICLES
+                and reserve_group_counts[group]
+                >= MAX_LIFESTYLE_RESERVE_ARTICLES + SUMMARY_FAILURE_BUFFER
             ):
                 return False
         return True
@@ -191,9 +194,13 @@ def select_roundup_articles(articles: Iterable[ArticleT]) -> List[ArticleT]:
     # as higher-quality summary-failure replacements before reserves are tried.
     add_diverse(primary, MAX_ROUNDUP_CANDIDATES, reserve_article=False)
 
+    reserve_attempt_budget = max(
+        MAX_RESERVE_ARTICLES,
+        TARGET_ROUNDUP_ARTICLES - len(selected) + SUMMARY_FAILURE_BUFFER,
+    )
     reserve_limit = min(
         MAX_ROUNDUP_CANDIDATES,
-        len(selected) + MAX_RESERVE_ARTICLES,
+        len(selected) + reserve_attempt_budget,
     )
     add_diverse(reserve, reserve_limit, reserve_article=True)
 
