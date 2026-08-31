@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from source_health_check import (
+    apply_source_availability_policy,
     apply_rss_result,
     build_report,
     choose_sitemap_replacement,
@@ -12,6 +13,7 @@ from source_health_check import (
     process_source,
     save_source_records,
     same_domain,
+    should_check_source,
     validate_rss,
     validate_sitemap,
 )
@@ -66,7 +68,7 @@ def sitemap_result(url, passed=True):
 
 
 class SourceHealthTests(unittest.TestCase):
-    def test_replacement_requires_exactly_one_passing_candidate(self):
+    def test_replacement_selects_one_or_a_clear_high_confidence_winner(self):
         one, reason = choose_sitemap_replacement([
             sitemap_result("https://example.com/news.xml"),
             sitemap_result("https://example.com/missing.xml", passed=False),
@@ -76,10 +78,19 @@ class SourceHealthTests(unittest.TestCase):
 
         multiple, reason = choose_sitemap_replacement([
             sitemap_result("https://example.com/news.xml"),
-            sitemap_result("https://example.com/index.xml"),
+            sitemap_result("https://example.com/news-two.xml"),
         ])
         self.assertIsNone(multiple)
-        self.assertEqual("multiple_valid_replacements", reason)
+        self.assertEqual("multiple_ambiguous_replacements", reason)
+
+        declared = sitemap_result("https://example.com/current.xml")
+        declared["declared_in_robots"] = True
+        selected, reason = choose_sitemap_replacement([
+            declared,
+            sitemap_result("https://example.com/other.xml"),
+        ])
+        self.assertEqual("https://example.com/current.xml", selected)
+        self.assertEqual("highest_confidence_replacement", reason)
 
     def test_same_domain_allows_subdomains_but_not_other_domains(self):
         self.assertTrue(same_domain("https://news.example.com/a", "https://example.com"))
@@ -140,6 +151,18 @@ class SourceHealthTests(unittest.TestCase):
                 self.assertIsNone(action)
                 self.assertEqual("TRUE", record["rss_active"])
                 self.assertEqual("0", record["rss_permanent_failures"])
+
+    def test_reactivates_an_rss_feed_disabled_by_the_diagnostic(self):
+        record = {
+            "rss_active": "FALSE",
+            "rss_permanent_failures": "2",
+            "rss_disabled_reason": "http_404",
+        }
+        result = {"state": "healthy", "reason": "ok"}
+        action = apply_rss_result(record, result)
+        self.assertEqual("rss_reactivated", action["type"])
+        self.assertEqual("TRUE", record["rss_active"])
+        self.assertEqual("0", record["rss_permanent_failures"])
 
     @patch("source_health_check.extract_sample_article")
     def test_feed_without_recent_entries_is_stale_not_disabled(self, sample):
@@ -221,7 +244,7 @@ class SourceHealthTests(unittest.TestCase):
 
         worksheet = Worksheet()
         headers = [
-            "publication", "formula_column", "sitemap_url", "rss_active",
+            "publication", "formula_column", "active", "sitemap_url", "rss_active",
             "sitemap_health_status", "rss_health_status",
             "rss_permanent_failures", "rss_disabled_reason",
             "source_last_checked_at",
@@ -247,6 +270,7 @@ class SourceHealthTests(unittest.TestCase):
         discover.return_value = (
             "https://example.com/robots.txt",
             ["https://example.com/news-sitemap.xml"],
+            {"https://example.com/news-sitemap.xml"},
         )
         validate.side_effect = lambda _session, url, *_args: sitemap_result(
             url, passed=url.endswith("news-sitemap.xml")
@@ -266,6 +290,69 @@ class SourceHealthTests(unittest.TestCase):
             result["sitemap"]["replacement_search"]["configuration_updated"]
         )
 
+    def test_healthy_rss_keeps_source_usable_when_sitemap_is_broken(self):
+        record = {"active": "TRUE", "source_permanent_failures": "1"}
+        status = apply_source_availability_policy(
+            record,
+            {"state": "permanent_error"},
+            [{"state": "healthy", "active_after": True}],
+            "Example", [], [],
+        )
+        self.assertEqual("degraded", status)
+        self.assertEqual("0", record["source_permanent_failures"])
+        self.assertEqual("TRUE", record["active"])
+
+    def test_source_is_quarantined_after_two_permanent_failures(self):
+        record = {
+            "active": "TRUE",
+            "base_url": "https://example.com",
+            "source_permanent_failures": "1",
+        }
+        actions = []
+        attention = []
+        status = apply_source_availability_policy(
+            record, {"state": "permanent_error"}, [], "Example",
+            actions, attention,
+        )
+        self.assertEqual("genuinely_unresolved", status)
+        self.assertEqual("FALSE", record["active"])
+        self.assertEqual("TRUE", record["source_health_managed"])
+        self.assertEqual("source_quarantined", actions[0]["type"])
+        self.assertTrue(attention[0]["unresolved"])
+
+    def test_temporary_failure_never_quarantines_source(self):
+        record = {
+            "active": "TRUE", "source_permanent_failures": "1"
+        }
+        status = apply_source_availability_policy(
+            record, {"state": "temporary_error"}, [], "Example", [], []
+        )
+        self.assertEqual("retry_pending", status)
+        self.assertEqual("TRUE", record["active"])
+        self.assertEqual("0", record["source_permanent_failures"])
+
+    def test_managed_source_reactivates_but_manual_inactive_source_is_skipped(self):
+        managed = {
+            "active": "FALSE",
+            "base_url": "https://example.com",
+            "source_health_managed": "TRUE",
+            "source_permanent_failures": "2",
+        }
+        manual = {
+            "active": "FALSE",
+            "base_url": "https://example.com",
+            "source_health_managed": "FALSE",
+        }
+        self.assertTrue(should_check_source(managed))
+        self.assertFalse(should_check_source(manual))
+        actions = []
+        status = apply_source_availability_policy(
+            managed, {"state": "healthy"}, [], "Example", actions, []
+        )
+        self.assertEqual("repaired", status)
+        self.assertEqual("TRUE", managed["active"])
+        self.assertEqual("source_reactivated", actions[0]["type"])
+
     def test_report_is_json_serializable_and_markdown_has_sections(self):
         source = {
             "list_name": "Luxury",
@@ -282,7 +369,7 @@ class SourceHealthTests(unittest.TestCase):
         }
         report = build_report([source], CHECKED_AT, False, "Source Lists")
         encoded = json.dumps(report)
-        self.assertIn('"schema_version": 1', encoded)
+        self.assertIn('"schema_version": 2', encoded)
         markdown = markdown_report(report)
         self.assertIn("# Source Health Diagnostic", markdown)
         self.assertIn("## Source status", markdown)
