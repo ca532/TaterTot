@@ -24,7 +24,7 @@ from newspaper import Article
 from article_quality import clean_article_text, validate_article_content
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SOURCE_SHEET = os.getenv("SOURCE_CONFIG_SHEET", "Source Lists")
 HISTORY_SHEET = os.getenv("SOURCE_HEALTH_HISTORY_SHEET", "Source Health History")
 REQUEST_TIMEOUT = int(os.getenv("SOURCE_HEALTH_TIMEOUT", "12"))
@@ -855,12 +855,7 @@ def process_source(
     }
 
 
-def build_report(
-    sources: list[dict[str, Any]],
-    checked_at: datetime,
-    apply_fixes: bool,
-    worksheet_name: str,
-) -> dict[str, Any]:
+def summarize_sources(sources: list[dict[str, Any]]) -> dict[str, int]:
     actions = [action for source in sources for action in source["actions"]]
     unresolved = []
     for source in sources:
@@ -868,7 +863,7 @@ def build_report(
             if item.get("unresolved"):
                 unresolved.append({"publication": source["publication"], **item})
     rss_feeds = [rss for source in sources for rss in source["rss_feeds"]]
-    summary = {
+    return {
         "sources_checked": len(sources),
         "healthy_sources": sum(
             source["overall_status"] == "healthy" for source in sources
@@ -925,6 +920,57 @@ def build_report(
             action["type"] == "rss_disabled" for action in actions
         ),
     }
+
+
+def build_report(
+    sources: list[dict[str, Any]],
+    checked_at: datetime,
+    apply_fixes: bool,
+    worksheet_name: str,
+) -> dict[str, Any]:
+    actions = [action for source in sources for action in source["actions"]]
+    unresolved = []
+    for source in sources:
+        for item in source["attention"]:
+            if item.get("unresolved"):
+                unresolved.append({"publication": source["publication"], **item})
+    summary = summarize_sources(sources)
+    topic_groups: dict[str, list[dict[str, Any]]] = {}
+    for source in sources:
+        topic = str(source.get("list_name") or "").strip() or "Unassigned"
+        topic_groups.setdefault(topic, []).append(source)
+
+    topics = []
+    for topic, topic_sources in sorted(topic_groups.items()):
+        topic_actions = [
+            action
+            for source in topic_sources
+            for action in source["actions"]
+        ]
+        topic_unresolved = [
+            {"publication": source["publication"], **item}
+            for source in topic_sources
+            for item in source["attention"]
+            if item.get("unresolved")
+        ]
+        publications_by_status: dict[str, list[str]] = {}
+        for source in topic_sources:
+            publications_by_status.setdefault(
+                source["overall_status"], []
+            ).append(source["publication"])
+        topics.append({
+            "topic": topic,
+            "summary": summarize_sources(topic_sources),
+            "publications_by_status": {
+                status: sorted(publications)
+                for status, publications in sorted(
+                    publications_by_status.items()
+                )
+            },
+            "actions_applied": topic_actions if apply_fixes else [],
+            "actions_proposed": [] if apply_fixes else topic_actions,
+            "unresolved_problems": topic_unresolved,
+        })
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": f"source-health-{int(checked_at.timestamp())}",
@@ -939,6 +985,7 @@ def build_report(
             "sources_checked": len(sources),
         },
         "summary": summary,
+        "topics": topics,
         "actions_applied": actions if apply_fixes else [],
         "actions_proposed": [] if apply_fixes else actions,
         "unresolved_problems": unresolved,
@@ -961,8 +1008,22 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Reactivated this run: {summary['reactivated_sources']}",
         f"- Attention: {summary['attention_sources']}",
         f"- Unresolved: {summary['unresolved_sources']}",
-        "", "## Actions", "",
+        "", "## Topic summary", "",
+        "| Topic | Checked | Healthy | Repaired | Degraded | Retry pending | Quarantined | Unresolved |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
+    for topic in report.get("topics", []):
+        topic_summary = topic["summary"]
+        lines.append(
+            f"| {topic['topic']} | {topic_summary['sources_checked']} | "
+            f"{topic_summary['healthy_sources']} | "
+            f"{topic_summary['repaired_sources']} | "
+            f"{topic_summary['degraded_sources']} | "
+            f"{topic_summary['retry_pending_sources']} | "
+            f"{topic_summary['quarantined_sources']} | "
+            f"{topic_summary['unresolved_sources']} |"
+        )
+    lines.extend(["", "## Actions", ""])
     actions = report["actions_applied"] or report["actions_proposed"]
     if actions:
         lines.extend(
@@ -982,15 +1043,16 @@ def markdown_report(report: dict[str, Any]) -> str:
         lines.append("No unresolved problems.")
     lines.extend([
         "", "## Source status", "",
-        "| Publication | Overall | Sitemap | RSS |",
-        "|---|---|---|---|",
+        "| Topic | Publication | Overall | Sitemap | RSS |",
+        "|---|---|---|---|---|",
     ])
     for source in report["sources"]:
         rss_state = ", ".join(
             item["state"] for item in source["rss_feeds"]
         ) or "not_configured"
         lines.append(
-            f"| {source['publication']} | {source['overall_status']} | "
+            f"| {source.get('list_name') or 'Unassigned'} | "
+            f"{source['publication']} | {source['overall_status']} | "
             f"{source['sitemap'].get('state', 'not_configured')} | "
             f"{rss_state} |"
         )

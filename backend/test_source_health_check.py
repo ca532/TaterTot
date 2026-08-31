@@ -369,9 +369,17 @@ class SourceHealthTests(unittest.TestCase):
         }
         report = build_report([source], CHECKED_AT, False, "Source Lists")
         encoded = json.dumps(report)
-        self.assertIn('"schema_version": 2', encoded)
+        self.assertIn('"schema_version": 3', encoded)
+        self.assertEqual("Luxury", report["topics"][0]["topic"])
+        self.assertEqual(1, report["topics"][0]["summary"]["sources_checked"])
+        self.assertEqual(
+            ["Example"],
+            report["topics"][0]["publications_by_status"]["healthy"],
+        )
         markdown = markdown_report(report)
         self.assertIn("# Source Health Diagnostic", markdown)
+        self.assertIn("## Topic summary", markdown)
+        self.assertIn("| Luxury | 1 | 1 |", markdown)
         self.assertIn("## Source status", markdown)
 
 
