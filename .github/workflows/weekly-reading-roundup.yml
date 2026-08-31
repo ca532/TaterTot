@@ -3,9 +3,9 @@ name: Weekly Reading Roundup Email
 on:
   workflow_dispatch:
   schedule:
-    # Mondays at 9:00 AM UTC.
-    # During BST this is 10:00 AM UK time.
-    - cron: "0 9 * * 1"
+    # Mondays at 9:17 AM UTC to avoid start-of-hour scheduler congestion.
+    # During BST this is 10:17 AM UK time.
+    - cron: "17 9 * * 1"
 
 permissions:
   contents: read
