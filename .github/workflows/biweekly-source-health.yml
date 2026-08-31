@@ -1,0 +1,217 @@
+name: Biweekly Source Health Diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_fixes:
+        description: Apply safe sitemap replacements and RSS disabling
+        type: boolean
+        default: true
+  schedule:
+    # GitHub cron has no biweekly syntax, so this runs weekly behind an
+    # even-ISO-week gate. Minute 23 avoids start-of-hour scheduler congestion.
+    - cron: "23 9 * * 1"
+      timezone: "Europe/London"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  source-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check biweekly gate
+        id: gate
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          elif (( 10#$(date -u +%V) % 2 == 0 )); then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.gate.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        if: steps.gate.outputs.should_run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install diagnostic dependencies
+        if: steps.gate.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          pip install \
+            requests==2.31.0 \
+            beautifulsoup4==4.12.2 \
+            newspaper3k==0.2.8 \
+            feedparser==6.0.10 \
+            lxml==4.9.3 \
+            gspread==5.12.0 \
+            google-auth==2.23.4 \
+            python-dateutil==2.8.2
+
+      - name: Run source diagnostic
+        if: steps.gate.outputs.should_run == 'true'
+        id: diagnostic
+        working-directory: backend
+        shell: bash
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SOURCE_CONFIG_SHEET: Source Lists
+        run: |
+          apply_flag="--apply-fixes"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && \
+                "${{ inputs.apply_fixes }}" != "true" ]]; then
+            apply_flag=""
+          fi
+
+          python -u source_health_check.py \
+            $apply_flag \
+            --output-dir output/source-health \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Add diagnostic summary
+        if: steps.gate.outputs.should_run == 'true' && always()
+        shell: bash
+        run: |
+          if [[ -f backend/output/source-health/report.md ]]; then
+            cat backend/output/source-health/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload diagnostic report
+        if: steps.gate.outputs.should_run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-health-${{ github.run_id }}
+          path: backend/output/source-health/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Create or update source-health issue
+        if: >-
+          steps.gate.outputs.should_run == 'true' &&
+          always() &&
+          steps.diagnostic.outcome == 'success' &&
+          steps.diagnostic.outputs.attention_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const title = "Source Health: Problems Requiring Review";
+            const marker = "<!-- source-health-diagnostic -->";
+            const report = fs.readFileSync(
+              "backend/output/source-health/report.md", "utf8"
+            ).slice(0, 60000);
+            const {data: issues} = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+            const existing = issues.find(
+              issue => issue.title === title && !issue.pull_request
+            );
+            const body = `${marker}\n${report}`;
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body
+              });
+            }
+
+      - name: Close resolved source-health issue
+        if: >-
+          steps.gate.outputs.should_run == 'true' &&
+          steps.diagnostic.outcome == 'success' &&
+          steps.diagnostic.outputs.attention_count == '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Source Health: Problems Requiring Review";
+            const {data: issues} = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+            const existing = issues.find(
+              issue => issue.title === title && !issue.pull_request
+            );
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                state: "closed",
+                state_reason: "completed"
+              });
+            }
+
+      - name: Alert on diagnostic execution failure
+        if: >-
+          steps.gate.outputs.should_run == 'true' &&
+          always() &&
+          steps.diagnostic.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Source Health: Problems Requiring Review";
+            const marker = "<!-- source-health-diagnostic -->";
+            const body = `${marker}
+            # Source Health Diagnostic Failed
+
+            The diagnostic could not complete, so source health is unknown.
+
+            [Open workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+            const {data: issues} = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100
+            });
+            const existing = issues.find(
+              issue => issue.title === title && !issue.pull_request
+            );
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body
+              });
+            }
+
+      - name: Fail on unresolved problems
+        if: >-
+          steps.gate.outputs.should_run == 'true' &&
+          steps.diagnostic.outcome == 'success' &&
+          steps.diagnostic.outputs.unresolved_count != '0'
+        run: |
+          echo "Unresolved source-health problems require review."
+          exit 1

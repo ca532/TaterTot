@@ -642,9 +642,13 @@ class CustomArticleCollector:
             base_url = str(r.get("base_url", "")).strip()
             sitemap_url = str(r.get("sitemap_url", "")).strip() or None
             rss_url = str(r.get("rss_url", "")).strip()
+            rss_active = (
+                str(r.get("rss_active", "TRUE") or "TRUE").strip().upper()
+                != "FALSE"
+            )
             out[publication] = {
                 "base_url": base_url,
-                "rss_feeds": [rss_url] if rss_url else [],
+                "rss_feeds": [rss_url] if rss_url and rss_active else [],
                 "sitemap_url": sitemap_url,
             }
         return out
