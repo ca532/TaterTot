@@ -82,7 +82,7 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         self.assertTrue(decision.relevant)
         self.assertEqual("luxury_product", decision.category)
 
-    def test_routes_royal_news_without_wardrobe_evidence_to_reserve(self):
+    def test_rejects_royal_news_without_wardrobe_evidence(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
             "category": "royal_wardrobe",
@@ -100,8 +100,8 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
                     "granddaughter."
                 ),
             )
-        self.assertTrue(decision.relevant)
-        self.assertEqual("general_royal_news", decision.category)
+        self.assertFalse(decision.relevant)
+        self.assertEqual("irrelevant", decision.category)
 
     def test_accepts_royal_wardrobe_with_concrete_evidence(self):
         classifier = ArticleRelevanceClassifier()
@@ -186,7 +186,7 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
         self.assertFalse(decision.relevant)
         self.assertEqual("irrelevant", decision.category)
 
-    def test_accepts_general_royal_news_with_monarchy_context(self):
+    def test_rejects_general_royal_news_with_monarchy_context(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
             "category": "general_royal_news",
@@ -201,10 +201,10 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
                 "King Haakon ascended the throne following his father's death."
             ),
         )
-        self.assertTrue(decision.relevant)
-        self.assertEqual("general_royal_news", decision.category)
+        self.assertFalse(decision.relevant)
+        self.assertEqual("irrelevant", decision.category)
 
-    def test_accepts_single_princess_story_with_person_context(self):
+    def test_rejects_single_princess_story_with_person_context(self):
         classifier = ArticleRelevanceClassifier()
         classifier.model = FakeModel({
             "category": "general_royal_news",
@@ -219,8 +219,81 @@ class ArticleRelevanceClassifierTests(unittest.TestCase):
                 "Princess Anne visited the hospital during an official visit."
             ),
         )
+        self.assertFalse(decision.relevant)
+        self.assertEqual("irrelevant", decision.category)
+
+    def test_incidental_royal_air_force_does_not_veto_royal_jewelry(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "royal_jewelry",
+            "evidence": [
+                "The Duke inherited the diamond brooch from his mother."
+            ],
+        })
+        decision = classifier.classify(
+            title="The Duke of Kent's inherited diamond brooch",
+            publication="Example",
+            article_text=(
+                "The Duke inherited the diamond brooch from his mother. "
+                "He previously served in the Royal Air Force."
+            ),
+        )
         self.assertTrue(decision.relevant)
-        self.assertEqual("general_royal_news", decision.category)
+        self.assertEqual("royal_jewelry", decision.category)
+
+    def test_rescues_obvious_jewelry_story_from_irrelevant(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "irrelevant",
+            "evidence": [],
+        })
+        decision = classifier.classify(
+            title="Vhernier unveils the Freccia high-jewelry collection",
+            publication="Example",
+            article_text=(
+                "The high jewelry collection features diamond necklaces, "
+                "rings and bracelets made by the Italian jeweller."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("jewelry_product", decision.category)
+
+    def test_accepts_nearly_exact_grounded_evidence(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "jewelry_product",
+            "evidence": [
+                "Vhernier unveiled its Freccia high jewelry collection in Milan."
+            ],
+        })
+        decision = classifier.classify(
+            title="Vhernier unveils Freccia",
+            publication="Example",
+            article_text=(
+                "Vhernier unveiled the Freccia high-jewelry collection in Milan."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("jewelry_product", decision.category)
+
+    def test_business_validation_uses_article_lead(self):
+        classifier = ArticleRelevanceClassifier()
+        classifier.model = FakeModel({
+            "category": "luxury_business",
+            "evidence": [
+                "Tiffany and Bulgari led performance at their parent groups."
+            ],
+        })
+        decision = classifier.classify(
+            title="Tiffany and Bulgari lead luxury groups",
+            publication="Example",
+            article_text=(
+                "Tiffany and Bulgari led performance at their parent groups. "
+                "The companies reported revenue growth in the latest quarter."
+            ),
+        )
+        self.assertTrue(decision.relevant)
+        self.assertEqual("luxury_business", decision.category)
 
     def test_promotes_material_royal_jewelry_subject(self):
         classifier = ArticleRelevanceClassifier()

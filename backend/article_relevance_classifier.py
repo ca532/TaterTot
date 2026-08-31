@@ -4,6 +4,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from article_quality import keyword_matches, prepare_article_for_classification
@@ -28,7 +29,6 @@ PRIMARY_CATEGORIES = {
     "luxury_market_trend",
 }
 RESERVE_CATEGORIES = {
-    "general_royal_news",
     "celebrity_style",
     "high_street_fashion",
     "general_beauty_trend",
@@ -36,7 +36,7 @@ RESERVE_CATEGORIES = {
     "publication_meta",
 }
 RELEVANT_CATEGORIES = PRIMARY_CATEGORIES | RESERVE_CATEGORIES
-ALL_CATEGORIES = RELEVANT_CATEGORIES | {"irrelevant"}
+ALL_CATEGORIES = RELEVANT_CATEGORIES | {"general_royal_news", "irrelevant"}
 
 SYSTEM_PROMPT = """
 You classify articles for a luxury and fine-jewelry PR roundup.
@@ -87,9 +87,10 @@ meaningful wardrobe choices involving royalty. The wardrobe coverage must be
 concrete and substantial.
 luxury_market_trend: Market-wide, retail, or consumer trends involving luxury,
 jewelry, watches, gemstones, designer goods, or luxury hospitality.
-general_royal_news: Material royal deaths, succession, health, family, official
-communications, state occasions, palaces, relationships, or monarchy where
-jewelry and wardrobe are not central.
+general_royal_news: Royal deaths, succession, health, family, relationships,
+official communications, biographies, or monarchy where jewelry, watches,
+designer wardrobe, luxury brands, craftsmanship, luxury business, or a material
+luxury PR angle is not central. This is an exclusion category.
 celebrity_style: Celebrity clothing or appearance coverage with some fashion
 relevance but without substantial luxury, jewelry, designer, or business analysis.
 high_street_fashion: Shopping or trend coverage centered on affordable or
@@ -106,9 +107,13 @@ Rules:
 - Choose the most specific materially supported category.
 - Jewelry can be relevant without a named luxury brand. Jewelry retail,
   merchandising, market reporting, and editorial product selections may qualify.
-- A royal person or royal property alone is not enough for a primary category.
-  Use general_royal_news for material royal reporting without a jewelry or
-  wardrobe focus.
+- Royal status alone is not relevant. Generic royal deaths, succession,
+  relationships, family news, biographies, historical retrospectives, health,
+  letters, and official appearances must use general_royal_news and are excluded.
+- Use royal_jewelry when jewelry, gemstones, watches, collections, auctions,
+  ownership, provenance, inheritance, or design is material.
+- Use royal_wardrobe only when specific garments, designers, couture, uniforms,
+  craftsmanship, or meaningful luxury wardrobe analysis is material.
 - Use celebrity_style for generic celebrity appearances or outfits that have
   fashion relevance but lack a concrete luxury, jewelry, or designer focus.
 - Use high_street_fashion for affordable or mass-market shopping coverage.
@@ -238,17 +243,31 @@ def _contains_any(text: str, terms) -> bool:
     )
 
 
-def _evidence_is_supported(evidence: list[str], article_text: str) -> bool:
+def _quote_is_grounded(quote: str, article_text: str) -> bool:
+    normalized_quote = _normalized_for_evidence(quote)
     normalized_article = _normalized_for_evidence(article_text)
-    if not evidence:
+    quote_words = normalized_quote.split()
+    article_words = normalized_article.split()
+
+    if len(quote_words) < 5:
         return False
-    for quote in evidence:
-        normalized_quote = _normalized_for_evidence(quote)
-        if len(normalized_quote.split()) < 5:
-            return False
-        if normalized_quote not in normalized_article:
-            return False
-    return True
+    if normalized_quote in normalized_article:
+        return True
+
+    minimum_window = max(5, len(quote_words) - 2)
+    maximum_window = min(len(article_words), len(quote_words) + 2)
+    for window_size in range(minimum_window, maximum_window + 1):
+        for index in range(len(article_words) - window_size + 1):
+            candidate = " ".join(article_words[index:index + window_size])
+            if SequenceMatcher(None, normalized_quote, candidate).ratio() >= 0.86:
+                return True
+    return False
+
+
+def _evidence_is_supported(evidence: list[str], article_text: str) -> bool:
+    return bool(evidence) and all(
+        _quote_is_grounded(quote, article_text) for quote in evidence
+    )
 
 
 def _decision(category: str, evidence: list[str], reason: str):
@@ -258,6 +277,17 @@ def _decision(category: str, evidence: list[str], reason: str):
         luxury_evidence=evidence,
         reason=reason[:500],
     )
+
+
+def _high_confidence_jewelry_category(title: str, article_text: str) -> str:
+    if not (
+        _contains_any(title, JEWELRY_TERMS)
+        and _contains_any(article_text, JEWELRY_CONTEXT_TERMS)
+    ):
+        return ""
+    if _contains_any(f"{title} {article_text}", UNAMBIGUOUS_MONARCHY_TERMS):
+        return "royal_jewelry"
+    return "jewelry_product"
 
 
 class ArticleRelevanceClassifier:
@@ -313,12 +343,26 @@ class ArticleRelevanceClassifier:
 
     @staticmethod
     def _apply_evidence_policy(decision, title, article_text):
-        if decision.category == "irrelevant":
-            return decision
-
         evidence = decision.luxury_evidence
         evidence_text = " ".join(evidence)
         complete_text = f"{title} {article_text}"
+        rescue_category = _high_confidence_jewelry_category(title, article_text)
+
+        def finalize(candidate):
+            if (
+                rescue_category
+                and candidate.category
+                in JEWELRY_PROMOTION_CATEGORIES | {"irrelevant"}
+            ):
+                return _decision(
+                    rescue_category,
+                    evidence or [title],
+                    "Headline and article establish jewelry as the material subject",
+                )
+            return candidate
+
+        if decision.category == "irrelevant":
+            return finalize(decision)
 
         if not _evidence_is_supported(evidence, complete_text):
             print(
@@ -326,146 +370,142 @@ class ArticleRelevanceClassifier:
                 f"category={decision.category} rule=unsupported_evidence "
                 f"title={title!r}"
             )
-            return _decision(
+            return finalize(_decision(
                 "irrelevant",
                 evidence,
-                "Classifier evidence was not copied from the article",
-            )
+                "Classifier evidence could not be grounded in the article",
+            ))
 
         subject_text = f"{title} {evidence_text}"
 
         # Promote reserve classifications only when both the headline and the
         # supplied article establish jewelry as a material subject. This avoids
         # hard-coding brands or stories while rejecting metaphorical matches.
-        if (
-            decision.category in JEWELRY_PROMOTION_CATEGORIES
-            and _contains_any(title, JEWELRY_TERMS)
-            and _contains_any(article_text, JEWELRY_CONTEXT_TERMS)
-        ):
-            promoted_category = (
-                "royal_jewelry"
-                if _contains_any(complete_text, UNAMBIGUOUS_MONARCHY_TERMS)
-                else "jewelry_product"
-            )
-            decision = _decision(
-                promoted_category,
-                evidence,
-                "Headline and article establish jewelry as the material subject",
-            )
+        decision = finalize(decision)
 
         # Validate that general royal news concerns monarchy rather than an
         # organization, location, company, or other use of a royal title.
         if decision.category == "general_royal_news":
-            if _contains_any(subject_text, NON_MONARCHY_ROYAL_PHRASES):
-                return _decision(
+            has_monarchy_context = (
+                _contains_any(subject_text, UNAMBIGUOUS_MONARCHY_TERMS)
+                or (
+                    _contains_any(subject_text, ROYAL_PERSON_TITLES)
+                    and _contains_any(subject_text, ROYAL_PERSON_CONTEXT_TERMS)
+                )
+            )
+            if (
+                _contains_any(subject_text, NON_MONARCHY_ROYAL_PHRASES)
+                and not has_monarchy_context
+            ):
+                return finalize(_decision(
                     "irrelevant",
                     evidence,
                     "Royal refers to a non-monarchy organization",
-                )
-            has_person_context = (
-                _contains_any(subject_text, ROYAL_PERSON_TITLES)
-                and _contains_any(subject_text, ROYAL_PERSON_CONTEXT_TERMS)
-            )
-            if (
-                not _contains_any(subject_text, UNAMBIGUOUS_MONARCHY_TERMS)
-                and not has_person_context
-            ):
-                return _decision(
+                ))
+            if not has_monarchy_context:
+                return finalize(_decision(
                     "irrelevant",
                     evidence,
                     "No concrete monarchy subject",
-                )
+                ))
+            return finalize(_decision(
+                "irrelevant",
+                evidence,
+                "Generic royal news without a material luxury or jewelry angle",
+            ))
 
         # Preserve fashion coverage that Qwen mistakenly labels as beauty.
         if decision.category == "general_beauty_trend" and not _contains_any(
             f"{title} {evidence_text}", BEAUTY_TERMS
         ):
             if _contains_any(complete_text, FASHION_DESIGN_TERMS):
-                return _decision(
+                return finalize(_decision(
                     "consumer_lifestyle",
                     evidence,
                     "Fashion or garment coverage without a beauty focus",
-                )
-            return _decision(
+                ))
+            return finalize(_decision(
                 "irrelevant",
                 evidence,
                 "No concrete beauty or fashion subject",
-            )
+            ))
 
         if decision.category == "royal_wardrobe" and not _contains_any(
             evidence_text, GARMENT_TERMS
         ):
             if _contains_any(complete_text, ROYAL_TERMS):
-                return _decision(
-                    "general_royal_news",
+                return finalize(_decision(
+                    "irrelevant",
                     evidence,
-                    "Royal news without concrete wardrobe coverage",
-                )
+                    "Royal news without a material wardrobe or luxury angle",
+                ))
 
         if decision.category == "royal_jewelry" and not _contains_any(
             evidence_text, JEWELRY_TERMS
         ):
             if _contains_any(complete_text, ROYAL_TERMS):
-                return _decision(
-                    "general_royal_news",
+                return finalize(_decision(
+                    "irrelevant",
                     evidence,
-                    "Royal news without concrete jewelry coverage",
-                )
+                    "Royal news without a material jewelry or luxury angle",
+                ))
 
+        business_validation_text = f"{title} {evidence_text} {article_text[:2500]}"
         if decision.category == "luxury_business" and not _contains_any(
-            evidence_text, BUSINESS_TERMS
+            business_validation_text, BUSINESS_TERMS
         ):
             if _contains_any(complete_text, CELEBRITY_STYLE_TERMS):
-                return _decision(
+                return finalize(_decision(
                     "celebrity_style",
                     evidence,
                     "Style coverage without luxury-business substance",
-                )
-            return _decision(
+                ))
+            return finalize(_decision(
                 "irrelevant",
                 evidence,
                 "No concrete luxury-business evidence",
-            )
+            ))
 
+        market_validation_text = f"{title} {evidence_text} {article_text[:2500]}"
         if decision.category == "luxury_market_trend" and not _contains_any(
-            evidence_text, MARKET_TERMS
+            market_validation_text, MARKET_TERMS
         ):
             if _contains_any(complete_text, BEAUTY_TERMS):
-                return _decision(
+                return finalize(_decision(
                     "general_beauty_trend",
                     evidence,
                     "Beauty trend without luxury-market analysis",
-                )
+                ))
             if _contains_any(complete_text, MASS_MARKET_BRANDS):
-                return _decision(
+                return finalize(_decision(
                     "high_street_fashion",
                     evidence,
                     "High-street trend without luxury-market analysis",
-                )
-            return _decision(
+                ))
+            return finalize(_decision(
                 "consumer_lifestyle",
                 evidence,
                 "Consumer trend without concrete luxury-market analysis",
-            )
+            ))
 
         if _contains_any(complete_text, CONSUMER_LIFESTYLE_BRANDS):
-            return _decision(
+            return finalize(_decision(
                 "consumer_lifestyle",
                 evidence,
                 "Consumer product coverage without a material luxury angle",
-            )
+            ))
 
         if _contains_any(complete_text, MASS_MARKET_BRANDS) and (
             _contains_any(complete_text, SHOPPING_TERMS)
             or decision.category == "luxury_product"
         ):
-            return _decision(
+            return finalize(_decision(
                 "high_street_fashion",
                 evidence,
                 "Mass-market or high-street shopping coverage",
-            )
+            ))
 
-        return decision
+        return finalize(decision)
 
     def classify(
         self,

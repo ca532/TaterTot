@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from article_quality import (
     clean_article_text,
+    clean_summary_text,
     extract_page_metadata,
     has_low_signal_intent,
     keyword_matches,
@@ -18,6 +19,22 @@ from article_quality import (
 
 
 class ArticleQualityTests(unittest.TestCase):
+    def test_cleans_summary_read_time_boilerplate_and_joined_sentences(self):
+        cleaned = clean_summary_text(
+            "1 min read. Every product on this page was chosen by an editor. "
+            "Pandora introduced new charms.New designs will follow this autumn."
+        )
+        self.assertNotIn("min read", cleaned.lower())
+        self.assertNotIn("every product", cleaned.lower())
+        self.assertFalse(cleaned.startswith("."))
+        self.assertIn("charms. New designs", cleaned)
+
+    def test_rejects_summary_ending_in_product_list_fragment(self):
+        summary = " ".join(["grounded"] * 82) + " B."
+        valid, reason = validate_summary(summary, source_text=summary)
+        self.assertFalse(valid)
+        self.assertEqual("incomplete_product_list", reason)
+
     def test_rejects_homepages_and_known_landing_pages(self):
         invalid_urls = [
             "https://www.businessinsider.com/",

@@ -61,7 +61,7 @@ class RoundupSelectionTests(unittest.TestCase):
             counts[article.publication] = counts.get(article.publication, 0) + 1
         self.assertEqual({10}, set(counts.values()))
 
-    def test_primary_articles_precede_buffered_royal_reserves(self):
+    def test_generic_royal_articles_are_not_queued(self):
         primary = make_articles(9, 5)
         reserve = make_articles(
             10,
@@ -70,14 +70,10 @@ class RoundupSelectionTests(unittest.TestCase):
             prefix="Royal",
         )
         selected = select_roundup_articles(primary + reserve)
-        self.assertEqual(55, len(selected))
+        self.assertEqual(45, len(selected))
         self.assertTrue(all(
             article.classifier_category == "jewelry_product"
             for article in selected[:45]
-        ))
-        self.assertTrue(all(
-            article.classifier_category == "general_royal_news"
-            for article in selected[45:]
         ))
 
     def test_lifestyle_reserve_queue_includes_failure_replacements(self):
@@ -108,10 +104,14 @@ class RoundupSelectionTests(unittest.TestCase):
         selected = select_roundup_articles(
             primary + royal_reserve + lifestyle_reserve
         )
-        self.assertEqual(60, len(selected))
+        self.assertEqual(44, len(selected))
         self.assertTrue(all(
             article.classifier_category == "jewelry_product"
             for article in selected[:29]
+        ))
+        self.assertFalse(any(
+            article.classifier_category == "general_royal_news"
+            for article in selected
         ))
 
 

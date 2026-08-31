@@ -26,6 +26,16 @@ BLOCKED_CONTENT_MARKERS = (
     "sign up to receive emails", "click here to subscribe",
     "this area is reserved", "privacy policy and terms of service",
 )
+SUMMARY_BOILERPLATE_MARKERS = (
+    "every product on this page was chosen",
+    "every item on this page was chosen",
+    "we may earn commission",
+    "here are five things on our list",
+    "here we round up",
+    "sign up for our newsletter",
+    "click here to subscribe",
+    "advertisement",
+)
 CLASSIFIER_INPUT_DEBRIS = (
     "click here", "shop now", "shop today", "all rights reserved",
     "stacked from", "method=", "sign up", "subscribe", "related stories",
@@ -108,6 +118,32 @@ def clean_article_text(text: str) -> str:
     value = re.sub(r"\n{3,}", "\n\n", value)
     value = re.sub(r"\.,(?=[A-Z])", ". ", value)
     value = re.sub(r"(?<=[.!?])(?=[A-Z][a-z]{3})", " ", value)
+    value = re.sub(r"\bthe\s+the\b", "the", value, flags=re.I)
+    value = re.sub(r"\s+([,.;:!?])", r"\1", value)
+    value = re.sub(r" {2,}", " ", value)
+    return value.strip()
+
+
+def clean_summary_text(text: str) -> str:
+    value = clean_article_text(text)
+    value = re.sub(
+        r"(^|(?<=[.!?])\s+)\d+\s+min(?:ute)?s?\s+read\b[.:]?\s*",
+        r"\1",
+        value,
+        flags=re.I,
+    )
+    sentences = re.split(r"(?<=[.!?])\s+", value)
+    value = " ".join(
+        sentence.strip()
+        for sentence in sentences
+        if sentence.strip()
+        and not any(
+            marker in sentence.lower()
+            for marker in SUMMARY_BOILERPLATE_MARKERS
+        )
+    )
+    value = re.sub(r"\.,(?=[A-Z])", ". ", value)
+    value = re.sub(r"(?<=[a-z][.!?])(?=[A-Z][a-z]{2})", " ", value)
     value = re.sub(r"\bthe\s+the\b", "the", value, flags=re.I)
     value = re.sub(r"\s+([,.;:!?])", r"\1", value)
     value = re.sub(r" {2,}", " ", value)
@@ -466,7 +502,7 @@ def validate_summary(
     prompt: str = "",
     source_text: str = "",
 ) -> tuple[bool, str]:
-    cleaned = clean_article_text(summary)
+    cleaned = clean_summary_text(summary)
     if len(cleaned) < 80:
         return False, "short_summary"
     if any(marker in cleaned.lower() for marker in BLOCKED_CONTENT_MARKERS):
@@ -479,6 +515,15 @@ def validate_summary(
         return False, "malformed_summary"
     if "[...]" in cleaned or "…" in cleaned or "..." in cleaned:
         return False, "truncated_summary"
+    lowered = cleaned.lower()
+    if any(marker in lowered for marker in SUMMARY_BOILERPLATE_MARKERS):
+        return False, "summary_page_boilerplate"
+    if re.search(r"\b\d+\s+min(?:ute)?s?\s+read\b", cleaned, flags=re.I):
+        return False, "summary_read_time"
+    if re.search(r"\b[A-Z]\.[\"']?$", cleaned):
+        return False, "incomplete_product_list"
+    if re.search(r"[,;:—-][\"']?$", cleaned):
+        return False, "incomplete_summary"
     if not re.search(r"[.!?][\"')\]]*$", cleaned):
         return False, "incomplete_summary"
     if source_text:

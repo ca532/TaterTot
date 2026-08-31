@@ -8,7 +8,13 @@ import json
 from bs4 import BeautifulSoup
 import random
 
-from article_quality import clean_article_text, validate_article_content, validate_author, validate_summary
+from article_quality import (
+    clean_article_text,
+    clean_summary_text,
+    validate_article_content,
+    validate_author,
+    validate_summary,
+)
 from qwen_runtime import get_qwen_model
 
 
@@ -151,6 +157,10 @@ class ArticleSummarizer:
         debris = (
             "click here", "subscribe", "sign up", "read more",
             "related articles", "all rights reserved", "advertisement",
+            "every product on this page was chosen",
+            "every item on this page was chosen", "we may earn commission",
+            "here are five things on our list", "here we round up",
+            " min read",
         )
         for sentence in sentences:
             if any(marker in sentence.lower() for marker in debris):
@@ -164,7 +174,7 @@ class ArticleSummarizer:
             total_words += sentence_words
             if total_words >= 80:
                 break
-        return clean_article_text(" ".join(selected))
+        return clean_summary_text(" ".join(selected))
 
     def summarize_article(
         self,
@@ -196,7 +206,7 @@ class ArticleSummarizer:
                         previous_summary=previous_summary,
                         repair_reason=reason if attempt > 1 else "",
                     )
-                    summary_text = clean_article_text(result.get("summary", ""))
+                    summary_text = clean_summary_text(result.get("summary", ""))
                     source_facts = [
                         clean_article_text(str(fact))
                         for fact in result.get("source_facts", [])
@@ -212,7 +222,7 @@ class ArticleSummarizer:
                         valid, reason = False, "ungrounded_source_facts"
                     if valid:
                         break
-                    previous_summary = summary_text
+                    previous_summary = clean_summary_text(summary_text)
                     print(
                         f"Retrying Qwen summary after quality failure "
                         f"({reason}): {article_url}"
@@ -247,7 +257,7 @@ class ArticleSummarizer:
             return ArticleSummary(
                 title=title,
                 author=validate_author(author),
-                summary=clean_article_text(summary_text),
+                summary=clean_summary_text(summary_text),
                 url=article_url,
                 publication=publication,
                 topics=[],

@@ -19,7 +19,6 @@ SOFT_PUBLICATION_CAP = int(os.getenv("SOFT_PUBLICATION_CAP", "5"))
 HARD_PUBLICATION_CAP = int(os.getenv("HARD_PUBLICATION_CAP", "10"))
 MAX_RESERVE_ARTICLES = int(os.getenv("MAX_RESERVE_ARTICLES", "10"))
 SUMMARY_FAILURE_BUFFER = int(os.getenv("SUMMARY_FAILURE_BUFFER", "10"))
-MAX_GENERAL_ROYAL_ARTICLES = int(os.getenv("MAX_GENERAL_ROYAL_ARTICLES", "8"))
 MAX_LIFESTYLE_RESERVE_ARTICLES = int(
     os.getenv("MAX_LIFESTYLE_RESERVE_ARTICLES", "5")
 )
@@ -43,7 +42,6 @@ PRIMARY_CATEGORIES = {
     "luxury_market_trend",
 }
 RESERVE_CATEGORIES = {
-    "general_royal_news",
     "celebrity_style",
     "high_street_fashion",
     "general_beauty_trend",
@@ -61,7 +59,6 @@ CATEGORY_PRIORITY = {
     "designer_or_runway": 2,
     "luxury_product": 2,
     "royal_wardrobe": 3,
-    "general_royal_news": 4,
     "celebrity_style": 5,
     "high_street_fashion": 6,
     "consumer_lifestyle": 7,
@@ -105,11 +102,6 @@ def _quality_key(article: object) -> tuple:
     )
 
 
-def _reserve_group(article: object) -> str:
-    category = str(getattr(article, "classifier_category", "") or "")
-    return "general_royal" if category == "general_royal_news" else "lifestyle"
-
-
 def select_roundup_articles(articles: Iterable[ArticleT]) -> List[ArticleT]:
     """Return primary candidates followed by a capped reserve queue."""
 
@@ -135,13 +127,7 @@ def select_roundup_articles(articles: Iterable[ArticleT]) -> List[ArticleT]:
         if publication_counts[publication] >= HARD_PUBLICATION_CAP:
             return False
         if reserve_article:
-            group = _reserve_group(article)
-            if (
-                group == "general_royal"
-                and reserve_group_counts[group]
-                >= MAX_GENERAL_ROYAL_ARTICLES + SUMMARY_FAILURE_BUFFER
-            ):
-                return False
+            group = "lifestyle"
             if (
                 group == "lifestyle"
                 and reserve_group_counts[group]
@@ -160,7 +146,7 @@ def select_roundup_articles(articles: Iterable[ArticleT]) -> List[ArticleT]:
         selected_ids.add(id(article))
         publication_counts[publication] += 1
         if reserve_article:
-            reserve_group_counts[_reserve_group(article)] += 1
+            reserve_group_counts["lifestyle"] += 1
         return True
 
     def add_diverse(pool, limit, reserve_article=False):
